@@ -1148,8 +1148,27 @@ def request_active_actions_for_lane(*, workflow_root: Path, lane_id: str, now_is
         for idx, action in enumerate(actions, start=1):
             if action["action_type"] not in active_action_types:
                 continue
+            base_idempotency_key = f"active:{action['action_type']}:{lane_id}:{action.get('target_head_sha') or 'none'}"
+            failed_predecessor = conn.execute(
+                """
+                SELECT action_id, retry_count
+                FROM lane_actions
+                WHERE lane_id=?
+                  AND action_mode='active'
+                  AND action_type=?
+                  AND COALESCE(target_head_sha, '') = COALESCE(?, '')
+                  AND status='failed'
+                ORDER BY retry_count DESC, requested_at DESC
+                LIMIT 1
+                """,
+                (lane_id, action["action_type"], action.get("target_head_sha")),
+            ).fetchone()
+            retry_count = int((dict(failed_predecessor).get("retry_count") if failed_predecessor else 0) or 0)
+            idempotency_key = base_idempotency_key
+            if failed_predecessor is not None:
+                retry_count += 1
+                idempotency_key = f"{base_idempotency_key}:retry:{retry_count}"
             action_id = f"act:active:{lane_id}:{action['action_type']}:{now_iso}:{idx}"
-            idempotency_key = f"active:{action['action_type']}:{lane_id}:{action.get('target_head_sha') or 'none'}"
             target_actor_role = _target_actor_role_for_active_action(action["action_type"])
             target_actor_id = _target_actor_id_for_active_action(action_type=action["action_type"], lane=lane)
             conn.execute(
@@ -1160,7 +1179,7 @@ def request_active_actions_for_lane(*, workflow_root: Path, lane_id: str, now_is
                   requested_at, dispatched_at, completed_at, failed_at, result_code, result_summary,
                   request_payload_json, result_payload_json, error_payload_json, retry_count,
                   superseded_by_action_id, causal_event_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, 0, NULL, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, ?, NULL, NULL)
                 ON CONFLICT(idempotency_key) DO NOTHING
                 """,
                 (
@@ -1177,9 +1196,15 @@ def request_active_actions_for_lane(*, workflow_root: Path, lane_id: str, now_is
                     "requested",
                     now_iso,
                     json.dumps(action, sort_keys=True),
+                    retry_count,
                 ),
             )
             if conn.execute("SELECT changes()").fetchone()[0]:
+                if failed_predecessor is not None:
+                    conn.execute(
+                        "UPDATE lane_actions SET superseded_by_action_id=? WHERE action_id=?",
+                        (action_id, dict(failed_predecessor)["action_id"]),
+                    )
                 persisted_action = {
                     **action,
                     "action_id": action_id,
@@ -1187,7 +1212,7 @@ def request_active_actions_for_lane(*, workflow_root: Path, lane_id: str, now_is
                     "target_actor_id": target_actor_id,
                     "target_actor_role": target_actor_role,
                     "action_reason": action.get("reason"),
-                    "retry_count": 0,
+                    "retry_count": retry_count,
                     "requested_at": now_iso,
                 }
                 persisted.append(persisted_action)
