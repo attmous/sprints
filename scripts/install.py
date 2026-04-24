@@ -13,10 +13,28 @@ PAYLOAD_ITEMS = [
     "runtime.py",
     "schemas.py",
     "tools.py",
-    "adapters",
+    "workflows",
     "projects",
     "skills",
 ]
+
+
+def _check_runtime_deps() -> None:
+    """Fail early if PyYAML or jsonschema are missing on the host python."""
+    missing = []
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        missing.append("pyyaml (apt: python3-yaml)")
+    try:
+        import jsonschema  # noqa: F401
+    except ImportError:
+        missing.append("jsonschema (apt: python3-jsonschema)")
+    if missing:
+        raise RuntimeError(
+            "hermes-relay plugin requires the following python modules on the host: "
+            + ", ".join(missing)
+        )
 
 
 def resolve_destination(*, hermes_home: Path | None = None, destination: Path | None = None) -> Path:
@@ -54,6 +72,7 @@ def _prepare_install_target(target: Path) -> Path:
 
 
 def install_plugin(*, repo_root: Path, hermes_home: Path | None = None, destination: Path | None = None) -> Path:
+    _check_runtime_deps()
     repo_root = repo_root.expanduser().resolve()
     target = resolve_destination(hermes_home=hermes_home, destination=destination)
     install_dir = _prepare_install_target(target)

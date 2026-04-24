@@ -24,7 +24,7 @@ def test_install_into_default_hermes_home_copies_plugin_tree(tmp_path):
     assert (plugin_dir / "plugin.yaml").exists()
     assert (plugin_dir / "runtime.py").exists()
     assert (plugin_dir / "alerts.py").exists()
-    assert (plugin_dir / "adapters" / "yoyopod_core" / "status.py").exists()
+    assert (plugin_dir / "workflows" / "code_review" / "status.py").exists()
     assert (plugin_dir / "projects" / "yoyopod_core" / "config" / "project.json").exists()
     assert (plugin_dir / "skills" / "operator" / "SKILL.md").exists()
 
@@ -39,7 +39,7 @@ def test_install_into_explicit_destination_uses_given_path(tmp_path):
     assert result == target
     assert (target / "plugin.yaml").exists()
     assert (target / "tools.py").exists()
-    assert (target / "adapters" / "yoyopod_core" / "workflow.py").exists()
+    assert (target / "workflows" / "code_review" / "workflow.py").exists()
     assert (target / "projects" / "yoyopod_core" / "workspace" / "README.md").exists()
 
 
