@@ -121,3 +121,15 @@ def test_summarize_validation_and_render_lane_memo_capture_checks_progress_and_f
     assert '- checks: 3/3 green' in memo
     assert '- committed at 2026-04-23T00:20:00Z' in memo
     assert '- Nudge via: acpx codex prompt -s -> lane-224' in memo
+
+
+def test_prompt_templates_bundle_exists_with_three_files():
+    from pathlib import Path
+    bundle = Path(__file__).resolve().parents[1] / "workflows" / "code_review" / "prompts"
+    assert bundle.is_dir(), f"prompts bundle missing at {bundle}"
+    names = sorted(p.name for p in bundle.glob("*.md"))
+    assert names == [
+        "coder-dispatch.md",
+        "internal-review-strict.md",
+        "repair-handoff.md",
+    ]
