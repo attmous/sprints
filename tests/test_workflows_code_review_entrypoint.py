@@ -77,8 +77,62 @@ def test_resolve_workflow_root_requires_value(tmp_path, monkeypatch):
 def _write_workflow_yaml(config_dir: Path, config: dict) -> None:
     """Write the workflow.yaml dispatcher handshake file and yoyopod-workflow.json."""
     import yaml  # type: ignore[import]
+    full_yaml_config = {
+        "workflow": "code-review",
+        "schema-version": 1,
+        "instance": {"name": "yoyopod", "engine-owner": "hermes"},
+        "repository": {
+            "local-path": str(config.get("repoPath", "/tmp/repo")),
+            "github-slug": "owner/repo",
+            "active-lane-label": config.get("activeLaneLabel", "active-lane"),
+        },
+        "runtimes": {
+            "acpx-codex": {
+                "kind": "acpx-codex",
+                "session-idle-freshness-seconds": 900,
+                "session-idle-grace-seconds": 1800,
+                "session-nudge-cooldown-seconds": 600,
+            },
+            "claude-cli": {
+                "kind": "claude-cli",
+                "max-turns-per-invocation": 24,
+                "timeout-seconds": 1200,
+            },
+        },
+        "agents": {
+            "coder": {
+                "default": {
+                    "name": "Internal_Coder_Agent",
+                    "model": "gpt-5.3-codex-spark/high",
+                    "runtime": "acpx-codex",
+                },
+            },
+            "internal-reviewer": {
+                "name": "Internal_Reviewer_Agent",
+                "model": "claude-sonnet-4-6",
+                "runtime": "claude-cli",
+            },
+            "external-reviewer": {
+                "enabled": True,
+                "name": "External_Reviewer_Agent",
+            },
+        },
+        "gates": {
+            "internal-review": {},
+            "external-review": {},
+            "merge": {},
+        },
+        "triggers": {
+            "lane-selector": {"type": "github-label", "label": "active-lane"},
+        },
+        "storage": {
+            "ledger": "memory/workflow-status.json",
+            "health": "memory/workflow-health.json",
+            "audit-log": "memory/workflow-audit.jsonl",
+        },
+    }
     (config_dir / "workflow.yaml").write_text(
-        yaml.dump({"workflow": "code-review", "schema-version": 1}),
+        yaml.dump(full_yaml_config),
         encoding="utf-8",
     )
     (config_dir / "yoyopod-workflow.json").write_text(json.dumps(config), encoding="utf-8")
