@@ -13,7 +13,11 @@ must expose these five attributes in its package ``__init__.py``:
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from types import ModuleType
+
+import jsonschema
+import yaml
 
 
 class WorkflowContractError(RuntimeError):
@@ -48,3 +52,50 @@ def load_workflow(name: str) -> ModuleType:
             f"which does not match the directory '{name}'"
         )
     return module
+
+
+def run_cli(
+    workflow_root: Path,
+    argv: list[str],
+    *,
+    require_workflow: str | None = None,
+) -> int:
+    """Read <workflow_root>/config/workflow.yaml, dispatch to the named workflow.
+
+    When ``require_workflow`` is set, the dispatcher asserts that the YAML's
+    ``workflow:`` field matches before dispatching. Used by the per-workflow
+    direct form (``python3 -m workflows.code_review ...``) to pin the module
+    regardless of what the YAML declares.
+    """
+    config_path = workflow_root / "config" / "workflow.yaml"
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(cfg, dict):
+        raise WorkflowContractError(
+            f"{config_path} must contain a YAML mapping at the top level"
+        )
+    workflow_name = cfg.get("workflow")
+    if not workflow_name:
+        raise WorkflowContractError(
+            f"{config_path} is missing top-level `workflow:` field"
+        )
+    if require_workflow and workflow_name != require_workflow:
+        raise WorkflowContractError(
+            f"{config_path} declares workflow={workflow_name!r}, "
+            f"but invocation pins require_workflow={require_workflow!r}"
+        )
+
+    module = load_workflow(workflow_name)
+
+    schema = yaml.safe_load(module.CONFIG_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.validate(cfg, schema)
+
+    schema_version = int(cfg.get("schema-version", 1))
+    if schema_version not in module.SUPPORTED_SCHEMA_VERSIONS:
+        raise WorkflowContractError(
+            f"workflow {workflow_name!r} does not support "
+            f"schema-version={schema_version}; "
+            f"supported: {list(module.SUPPORTED_SCHEMA_VERSIONS)}"
+        )
+
+    workspace = module.make_workspace(workflow_root=workflow_root, config=cfg)
+    return module.cli_main(workspace, argv)
