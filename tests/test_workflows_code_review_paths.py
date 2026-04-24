@@ -62,7 +62,7 @@ def test_lane_state_and_memo_paths_resolve_under_worktree_and_handle_none(tmp_pa
     assert paths_module.lane_memo_path(None) is None
 
 
-def test_plugin_entrypoint_path_points_at_installed_adapter_main(tmp_path):
+def test_plugin_entrypoint_path_points_at_generic_dispatcher(tmp_path):
     paths_module = load_module("hermes_relay_workflows_code_review_paths_test", "workflows/code_review/paths.py")
     workflow_root = tmp_path / "workflow"
     expected = (
@@ -71,35 +71,40 @@ def test_plugin_entrypoint_path_points_at_installed_adapter_main(tmp_path):
         / "plugins"
         / "hermes-relay"
         / "workflows"
-        / "code_review"
         / "__main__.py"
     )
     assert paths_module.plugin_entrypoint_path(workflow_root) == expected
 
 
-def test_yoyopod_cli_argv_prefers_plugin_entrypoint_when_installed(tmp_path):
+def test_workflow_cli_argv_prefers_plugin_entrypoint_when_installed(tmp_path):
     paths_module = load_module("hermes_relay_workflows_code_review_paths_test", "workflows/code_review/paths.py")
     workflow_root = tmp_path / "workflow"
     plugin_main = paths_module.plugin_entrypoint_path(workflow_root)
     plugin_main.parent.mkdir(parents=True)
     plugin_main.write_text("# main\n", encoding="utf-8")
 
-    argv = paths_module.yoyopod_cli_argv(workflow_root, "status", "--json")
+    argv = paths_module.workflow_cli_argv(workflow_root, "status", "--json")
     assert argv == ["python3", str(plugin_main), "status", "--json"]
 
 
-def test_yoyopod_cli_argv_always_targets_plugin_entrypoint(tmp_path):
+def test_yoyopod_cli_argv_is_backcompat_alias(tmp_path):
+    """yoyopod_cli_argv is a deprecated alias for workflow_cli_argv."""
+    paths_module = load_module("hermes_relay_workflows_code_review_paths_test", "workflows/code_review/paths.py")
+    assert paths_module.yoyopod_cli_argv is paths_module.workflow_cli_argv
+
+
+def test_workflow_cli_argv_always_targets_generic_dispatcher(tmp_path):
     """The retired ``scripts/yoyopod_workflow.py`` wrapper is no longer a fallback.
 
-    ``yoyopod_cli_argv`` should always build an argv targeting the plugin's
-    ``__main__.py`` regardless of what happens to exist in the workflow root.
+    ``workflow_cli_argv`` should always build an argv targeting the plugin's
+    generic dispatcher regardless of what happens to exist in the workflow root.
     """
     paths_module = load_module("hermes_relay_workflows_code_review_paths_test", "workflows/code_review/paths.py")
     workflow_root = tmp_path / "workflow"
 
-    argv = paths_module.yoyopod_cli_argv(workflow_root, "status", "--json")
+    argv = paths_module.workflow_cli_argv(workflow_root, "status", "--json")
     assert argv[0] == "python3"
-    assert argv[1].endswith("/.hermes/plugins/hermes-relay/workflows/code_review/__main__.py")
+    assert argv[1].endswith("/.hermes/plugins/hermes-relay/workflows/__main__.py")
     assert argv[2:] == ["status", "--json"]
 
     # Even if a retired-style wrapper script appears under scripts/, it is
@@ -107,5 +112,5 @@ def test_yoyopod_cli_argv_always_targets_plugin_entrypoint(tmp_path):
     wrapper = workflow_root / "scripts" / "yoyopod_workflow.py"
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("# retired\n", encoding="utf-8")
-    argv2 = paths_module.yoyopod_cli_argv(workflow_root, "tick")
-    assert argv2[1].endswith("/.hermes/plugins/hermes-relay/workflows/code_review/__main__.py")
+    argv2 = paths_module.workflow_cli_argv(workflow_root, "tick")
+    assert argv2[1].endswith("/.hermes/plugins/hermes-relay/workflows/__main__.py")

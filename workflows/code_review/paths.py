@@ -62,27 +62,21 @@ def tick_dispatch_history_dir(workflow_root: Path) -> Path:
 
 
 def plugin_entrypoint_path(workflow_root: Path) -> Path:
-    """Path to the installed plugin's CLI entrypoint.
+    """Path to the installed plugin's generic CLI dispatcher.
 
-    Lives at ``<workflow_root>/.hermes/plugins/hermes-relay/workflows/code_review/__main__.py``
-    after ``./scripts/install.sh``. This is the canonical — and only — code-review
-    workflow CLI surface; the historical ``scripts/yoyopod_workflow.py``
-    wrapper has been retired.
+    Lives at ``<workflow_root>/.hermes/plugins/hermes-relay/workflows/__main__.py``.
+    This is the canonical external-caller surface (systemd, cron, operator
+    commands, skill docs all reference this path). Per-workflow direct-form
+    invocations use ``python3 -m workflows.<name>`` inside the plugin root.
     """
     root = workflow_root.resolve()
     return (
-        root
-        / ".hermes"
-        / "plugins"
-        / "hermes-relay"
-        / "workflows"
-        / "code_review"
-        / "__main__.py"
+        root / ".hermes" / "plugins" / "hermes-relay" / "workflows" / "__main__.py"
     )
 
 
-def yoyopod_cli_argv(workflow_root: Path, *command_args: str) -> list[str]:
-    """Build the argv list to invoke the YoYoPod workflow CLI.
+def workflow_cli_argv(workflow_root: Path, *command_args: str) -> list[str]:
+    """Build the argv list to invoke the workflow CLI via the generic dispatcher.
 
     Always targets the plugin-side entrypoint. If the plugin is not installed
     under ``workflow_root``, the returned path still points at the expected
@@ -91,6 +85,10 @@ def yoyopod_cli_argv(workflow_root: Path, *command_args: str) -> list[str]:
     """
     plugin_path = plugin_entrypoint_path(workflow_root)
     return ["python3", str(plugin_path), *command_args]
+
+
+# Back-compat alias; remove in 0.3.0
+yoyopod_cli_argv = workflow_cli_argv
 
 
 def _has_installed_plugin(workflow_root: Path) -> bool:

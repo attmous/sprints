@@ -8,12 +8,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from adapters.yoyopod_core.paths import (
+from workflows.code_review.paths import (
     plugin_entrypoint_path,
     runtime_paths as yoyopod_runtime_paths,
     yoyopod_cli_argv,
 )
-from adapters.yoyopod_core.status import build_status as build_yoyopod_core_status
+from workflows.code_review.status import build_status as build_yoyopod_core_status
 import sys
 
 RELAY_SCHEMA_VERSION = 2
@@ -3540,7 +3540,7 @@ def _load_legacy_workflow_module(workflow_root: Path):
     config constants, helper methods). Historically this function used to
     prefer a workspace-scoped ``yoyopod_workflow.py`` wrapper script; that
     wrapper has been retired, so the only supported resolution is via
-    ``adapters.yoyopod_core.workspace.load_workspace_from_config``.
+    ``workflows.code_review.workspace.load_workspace_from_config``.
     """
     plugin_main = plugin_entrypoint_path(workflow_root)
     if not plugin_main.exists():
@@ -3552,7 +3552,7 @@ def _load_legacy_workflow_module(workflow_root: Path):
     plugin_root = plugin_main.parents[2]
     if str(plugin_root) not in sys.path:
         sys.path.insert(0, str(plugin_root))
-    workspace_mod = importlib.import_module("adapters.yoyopod_core.workspace")
+    workspace_mod = importlib.import_module("workflows.code_review.workspace")
     return workspace_mod.load_workspace_from_config(workspace_root=workflow_root)
 
 
