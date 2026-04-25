@@ -1,5 +1,5 @@
 ---
-name: yoyopod-relay-alerts-monitoring
+name: yoyopod-daedalus-alerts-monitoring
 description: Run the YoYoPod Hermes Relay outage alert cron job, handle script/plugin breakage, and apply the job's strict send-and-dedupe contract.
 ---
 # YoYoPod Relay alerts monitoring

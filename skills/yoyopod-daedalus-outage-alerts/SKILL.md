@@ -1,5 +1,5 @@
 ---
-name: yoyopod-relay-outage-alerts
+name: yoyopod-daedalus-outage-alerts
 description: Monitor YoYoPod Relay runtime outages, deduplicate Telegram alerts, and only advance alert state after confirmed delivery.
 version: 1.0.0
 author: Hermes Agent
