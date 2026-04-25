@@ -28,30 +28,30 @@ def resolve_default_workflow_root() -> Path:
 DEFAULT_WORKFLOW_ROOT = resolve_default_workflow_root()
 DEFAULT_PROJECT_KEY = "yoyopod"
 DEFAULT_INSTANCE_ID = "daedalus-plugin"
-DEFAULT_SHADOW_SERVICE_INSTANCE_ID = "relay-shadow-service-1"
-DEFAULT_SHADOW_SERVICE_NAME = "yoyopod-relay-shadow.service"
-DEFAULT_ACTIVE_SERVICE_INSTANCE_ID = "relay-active-service-1"
-DEFAULT_ACTIVE_SERVICE_NAME = "yoyopod-relay-active.service"
-DEFAULT_SERVICE_INSTANCE_ID = DEFAULT_SHADOW_SERVICE_INSTANCE_ID
-DEFAULT_SERVICE_NAME = DEFAULT_SHADOW_SERVICE_NAME
-SERVICE_PROFILES = {
-    "shadow": {
-        "service_name": DEFAULT_SHADOW_SERVICE_NAME,
-        "instance_id": DEFAULT_SHADOW_SERVICE_INSTANCE_ID,
-        "description": "Daedalus shadow runtime",
-        "runtime_command": "run-shadow",
-    },
-    "active": {
-        "service_name": DEFAULT_ACTIVE_SERVICE_NAME,
-        "instance_id": DEFAULT_ACTIVE_SERVICE_INSTANCE_ID,
-        "description": "Daedalus active runtime",
-        "runtime_command": "run-active",
-    },
-}
 
 DAEDALUS_TEMPLATE_UNIT_FILENAMES = {
     "active": "daedalus-active@.service",
     "shadow": "daedalus-shadow@.service",
+}
+
+DAEDALUS_INSTANCE_ID_FORMAT = "daedalus-{mode}-{workspace}"
+
+
+def _instance_id_for(*, service_mode: str, workspace: str) -> str:
+    return DAEDALUS_INSTANCE_ID_FORMAT.format(mode=service_mode, workspace=workspace)
+
+
+SERVICE_PROFILES = {
+    "shadow": {
+        "template_unit": DAEDALUS_TEMPLATE_UNIT_FILENAMES["shadow"],
+        "description": "Daedalus shadow orchestrator",
+        "runtime_command": "run-shadow",
+    },
+    "active": {
+        "template_unit": DAEDALUS_TEMPLATE_UNIT_FILENAMES["active"],
+        "description": "Daedalus active orchestrator",
+        "runtime_command": "run-active",
+    },
 }
 
 
@@ -168,16 +168,24 @@ def _service_profile(service_mode: str) -> dict[str, str]:
     return profile
 
 
-def _resolve_service_name(*, service_name: str | None = None, service_mode: str = "shadow") -> str:
-    return service_name or _service_profile(service_mode)["service_name"]
+def _resolve_service_name(
+    *, service_name: str | None = None, service_mode: str = "shadow", workspace: str
+) -> str:
+    return service_name or _instance_unit_name(service_mode, workspace)
 
 
-def _resolve_service_instance_id(*, instance_id: str | None = None, service_mode: str = "shadow") -> str:
-    return instance_id or _service_profile(service_mode)["instance_id"]
+def _resolve_service_instance_id(
+    *, instance_id: str | None = None, service_mode: str = "shadow", workspace: str
+) -> str:
+    return instance_id or _instance_id_for(service_mode=service_mode, workspace=workspace)
 
 
-def _service_unit_path(service_name: str | None = None, service_mode: str = "shadow") -> Path:
-    return _systemd_user_dir() / _resolve_service_name(service_name=service_name, service_mode=service_mode)
+def _service_template_path(*, service_mode: str = "shadow") -> Path:
+    return _systemd_user_dir() / _template_unit_filename(service_mode)
+
+
+def _service_instance_name(*, service_mode: str = "shadow", workspace: str) -> str:
+    return _instance_unit_name(service_mode, workspace)
 
 
 def _expected_plugin_runtime_path(workflow_root: Path) -> Path:
@@ -193,31 +201,7 @@ def _render_service_unit(
     interval_seconds: int,
     service_mode: str = "shadow",
 ) -> str:
-    profile = _service_profile(service_mode)
-    service_path = os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin"
-    plugin_runtime = ".hermes/plugins/hermes-relay/runtime.py"
-    return "\n".join([
-        "[Unit]",
-        f"Description={profile['description']}",
-        "After=default.target",
-        "",
-        "[Service]",
-        "Type=simple",
-        f"WorkingDirectory={workflow_root}",
-        f"Environment=PATH={service_path}",
-        "Environment=PYTHONUNBUFFERED=1",
-        (
-            f"ExecStart=/usr/bin/env python3 {plugin_runtime} {profile['runtime_command']} "
-            f"--workflow-root {workflow_root} --project-key {project_key} "
-            f"--instance-id {instance_id} --interval-seconds {interval_seconds} --json"
-        ),
-        "Restart=always",
-        "RestartSec=5",
-        "",
-        "[Install]",
-        "WantedBy=default.target",
-        "",
-    ])
+    return _render_template_unit(mode=service_mode)
 
 
 def _template_unit_filename(mode: str) -> str:
@@ -291,10 +275,15 @@ def install_supervised_service(
         raise DaedalusCommandError(
             f"Daedalus plugin runtime not found at {plugin_runtime_path}; install/copy the plugin payload into the workflow root before installing the service"
         )
-    resolved_service_name = _resolve_service_name(service_name=service_name, service_mode=service_mode)
-    resolved_instance_id = _resolve_service_instance_id(instance_id=instance_id, service_mode=service_mode)
-    unit_path = _service_unit_path(service_name=resolved_service_name, service_mode=service_mode)
-    unit_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace = workflow_root.name
+    resolved_service_name = _resolve_service_name(
+        service_name=service_name, service_mode=service_mode, workspace=workspace
+    )
+    resolved_instance_id = _resolve_service_instance_id(
+        instance_id=instance_id, service_mode=service_mode, workspace=workspace
+    )
+    template_path = _service_template_path(service_mode=service_mode)
+    template_path.parent.mkdir(parents=True, exist_ok=True)
     unit_text = _render_service_unit(
         workflow_root=workflow_root,
         project_key=project_key,
@@ -302,33 +291,41 @@ def install_supervised_service(
         interval_seconds=interval_seconds,
         service_mode=service_mode,
     )
-    unit_path.write_text(unit_text, encoding="utf-8")
+    template_path.write_text(unit_text, encoding="utf-8")
     reload_result = _run_systemctl("daemon-reload")
     return {
         "installed": reload_result.get("ok", False),
         "service_mode": service_mode,
         "service_name": resolved_service_name,
         "instance_id": resolved_instance_id,
-        "unit_path": str(unit_path),
+        "unit_path": str(template_path),
         "daemon_reload": reload_result,
     }
 
 
-def uninstall_supervised_service(*, service_name: str | None = None, service_mode: str = "shadow") -> dict[str, Any]:
-    resolved_service_name = _resolve_service_name(service_name=service_name, service_mode=service_mode)
-    unit_path = _service_unit_path(service_name=resolved_service_name, service_mode=service_mode)
+def uninstall_supervised_service(
+    *,
+    workflow_root: Path,
+    service_name: str | None = None,
+    service_mode: str = "shadow",
+) -> dict[str, Any]:
+    workspace = workflow_root.name
+    resolved_service_name = _resolve_service_name(
+        service_name=service_name, service_mode=service_mode, workspace=workspace
+    )
+    template_path = _service_template_path(service_mode=service_mode)
     stop_result = _run_systemctl("stop", resolved_service_name)
     disable_result = _run_systemctl("disable", resolved_service_name)
     removed = False
-    if unit_path.exists():
-        unit_path.unlink()
+    if template_path.exists():
+        template_path.unlink()
         removed = True
     reload_result = _run_systemctl("daemon-reload")
     return {
         "uninstalled": removed or stop_result.get("ok") or disable_result.get("ok"),
         "service_mode": service_mode,
         "service_name": resolved_service_name,
-        "unit_path": str(unit_path),
+        "unit_path": str(template_path),
         "removed_unit_file": removed,
         "stop": stop_result,
         "disable": disable_result,
@@ -336,9 +333,19 @@ def uninstall_supervised_service(*, service_name: str | None = None, service_mod
     }
 
 
-def service_control(action: str, *, service_name: str | None = None, service_mode: str = "shadow", extra_args: list[str] | None = None) -> dict[str, Any]:
+def service_control(
+    action: str,
+    *,
+    workflow_root: Path,
+    service_name: str | None = None,
+    service_mode: str = "shadow",
+    extra_args: list[str] | None = None,
+) -> dict[str, Any]:
     extra_args = extra_args or []
-    resolved_service_name = _resolve_service_name(service_name=service_name, service_mode=service_mode)
+    workspace = workflow_root.name
+    resolved_service_name = _resolve_service_name(
+        service_name=service_name, service_mode=service_mode, workspace=workspace
+    )
     result = _run_systemctl(action, *extra_args, resolved_service_name)
     return {
         "action": action,
@@ -348,8 +355,17 @@ def service_control(action: str, *, service_name: str | None = None, service_mod
     }
 
 
-def service_status(*, service_name: str | None = None, service_mode: str = "shadow") -> dict[str, Any]:
-    resolved_service_name = _resolve_service_name(service_name=service_name, service_mode=service_mode)
+def service_status(
+    *,
+    workflow_root: Path,
+    service_name: str | None = None,
+    service_mode: str = "shadow",
+) -> dict[str, Any]:
+    workspace = workflow_root.name
+    resolved_service_name = _resolve_service_name(
+        service_name=service_name, service_mode=service_mode, workspace=workspace
+    )
+    template_path = _service_template_path(service_mode=service_mode)
     active = _run_systemctl("is-active", resolved_service_name)
     enabled = _run_systemctl("is-enabled", resolved_service_name)
     show = _run_systemctl(
@@ -372,22 +388,31 @@ def service_status(*, service_name: str | None = None, service_mode: str = "shad
         "active_check": active,
         "enabled_check": enabled,
         "show": show,
-        "unit_path": str(_service_unit_path(service_name=resolved_service_name, service_mode=service_mode)),
-        "installed": _service_unit_path(service_name=resolved_service_name, service_mode=service_mode).exists(),
+        "unit_path": str(template_path),
+        "installed": template_path.exists(),
     }
 
 
-def _expected_supervised_service_mode(runtime_status: dict[str, Any]) -> str | None:
+def _expected_supervised_service_mode(
+    runtime_status: dict[str, Any], *, workspace: str
+) -> str | None:
     current_mode = runtime_status.get("current_mode")
     owner_instance_id = runtime_status.get("active_orchestrator_instance_id")
-    for service_mode, profile in SERVICE_PROFILES.items():
-        if current_mode == service_mode and owner_instance_id == profile.get("instance_id"):
+    for service_mode in SERVICE_PROFILES:
+        expected_instance_id = _instance_id_for(service_mode=service_mode, workspace=workspace)
+        if current_mode == service_mode and owner_instance_id == expected_instance_id:
             return service_mode
     return None
 
 
-def _evaluate_service_supervision(*, runtime_status: dict[str, Any], service_info: dict[str, Any] | None) -> dict[str, Any]:
-    expected_service_mode = _expected_supervised_service_mode(runtime_status)
+def _evaluate_service_supervision(
+    *,
+    runtime_status: dict[str, Any],
+    service_info: dict[str, Any] | None,
+    workflow_root: Path,
+) -> dict[str, Any]:
+    workspace = workflow_root.name
+    expected_service_mode = _expected_supervised_service_mode(runtime_status, workspace=workspace)
     if not expected_service_mode:
         return {
             "expected_service_mode": None,
@@ -395,7 +420,9 @@ def _evaluate_service_supervision(*, runtime_status: dict[str, Any], service_inf
             "reasons": [],
             "summary": "Runtime is not using a supervised service profile",
         }
-    service_info = service_info or service_status(service_mode=expected_service_mode)
+    service_info = service_info or service_status(
+        workflow_root=workflow_root, service_mode=expected_service_mode
+    )
     reasons = []
     if not service_info.get("installed"):
         reasons.append("service-missing")
@@ -416,8 +443,17 @@ def _evaluate_service_supervision(*, runtime_status: dict[str, Any], service_inf
     }
 
 
-def service_logs(*, service_name: str | None = None, service_mode: str = "shadow", lines: int = 50) -> dict[str, Any]:
-    resolved_service_name = _resolve_service_name(service_name=service_name, service_mode=service_mode)
+def service_logs(
+    *,
+    workflow_root: Path,
+    service_name: str | None = None,
+    service_mode: str = "shadow",
+    lines: int = 50,
+) -> dict[str, Any]:
+    workspace = workflow_root.name
+    resolved_service_name = _resolve_service_name(
+        service_name=service_name, service_mode=service_mode, workspace=workspace
+    )
     completed = subprocess.run(
         ["journalctl", "--user", "-u", resolved_service_name, "-n", str(lines), "--no-pager", "-o", "cat"],
         capture_output=True,
@@ -470,10 +506,18 @@ def build_shadow_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
         "gate_reasons": gate.get("reasons") or [],
     }
 
-    expected_service_mode = _expected_supervised_service_mode(runtime_status)
+    expected_service_mode = _expected_supervised_service_mode(
+        runtime_status, workspace=workflow_root.name
+    )
     if expected_service_mode:
-        service_info = service_status(service_mode=expected_service_mode)
-        service_health = _evaluate_service_supervision(runtime_status=runtime_status, service_info=service_info)
+        service_info = service_status(
+            workflow_root=workflow_root, service_mode=expected_service_mode
+        )
+        service_health = _evaluate_service_supervision(
+            runtime_status=runtime_status,
+            service_info=service_info,
+            workflow_root=workflow_root,
+        )
         owner_summary["service_healthy"] = service_health.get("healthy")
         if not service_health.get("healthy"):
             warnings.append(
@@ -1061,48 +1105,56 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     service_install_cmd.set_defaults(func=run_cli_command)
 
     service_uninstall_cmd = sub.add_parser("service-uninstall", help="Remove the supervised Daedalus systemd user service.")
+    service_uninstall_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     service_uninstall_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_uninstall_cmd.add_argument("--service-name")
     service_uninstall_cmd.add_argument("--json", action="store_true")
     service_uninstall_cmd.set_defaults(func=run_cli_command)
 
     service_start_cmd = sub.add_parser("service-start", help="Start the supervised Daedalus systemd user service.")
+    service_start_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     service_start_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_start_cmd.add_argument("--service-name")
     service_start_cmd.add_argument("--json", action="store_true")
     service_start_cmd.set_defaults(func=run_cli_command)
 
     service_stop_cmd = sub.add_parser("service-stop", help="Stop the supervised Daedalus systemd user service.")
+    service_stop_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     service_stop_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_stop_cmd.add_argument("--service-name")
     service_stop_cmd.add_argument("--json", action="store_true")
     service_stop_cmd.set_defaults(func=run_cli_command)
 
     service_restart_cmd = sub.add_parser("service-restart", help="Restart the supervised Daedalus systemd user service.")
+    service_restart_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     service_restart_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_restart_cmd.add_argument("--service-name")
     service_restart_cmd.add_argument("--json", action="store_true")
     service_restart_cmd.set_defaults(func=run_cli_command)
 
     service_enable_cmd = sub.add_parser("service-enable", help="Enable the supervised Daedalus systemd user service.")
+    service_enable_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     service_enable_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_enable_cmd.add_argument("--service-name")
     service_enable_cmd.add_argument("--json", action="store_true")
     service_enable_cmd.set_defaults(func=run_cli_command)
 
     service_disable_cmd = sub.add_parser("service-disable", help="Disable the supervised Daedalus systemd user service.")
+    service_disable_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     service_disable_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_disable_cmd.add_argument("--service-name")
     service_disable_cmd.add_argument("--json", action="store_true")
     service_disable_cmd.set_defaults(func=run_cli_command)
 
     service_status_cmd = sub.add_parser("service-status", help="Show supervised Daedalus systemd user service status.")
+    service_status_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     service_status_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_status_cmd.add_argument("--service-name")
     service_status_cmd.add_argument("--json", action="store_true")
     service_status_cmd.set_defaults(func=run_cli_command)
 
     service_logs_cmd = sub.add_parser("service-logs", help="Show recent logs for the supervised Daedalus systemd user service.")
+    service_logs_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     service_logs_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_logs_cmd.add_argument("--service-name")
     service_logs_cmd.add_argument("--lines", type=int, default=50)
@@ -1302,21 +1354,59 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             service_mode=args.service_mode,
         )
     if args.daedalus_command == "service-uninstall":
-        return uninstall_supervised_service(service_name=args.service_name, service_mode=args.service_mode)
+        return uninstall_supervised_service(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            service_mode=args.service_mode,
+        )
     if args.daedalus_command == "service-start":
-        return service_control("start", service_name=args.service_name, service_mode=args.service_mode)
+        return service_control(
+            "start",
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            service_mode=args.service_mode,
+        )
     if args.daedalus_command == "service-stop":
-        return service_control("stop", service_name=args.service_name, service_mode=args.service_mode)
+        return service_control(
+            "stop",
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            service_mode=args.service_mode,
+        )
     if args.daedalus_command == "service-restart":
-        return service_control("restart", service_name=args.service_name, service_mode=args.service_mode)
+        return service_control(
+            "restart",
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            service_mode=args.service_mode,
+        )
     if args.daedalus_command == "service-enable":
-        return service_control("enable", service_name=args.service_name, service_mode=args.service_mode)
+        return service_control(
+            "enable",
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            service_mode=args.service_mode,
+        )
     if args.daedalus_command == "service-disable":
-        return service_control("disable", service_name=args.service_name, service_mode=args.service_mode)
+        return service_control(
+            "disable",
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            service_mode=args.service_mode,
+        )
     if args.daedalus_command == "service-status":
-        return service_status(service_name=args.service_name, service_mode=args.service_mode)
+        return service_status(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            service_mode=args.service_mode,
+        )
     if args.daedalus_command == "service-logs":
-        return service_logs(service_name=args.service_name, service_mode=args.service_mode, lines=args.lines)
+        return service_logs(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            service_mode=args.service_mode,
+            lines=args.lines,
+        )
     if args.daedalus_command == "ingest-live":
         return daedalus.ingest_live_legacy_status(workflow_root=workflow_root)
     if args.daedalus_command == "heartbeat":
