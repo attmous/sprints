@@ -221,6 +221,11 @@ def _render_template_unit(*, mode: str) -> str:
         raise DaedalusCommandError(f"unknown service mode: {mode}")
     description = f"Daedalus {mode} orchestrator (workspace=%i)"
     runtime_command = f"run-{mode}"
+    # PATH is captured at unit-render time and embedded so the runtime can
+    # find user-installed CLIs (gh, codex, claude, etc.) under ~/.local/bin.
+    # systemd's default user PATH is minimal (/usr/bin:/bin) and would
+    # cause FileNotFoundError on those tools at first subprocess call.
+    service_path = os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin"
     return "\n".join([
         "[Unit]",
         f"Description={description}",
@@ -229,6 +234,7 @@ def _render_template_unit(*, mode: str) -> str:
         "[Service]",
         "Type=simple",
         "WorkingDirectory=%h/.hermes/workflows/%i",
+        f"Environment=PATH={service_path}",
         "Environment=PYTHONUNBUFFERED=1",
         (
             f"ExecStart=/usr/bin/env python3 %h/.hermes/plugins/daedalus/runtime.py "
