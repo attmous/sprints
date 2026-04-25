@@ -390,15 +390,15 @@ def service_logs(*, service_name: str | None = None, service_mode: str = "shadow
 
 
 def build_shadow_report(*, workflow_root: Path, recent_actions_limit: int = 5) -> dict[str, Any]:
-    relay = _load_daedalus_module(workflow_root)
-    runtime_status = relay.get_runtime_status(workflow_root=workflow_root)
+    daedalus = _load_daedalus_module(workflow_root)
+    runtime_status = daedalus.get_runtime_status(workflow_root=workflow_root)
     if runtime_status.get("runtime_status") == "missing":
         raise DaedalusCommandError("Relay runtime is not initialized; run `relay start` first")
 
     legacy_status = _build_project_status(workflow_root)
-    now_iso = relay._now_iso()
-    now_epoch = relay._iso_to_epoch(now_iso)
-    ingest = relay.ingest_legacy_status(
+    now_iso = daedalus._now_iso()
+    now_epoch = daedalus._iso_to_epoch(now_iso)
+    ingest = daedalus.ingest_legacy_status(
         workflow_root=workflow_root,
         legacy_status=legacy_status,
         now_iso=now_iso,
@@ -412,13 +412,13 @@ def build_shadow_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
     warnings = []
     service_info = None
     service_health = None
-    gate = relay.evaluate_active_execution_gate(
+    gate = daedalus.evaluate_active_execution_gate(
         workflow_root=workflow_root,
         legacy_status=legacy_status,
     )
     owner_summary = {
         "primary_owner": gate.get("primary_owner"),
-        "relay_primary": gate.get("primary_owner") == relay.RELAY_OWNER,
+        "relay_primary": gate.get("primary_owner") == daedalus.RELAY_OWNER,
         "active_execution_enabled": (gate.get("execution") or {}).get("active_execution_enabled"),
         "gate_allowed": gate.get("allowed"),
         "gate_reasons": gate.get("reasons") or [],
@@ -436,7 +436,7 @@ def build_shadow_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
     else:
         owner_summary["service_healthy"] = None
 
-    paths = relay._runtime_paths(workflow_root)
+    paths = daedalus._runtime_paths(workflow_root)
     conn = sqlite3.connect(paths["db_path"])
     conn.row_factory = sqlite3.Row
     try:
@@ -446,12 +446,12 @@ def build_shadow_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
             FROM leases
             WHERE lease_scope=? AND lease_key=?
             """,
-            (relay.RUNTIME_LEASE_SCOPE, relay.RUNTIME_LEASE_KEY),
+            (daedalus.RUNTIME_LEASE_SCOPE, daedalus.RUNTIME_LEASE_KEY),
         ).fetchone()
         if lease_row:
             lease = dict(lease_row)
-            expires_epoch = relay._iso_to_epoch(lease.get("expires_at"))
-            heartbeat_epoch = relay._iso_to_epoch(runtime_status.get("latest_heartbeat_at"))
+            expires_epoch = daedalus._iso_to_epoch(lease.get("expires_at"))
+            heartbeat_epoch = daedalus._iso_to_epoch(runtime_status.get("latest_heartbeat_at"))
             heartbeat_age_seconds = (
                 max(0, now_epoch - heartbeat_epoch)
                 if now_epoch is not None and heartbeat_epoch is not None
@@ -517,7 +517,7 @@ def build_shadow_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
                         (lane_id,),
                     ).fetchall()
                 ]
-                derived_actions = relay.derive_shadow_actions_for_lane(
+                derived_actions = daedalus.derive_shadow_actions_for_lane(
                     lane_row=lane,
                     reviews=reviews,
                     actor_row=actor,
@@ -558,7 +558,7 @@ def build_shadow_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
                 (recent_actions_limit,),
             ).fetchall()
         ]
-        recent_failures = relay.query_recent_failures(
+        recent_failures = daedalus.query_recent_failures(
             workflow_root=workflow_root,
             limit=recent_actions_limit,
             unresolved_only=True,
@@ -626,7 +626,7 @@ def build_doctor_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
         workflow_root=workflow_root,
         recent_actions_limit=recent_actions_limit,
     )
-    relay = _load_daedalus_module(workflow_root)
+    daedalus = _load_daedalus_module(workflow_root)
     legacy_status = _build_project_status(workflow_root)
     runtime = shadow_report.get("runtime") or {}
     heartbeat = shadow_report.get("heartbeat") or {}
@@ -785,7 +785,7 @@ def build_doctor_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
     )
 
     active_lane_id = active_lane.get("lane_id")
-    stuck_dispatched_actions = relay.query_stuck_dispatched_actions(
+    stuck_dispatched_actions = daedalus.query_stuck_dispatched_actions(
         workflow_root=workflow_root,
         lane_id=active_lane_id,
         now_iso=shadow_report.get("report_generated_at"),
@@ -804,7 +804,7 @@ def build_doctor_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
             ),
             details={
                 "lane_id": active_lane_id,
-                "timeout_seconds": relay.DISPATCHED_ACTION_TIMEOUT_SECONDS,
+                "timeout_seconds": daedalus.DISPATCHED_ACTION_TIMEOUT_SECONDS,
                 "count": len(stuck_dispatched_actions),
                 "actions": [
                     {
@@ -1080,8 +1080,8 @@ def _run_wrapper_json_command(*, workflow_root: Path, command: str) -> dict[str,
 
 
 def _record_operator_command_event(*, workflow_root: Path, args: argparse.Namespace) -> None:
-    relay = _load_daedalus_module(workflow_root)
-    now_iso = relay._now_iso()
+    daedalus = _load_daedalus_module(workflow_root)
+    now_iso = daedalus._now_iso()
     arguments_json = {}
     for key, value in vars(args).items():
         if key in {"func", "json", "_command_source"}:
@@ -1090,8 +1090,8 @@ def _record_operator_command_event(*, workflow_root: Path, args: argparse.Namesp
             arguments_json[key] = str(value)
         else:
             arguments_json[key] = value
-    relay.append_daedalus_event(
-        event_log_path=relay._runtime_paths(workflow_root)["event_log_path"],
+    daedalus.append_daedalus_event(
+        event_log_path=daedalus._runtime_paths(workflow_root)["event_log_path"],
         event={
             "event_id": f"evt:operator_command_received:{args.relay_command}:{now_iso}",
             "event_type": "operator_command_received",
@@ -1119,20 +1119,20 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
     workflow_root = Path(args.workflow_root).resolve() if hasattr(args, "workflow_root") else None
     if workflow_root is not None and getattr(args, "relay_command", None):
         _record_operator_command_event(workflow_root=workflow_root, args=args)
-    relay = _load_daedalus_module(workflow_root) if workflow_root is not None else None
-    paths = relay._runtime_paths(workflow_root) if relay is not None else None
+    daedalus = _load_daedalus_module(workflow_root) if workflow_root is not None else None
+    paths = daedalus._runtime_paths(workflow_root) if daedalus is not None else None
 
     if args.relay_command == "init":
-        return relay.init_daedalus_db(workflow_root=workflow_root, project_key=args.project_key)
+        return daedalus.init_daedalus_db(workflow_root=workflow_root, project_key=args.project_key)
     if args.relay_command == "start":
-        return relay.bootstrap_runtime(
+        return daedalus.bootstrap_runtime(
             workflow_root=workflow_root,
             project_key=args.project_key,
             instance_id=args.instance_id,
             mode=args.mode,
         )
     if args.relay_command == "status":
-        return relay.get_runtime_status(workflow_root=workflow_root)
+        return daedalus.get_runtime_status(workflow_root=workflow_root)
     if args.relay_command == "shadow-report":
         return build_shadow_report(
             workflow_root=workflow_root,
@@ -1169,20 +1169,20 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
     if args.relay_command == "service-logs":
         return service_logs(service_name=args.service_name, service_mode=args.service_mode, lines=args.lines)
     if args.relay_command == "ingest-live":
-        return relay.ingest_live_legacy_status(workflow_root=workflow_root)
+        return daedalus.ingest_live_legacy_status(workflow_root=workflow_root)
     if args.relay_command == "heartbeat":
-        return relay.refresh_runtime_lease(
+        return daedalus.refresh_runtime_lease(
             workflow_root=workflow_root,
             instance_id=args.instance_id,
             ttl_seconds=args.ttl_seconds,
         )
     if args.relay_command == "iterate-shadow":
-        return relay.run_shadow_iteration(
+        return daedalus.run_shadow_iteration(
             workflow_root=workflow_root,
             instance_id=args.instance_id,
         )
     if args.relay_command == "run-shadow":
-        return relay.run_shadow_loop(
+        return daedalus.run_shadow_loop(
             workflow_root=workflow_root,
             project_key=args.project_key,
             instance_id=args.instance_id,
@@ -1191,12 +1191,12 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
         )
     if args.relay_command == "active-gate-status":
         legacy_status = _run_wrapper_json_command(workflow_root=workflow_root, command="status --json")
-        return relay.evaluate_active_execution_gate(
+        return daedalus.evaluate_active_execution_gate(
             workflow_root=workflow_root,
             legacy_status=legacy_status,
         )
     if args.relay_command == "set-active-execution":
-        relay.set_execution_control(
+        daedalus.set_execution_control(
             workflow_root=workflow_root,
             active_execution_enabled=(args.enabled == "true"),
             metadata={"source": "relay-control", "enabled": args.enabled},
@@ -1204,15 +1204,15 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
         legacy_status = _run_wrapper_json_command(workflow_root=workflow_root, command="status --json")
         return {
             "requested_enabled": (args.enabled == "true"),
-            "gate": relay.evaluate_active_execution_gate(workflow_root=workflow_root, legacy_status=legacy_status),
+            "gate": daedalus.evaluate_active_execution_gate(workflow_root=workflow_root, legacy_status=legacy_status),
         }
     if args.relay_command == "iterate-active":
-        return relay.run_active_iteration(
+        return daedalus.run_active_iteration(
             workflow_root=workflow_root,
             instance_id=args.instance_id,
         )
     if args.relay_command == "run-active":
-        return relay.run_active_loop(
+        return daedalus.run_active_loop(
             workflow_root=workflow_root,
             project_key=args.project_key,
             instance_id=args.instance_id,
@@ -1220,17 +1220,17 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             max_iterations=args.max_iterations,
         )
     if args.relay_command == "request-active-actions":
-        return relay.request_active_actions_for_lane(
+        return daedalus.request_active_actions_for_lane(
             workflow_root=workflow_root,
             lane_id=args.lane_id,
         )
     if args.relay_command == "execute-action":
-        return relay.execute_requested_action(
+        return daedalus.execute_requested_action(
             workflow_root=workflow_root,
             action_id=args.action_id,
         )
     if args.relay_command == "analyze-failure":
-        return relay.analyze_failure(
+        return daedalus.analyze_failure(
             workflow_root=workflow_root,
             failure_id=args.failure_id,
         )
