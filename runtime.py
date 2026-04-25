@@ -511,7 +511,7 @@ def init_daedalus_db(*, workflow_root: Path, project_key: str) -> dict[str, Any]
     finally:
         conn.close()
 
-def append_relay_event(*, event_log_path: Path, event: dict[str, Any]) -> dict[str, Any]:
+def append_daedalus_event(*, event_log_path: Path, event: dict[str, Any]) -> dict[str, Any]:
     _ensure_parent(event_log_path)
     with event_log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, sort_keys=True) + "\n")
@@ -667,7 +667,7 @@ def set_execution_control(
         conn.commit()
     finally:
         conn.close()
-    append_relay_event(
+    append_daedalus_event(
         event_log_path=paths["event_log_path"],
         event={
             "event_id": f"evt:active_execution_control_updated:{int(bool(active_execution_enabled))}:{now_iso}",
@@ -776,7 +776,7 @@ def bootstrap_runtime(
             "checkpoint_path": None,
         },
     }
-    append_relay_event(event_log_path=paths["event_log_path"], event=event)
+    append_daedalus_event(event_log_path=paths["event_log_path"], event=event)
     return {
         "runtime_status": "running",
         "instance_id": instance_id,
@@ -1050,7 +1050,7 @@ def ingest_legacy_status(*, workflow_root: Path, legacy_status: dict[str, Any], 
         conn.commit()
     finally:
         conn.close()
-    append_relay_event(
+    append_daedalus_event(
         event_log_path=paths["event_log_path"],
         event={
             "event_id": f"evt:lane_promoted:{lane_id}:{now_iso}",
@@ -1304,7 +1304,7 @@ def persist_shadow_actions(*, workflow_root: Path, lane_id: str, now_iso: str | 
     finally:
         conn.close()
     for event in events_to_emit:
-        append_relay_event(event_log_path=paths["event_log_path"], event=event)
+        append_daedalus_event(event_log_path=paths["event_log_path"], event=event)
     return persisted
 
 
@@ -1449,7 +1449,7 @@ def request_active_actions_for_lane(*, workflow_root: Path, lane_id: str, now_is
     finally:
         conn.close()
     for event in events_to_emit:
-        append_relay_event(event_log_path=paths["event_log_path"], event=event)
+        append_daedalus_event(event_log_path=paths["event_log_path"], event=event)
     return persisted
 
 
@@ -1917,7 +1917,7 @@ def reap_stuck_dispatched_actions(*, workflow_root: Path, lane_id: str, now_iso:
     finally:
         conn.close()
     for event in events_to_emit:
-        append_relay_event(event_log_path=paths["event_log_path"], event=event)
+        append_daedalus_event(event_log_path=paths["event_log_path"], event=event)
     return {
         "checked": len(stuck_actions),
         "reaped": len(reaped_failures),
@@ -3061,7 +3061,7 @@ def execute_requested_action(
         else:
             failure_class = raw_failure_class
         conn.commit()
-        append_relay_event(
+        append_daedalus_event(
             event_log_path=paths["event_log_path"],
             event={
                 "event_id": f"evt:active_action_failed:{action_id}:{now_iso}",
@@ -3079,7 +3079,7 @@ def execute_requested_action(
                 "payload": {"error": failure_summary, "action_type": (action or {}).get("action_type")},
             },
         )
-        append_relay_event(
+        append_daedalus_event(
             event_log_path=paths["event_log_path"],
             event={
                 "event_id": f"evt:failure_detected:{action_id}:{now_iso}",
@@ -3110,11 +3110,11 @@ def execute_requested_action(
             failure_summary=failure_summary,
             now_iso=now_iso,
         ):
-            append_relay_event(event_log_path=paths["event_log_path"], event=event)
+            append_daedalus_event(event_log_path=paths["event_log_path"], event=event)
         for event in analysis_events:
-            append_relay_event(event_log_path=paths["event_log_path"], event=event)
+            append_daedalus_event(event_log_path=paths["event_log_path"], event=event)
         if recovery_action:
-            append_relay_event(
+            append_daedalus_event(
                 event_log_path=paths["event_log_path"],
                 event={
                     "event_id": f"evt:active_action_requested:{recovery_action['action_id']}:{now_iso}",
@@ -3138,7 +3138,7 @@ def execute_requested_action(
                 },
             )
         elif action:
-            append_relay_event(
+            append_daedalus_event(
                 event_log_path=paths["event_log_path"],
                 event={
                     "event_id": f"evt:operator_attention_required:{action_id}:{now_iso}",
@@ -3163,7 +3163,7 @@ def execute_requested_action(
         return {"executed": False, "action_id": action_id, "reason": "execution-failed", "error": failure_summary}
     finally:
         conn.close()
-    append_relay_event(
+    append_daedalus_event(
         event_log_path=paths["event_log_path"],
         event={
             "event_id": f"evt:active_action_completed:{action_id}:{now_iso}",
@@ -3189,7 +3189,7 @@ def execute_requested_action(
         post_legacy_status=post_action_status,
         now_iso=now_iso,
     ):
-        append_relay_event(event_log_path=paths["event_log_path"], event=event)
+        append_daedalus_event(event_log_path=paths["event_log_path"], event=event)
     return {"executed": True, "action_id": action_id, "action_type": action.get("action_type"), "result": result}
 
 
@@ -3248,7 +3248,7 @@ def refresh_runtime_lease(*, workflow_root: Path, instance_id: str, now_iso: str
         conn.commit()
     finally:
         conn.close()
-    append_relay_event(
+    append_daedalus_event(
         event_log_path=paths["event_log_path"],
         event={
             "event_id": f"evt:relay_runtime_heartbeat:{instance_id}:{now_iso}",
@@ -3365,7 +3365,7 @@ def reconcile_stalled_recoveries(*, workflow_root: Path, lane_id: str, now_iso: 
     finally:
         conn.close()
     for event in events_to_emit:
-        append_relay_event(event_log_path=paths["event_log_path"], event=event)
+        append_daedalus_event(event_log_path=paths["event_log_path"], event=event)
     return {"checked": len(recent_failures), "stalled": len(recent_failures), "escalated": escalated}
 
 

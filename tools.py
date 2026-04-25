@@ -1090,7 +1090,7 @@ def _record_operator_command_event(*, workflow_root: Path, args: argparse.Namesp
             arguments_json[key] = str(value)
         else:
             arguments_json[key] = value
-    relay.append_relay_event(
+    relay.append_daedalus_event(
         event_log_path=relay._runtime_paths(workflow_root)["event_log_path"],
         event={
             "event_id": f"evt:operator_command_received:{args.relay_command}:{now_iso}",
