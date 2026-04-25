@@ -33,7 +33,7 @@ def _load_migration_module():
     return module
 
 
-RELAY_SCHEMA_VERSION = 2
+DAEDALUS_SCHEMA_VERSION = 2
 RUNTIME_LEASE_KEY = "primary-orchestrator"
 RUNTIME_LEASE_SCOPE = "runtime"
 EXECUTION_CONTROL_ID = "primary"
@@ -445,7 +445,7 @@ def init_daedalus_db(*, workflow_root: Path, project_key: str) -> dict[str, Any]
         runtime_row = conn.execute(
             "SELECT schema_version FROM relay_runtime WHERE runtime_id='relay'"
         ).fetchone()
-        current_schema_version = int(runtime_row[0]) if runtime_row else RELAY_SCHEMA_VERSION
+        current_schema_version = int(runtime_row[0]) if runtime_row else DAEDALUS_SCHEMA_VERSION
         if runtime_row is None:
             conn.execute(
                 """
@@ -460,7 +460,7 @@ def init_daedalus_db(*, workflow_root: Path, project_key: str) -> dict[str, Any]
                 (
                     "relay",
                     project_key,
-                    RELAY_SCHEMA_VERSION,
+                    DAEDALUS_SCHEMA_VERSION,
                     "initialized",
                     "Hermes Relay",
                     "Workflow_Orchestrator",
@@ -471,7 +471,7 @@ def init_daedalus_db(*, workflow_root: Path, project_key: str) -> dict[str, Any]
                 ),
             )
         else:
-            if current_schema_version > RELAY_SCHEMA_VERSION:
+            if current_schema_version > DAEDALUS_SCHEMA_VERSION:
                 raise RuntimeError(f"unsupported relay schema version: {current_schema_version}")
             conn.execute(
                 """
@@ -481,7 +481,7 @@ def init_daedalus_db(*, workflow_root: Path, project_key: str) -> dict[str, Any]
                 """,
                 (project_key, now_iso),
             )
-            if current_schema_version < RELAY_SCHEMA_VERSION:
+            if current_schema_version < DAEDALUS_SCHEMA_VERSION:
                 _migrate_relay_schema_v1_to_v2(conn=conn, now_iso=now_iso)
                 conn.execute(
                     """
@@ -489,7 +489,7 @@ def init_daedalus_db(*, workflow_root: Path, project_key: str) -> dict[str, Any]
                     SET schema_version=?, updated_at=?
                     WHERE runtime_id='relay'
                     """,
-                    (RELAY_SCHEMA_VERSION, now_iso),
+                    (DAEDALUS_SCHEMA_VERSION, now_iso),
                 )
         _migrate_execution_control_table(conn, now_iso=now_iso)
         conn.execute(
