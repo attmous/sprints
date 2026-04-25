@@ -18,7 +18,7 @@ from workflows.code_review.paths import (
 from workflows.code_review.status import build_status as build_yoyopod_core_status
 
 PLUGIN_DIR = Path(__file__).resolve().parent
-DEFAULT_WORKFLOW_ROOT_ENV_VARS = ("YOYOPOD_RELAY_WORKFLOW_ROOT", "HERMES_RELAY_WORKFLOW_ROOT")
+DEFAULT_WORKFLOW_ROOT_ENV_VARS = ("DAEDALUS_WORKFLOW_ROOT",)
 
 
 def resolve_default_workflow_root() -> Path:
@@ -150,7 +150,7 @@ def _make_check(code: str, status: str, severity: str, summary: str, details: di
 
 
 def _systemd_user_dir() -> Path:
-    override = os.environ.get("RELAY_SYSTEMD_USER_DIR")
+    override = os.environ.get("DAEDALUS_SYSTEMD_USER_DIR")
     if override:
         return Path(override).expanduser().resolve()
     return (Path.home() / ".config" / "systemd" / "user").resolve()

@@ -5,7 +5,7 @@ Invocation:
     python3 -m workflows --workflow-root <path> <subcommand> [args ...]
 
 If ``--workflow-root`` is omitted, the entrypoint honors these env vars
-(first match wins): ``YOYOPOD_WORKFLOW_ROOT``, ``HERMES_RELAY_WORKFLOW_ROOT``.
+(first match wins): ``DAEDALUS_WORKFLOW_ROOT``, ``YOYOPOD_WORKFLOW_ROOT``.
 If neither is set, ``~/.hermes/workflows/yoyopod`` is used as a last-resort
 default (matches the historical layout).
 """
@@ -19,7 +19,7 @@ from pathlib import Path
 from workflows import run_cli
 
 
-_WORKFLOW_ROOT_ENV_VARS = ("YOYOPOD_WORKFLOW_ROOT", "HERMES_RELAY_WORKFLOW_ROOT")
+_WORKFLOW_ROOT_ENV_VARS = ("DAEDALUS_WORKFLOW_ROOT", "YOYOPOD_WORKFLOW_ROOT")
 
 
 def _resolve_workflow_root(argv: list[str]) -> tuple[Path, list[str]]:
