@@ -82,9 +82,17 @@ def workflow_cli_argv(workflow_root: Path, *command_args: str) -> list[str]:
     under ``workflow_root``, the returned path still points at the expected
     install location — callers get a clear ``FileNotFoundError`` at subprocess
     spawn time, which reliably directs operators to run ``./scripts/install.sh``.
+
+    Uses ``sys.executable`` instead of bare ``"python3"`` so the subprocess
+    runs under the same interpreter the calling runtime is using. Bare
+    ``"python3"`` would resolve via PATH and on a host with multiple pythons
+    (homebrew, node-managed, system) could pick an interpreter missing
+    pyyaml/jsonschema — the installer's _check_runtime_deps validates against
+    the calling runtime's interpreter, not whatever PATH-first python3 is.
     """
+    import sys
     plugin_path = plugin_entrypoint_path(workflow_root)
-    return ["python3", str(plugin_path), *command_args]
+    return [sys.executable, str(plugin_path), *command_args]
 
 
 # Back-compat alias; remove in 0.3.0

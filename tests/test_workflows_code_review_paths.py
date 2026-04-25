@@ -83,8 +83,9 @@ def test_workflow_cli_argv_prefers_plugin_entrypoint_when_installed(tmp_path):
     plugin_main.parent.mkdir(parents=True)
     plugin_main.write_text("# main\n", encoding="utf-8")
 
+    import sys as _sys
     argv = paths_module.workflow_cli_argv(workflow_root, "status", "--json")
-    assert argv == ["python3", str(plugin_main), "status", "--json"]
+    assert argv == [_sys.executable, str(plugin_main), "status", "--json"]
 
 
 def test_yoyopod_cli_argv_is_backcompat_alias(tmp_path):
@@ -102,8 +103,12 @@ def test_workflow_cli_argv_always_targets_generic_dispatcher(tmp_path):
     paths_module = load_module("daedalus_workflows_code_review_paths_test", "workflows/code_review/paths.py")
     workflow_root = tmp_path / "workflow"
 
+    import sys as _sys
     argv = paths_module.workflow_cli_argv(workflow_root, "status", "--json")
-    assert argv[0] == "python3"
+    # argv[0] is sys.executable (absolute path to the calling interpreter,
+    # not bare "python3") so subprocess inherits the right pyyaml/jsonschema
+    # environment regardless of PATH ordering on the host.
+    assert argv[0] == _sys.executable
     assert argv[1].endswith("/.hermes/plugins/daedalus/workflows/__main__.py")
     assert argv[2:] == ["status", "--json"]
 
