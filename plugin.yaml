@@ -1,6 +1,6 @@
-name: hermes-relay
-version: 0.2.0
-description: Hermes Relay operator control surface and runtime plugin.
+name: daedalus
+version: 0.3.0
+description: Daedalus workflow engine and operator control surface.
 author: Hermes Agent
 provides_hooks: []
 provides_tools: []
