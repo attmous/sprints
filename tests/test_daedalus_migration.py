@@ -1,8 +1,6 @@
 import importlib.util
 from pathlib import Path
 
-import pytest
-
 
 MIGRATION_MODULE_PATH = Path(__file__).resolve().parents[1] / "migration.py"
 
@@ -102,3 +100,44 @@ def test_migrate_filesystem_state_skips_old_when_new_present(tmp_path):
     assert (old_dir / "relay.db").read_bytes() == b"old-data"
     assert (new_dir / "daedalus.db").read_bytes() == b"new-data"
     assert result == []
+
+
+def test_migrate_filesystem_state_keeps_orphan_wal_when_new_db_already_exists(tmp_path):
+    """Triplet atomicity: if new main DB already exists, do NOT move
+    the old WAL/SHM sidecars (they belong to a different DB)."""
+    migration = load_migration_module()
+    old_dir = tmp_path / "state" / "relay"
+    old_dir.mkdir(parents=True)
+    (old_dir / "relay.db").write_bytes(b"old-db")
+    (old_dir / "relay.db-wal").write_bytes(b"old-wal")
+    (old_dir / "relay.db-shm").write_bytes(b"old-shm")
+    new_dir = tmp_path / "state" / "daedalus"
+    new_dir.mkdir(parents=True)
+    (new_dir / "daedalus.db").write_bytes(b"new-db")
+
+    result = migration.migrate_filesystem_state(tmp_path)
+
+    # Old triplet preserved entirely
+    assert (old_dir / "relay.db").read_bytes() == b"old-db"
+    assert (old_dir / "relay.db-wal").read_bytes() == b"old-wal"
+    assert (old_dir / "relay.db-shm").read_bytes() == b"old-shm"
+    # New main DB unchanged; no orphan WAL/SHM appeared in the new dir
+    assert (new_dir / "daedalus.db").read_bytes() == b"new-db"
+    assert not (new_dir / "daedalus.db-wal").exists()
+    assert not (new_dir / "daedalus.db-shm").exists()
+    # No work reported
+    assert result == []
+
+
+def test_migrate_filesystem_state_preserves_old_dir_when_unknown_files_present(tmp_path):
+    """Cleanup is conservative: never rmdir a non-empty old state/relay/."""
+    migration = load_migration_module()
+    old_dir = tmp_path / "state" / "relay"
+    old_dir.mkdir(parents=True)
+    (old_dir / "relay.db").write_bytes(b"db")
+    (old_dir / "operator-notes.txt").write_text("manual artifact", encoding="utf-8")
+
+    migration.migrate_filesystem_state(tmp_path)
+
+    assert old_dir.exists()
+    assert (old_dir / "operator-notes.txt").read_text(encoding="utf-8") == "manual artifact"

@@ -25,6 +25,42 @@ def _rename_if_only_old_exists(old: Path, new: Path) -> str | None:
     return f"renamed {old} -> {new}"
 
 
+def _rename_db_triplet(
+    *,
+    old_dir: Path,
+    new_dir: Path,
+    old_stem: str,
+    new_stem: str,
+) -> list[str]:
+    """Atomic rename of a SQLite DB + its WAL/SHM sidecars.
+
+    SQLite WAL mode requires the sidecar filenames to track the main
+    DB filename. Moving them independently can produce a corrupt
+    triplet (e.g. main DB unchanged, WAL moved to a different name)
+    so we treat them as a unit: skip the entire group if the new
+    main DB already exists or the old main DB is missing.
+    """
+    main_old = old_dir / f"{old_stem}.db"
+    main_new = new_dir / f"{new_stem}.db"
+    # Conflict: new main DB already exists. Leave the entire triplet
+    # untouched so an operator can inspect manually.
+    if main_new.exists():
+        return []
+    # No old DB: nothing to migrate (orphan WAL/SHM ignored — they're
+    # meaningless without a main DB).
+    if not main_old.exists():
+        return []
+    descriptions: list[str] = []
+    for suffix in (".db", ".db-wal", ".db-shm"):
+        desc = _rename_if_only_old_exists(
+            old_dir / f"{old_stem}{suffix}",
+            new_dir / f"{new_stem}{suffix}",
+        )
+        if desc:
+            descriptions.append(desc)
+    return descriptions
+
+
 def migrate_filesystem_state(workflow_root: Path) -> list[str]:
     """Idempotent rename of relay-era paths to daedalus paths.
 
@@ -45,18 +81,17 @@ def migrate_filesystem_state(workflow_root: Path) -> list[str]:
 
     # SQLite DB triplet: main file + WAL + SHM. SQLite WAL mode requires
     # the sidecar filenames to match the main DB filename, so we move all
-    # three together.
+    # three together as a unit.
     old_state_dir = base / "state" / "relay"
     new_state_dir = base / "state" / "daedalus"
-    sqlite_pairs: Iterable[tuple[Path, Path]] = (
-        (old_state_dir / "relay.db", new_state_dir / "daedalus.db"),
-        (old_state_dir / "relay.db-wal", new_state_dir / "daedalus.db-wal"),
-        (old_state_dir / "relay.db-shm", new_state_dir / "daedalus.db-shm"),
+    descriptions.extend(
+        _rename_db_triplet(
+            old_dir=old_state_dir,
+            new_dir=new_state_dir,
+            old_stem="relay",
+            new_stem="daedalus",
+        )
     )
-    for old, new in sqlite_pairs:
-        desc = _rename_if_only_old_exists(old, new)
-        if desc:
-            descriptions.append(desc)
 
     # Event log and alert state files (single-file moves)
     memory_pairs: Iterable[tuple[Path, Path]] = (
