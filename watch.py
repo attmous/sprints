@@ -7,6 +7,7 @@ real TTY.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Mapping
 
 from rich.console import Console
@@ -102,3 +103,42 @@ def build_snapshot(workflow_root) -> dict[str, Any]:
         "alert_state": _watch_sources.alert_state(workflow_root),
         "recent_events": merged[:50],
     }
+
+
+import sys as _sys
+
+
+def _stdout_is_tty() -> bool:
+    return _sys.stdout.isatty()
+
+
+def cmd_watch(args, parser) -> str:
+    """``/daedalus watch`` handler.
+
+    Renders a single frame and returns it. When stdout is a TTY and ``--once``
+    is not set, enters a rich.live polling loop; that path returns the empty
+    string after the user quits. Tests always exercise the one-shot path.
+    """
+    workflow_root = Path(args.workflow_root) if not isinstance(args.workflow_root, Path) else args.workflow_root
+    snapshot = build_snapshot(workflow_root)
+    text = render_frame_to_string(snapshot)
+    if getattr(args, "once", False) or not _stdout_is_tty():
+        return text
+
+    # Live mode — rich.live polling at 2s.
+    from rich.live import Live
+    from rich.console import Console
+    from time import sleep
+
+    console = Console()
+    interval = float(getattr(args, "interval", 2.0) or 2.0)
+    try:
+        with Live(render_frame_to_string(snapshot), console=console, refresh_per_second=4, screen=True):
+            while True:
+                sleep(interval)
+                snapshot = build_snapshot(workflow_root)
+                # rich.live can take Renderable; we render to text inside the live update for simplicity
+                console.print(render_frame_to_string(snapshot))
+    except KeyboardInterrupt:
+        return ""
+    return ""

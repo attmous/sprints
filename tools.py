@@ -989,6 +989,21 @@ def build_doctor_report(*, workflow_root: Path, recent_actions_limit: int = 5) -
     }
 
 
+def _lazy_cmd_watch(args, parser):
+    """Lazy import so importing tools.py doesn't pull rich into every CLI invocation."""
+    try:
+        from watch import cmd_watch
+    except ImportError:
+        path = PLUGIN_DIR / "watch.py"
+        spec = importlib.util.spec_from_file_location("daedalus_watch_for_cli", path)
+        if spec is None or spec.loader is None:
+            raise DaedalusCommandError(f"unable to load watch module from {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cmd_watch = module.cmd_watch
+    return cmd_watch(args, parser)
+
+
 def cmd_migrate_filesystem(args, parser) -> str:
     """Run the filesystem migrator for the given workflow root.
 
@@ -1264,6 +1279,15 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
         default=DEFAULT_WORKFLOW_ROOT,
     )
     migrate_systemd_cmd.set_defaults(handler=cmd_migrate_systemd, func=run_cli_command)
+
+    watch_cmd = sub.add_parser(
+        "watch",
+        help="Live operator TUI: lanes, alerts, recent events.",
+    )
+    watch_cmd.add_argument("--workflow-root", type=Path, default=DEFAULT_WORKFLOW_ROOT)
+    watch_cmd.add_argument("--once", action="store_true", help="Render one frame and exit (default when stdout is not a TTY).")
+    watch_cmd.add_argument("--interval", type=float, default=2.0, help="Poll interval in live mode.")
+    watch_cmd.set_defaults(handler=_lazy_cmd_watch, func=run_cli_command)
 
     return parser
 
