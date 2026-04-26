@@ -73,7 +73,9 @@ properties:
           kind:
             type: string
             enum: [github-comments, disabled]
-          provider: {type: string}
+          provider:
+            type: string
+            description: "Informational label only; reviewer behavior is selected via 'kind'."
           cache-seconds: {type: integer}
           repo-slug: {type: string}
           logins:

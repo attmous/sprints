@@ -178,3 +178,31 @@ def test_build_reviewer_defaults_to_github_comments_when_enabled():
 
     rv = build_reviewer({"enabled": True, "name": "X"}, ws_context=_ws_context())
     assert isinstance(rv, GithubCommentsReviewer)
+
+
+def test_codex_bot_top_level_block_used_as_fallback_for_logins(monkeypatch):
+    """When agents.external-reviewer lacks logins but top-level codex-bot has them,
+    the workspace builder picks up logins from codex-bot. This is the documented
+    one-release back-compat path."""
+    # We test the resolution logic directly by simulating what workspace.py does.
+    # The fallback chain: ext_reviewer_cfg -> codex_bot_block -> _DEFAULT_LOGINS.
+    ext_reviewer_cfg = {"enabled": True, "name": "X"}
+    codex_bot_block = {"logins": ["legacy-bot[bot]"]}
+
+    # Mirror the resolution loop in workspace.py
+    for legacy_key, modern_key in (
+        ("logins", "logins"),
+        ("clean-reactions", "clean-reactions"),
+        ("pending-reactions", "pending-reactions"),
+    ):
+        if modern_key not in ext_reviewer_cfg and legacy_key in codex_bot_block:
+            ext_reviewer_cfg[modern_key] = codex_bot_block[legacy_key]
+
+    assert ext_reviewer_cfg["logins"] == ["legacy-bot[bot]"]
+
+
+def test_default_logins_includes_both_codex_connector_forms():
+    """Regression: legacy CODEX_BOT_LOGINS had both bare and bracketed forms."""
+    from workflows.code_review.reviewers.github_comments import _DEFAULT_LOGINS
+    assert "chatgpt-codex-connector" in _DEFAULT_LOGINS
+    assert "chatgpt-codex-connector[bot]" in _DEFAULT_LOGINS

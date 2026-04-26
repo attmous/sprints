@@ -18,7 +18,7 @@ from workflows.code_review.reviewers import (
 )
 
 
-_DEFAULT_LOGINS = ("chatgpt-codex-connector[bot]",)
+_DEFAULT_LOGINS = ("chatgpt-codex-connector", "chatgpt-codex-connector[bot]")
 _DEFAULT_CLEAN_REACTIONS = ("+1", "rocket", "heart", "hooray")
 _DEFAULT_PENDING_REACTIONS = ("eyes",)
 _DEFAULT_CACHE_SECONDS = 300
