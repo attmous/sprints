@@ -137,3 +137,18 @@ class AcpxCodexRuntime:
             session_name,
         ]
         self._run(cmd, cwd=worktree)
+
+    def run_command(
+        self,
+        *,
+        worktree: Path,
+        command_argv: list[str],
+        env: dict | None = None,
+    ) -> str:
+        """Execute a fully-formed argv against this runtime's working dir.
+
+        Used when an agent role supplies a `command:` override in workflow.yaml.
+        Session plumbing (ensure/close) is the caller's responsibility.
+        """
+        completed = self._run(command_argv, cwd=worktree)
+        return getattr(completed, "stdout", "") or ""

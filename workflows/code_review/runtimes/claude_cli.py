@@ -89,3 +89,14 @@ class ClaudeCliRuntime:
     def close_session(self, *, worktree: Path, session_name: str) -> None:
         # One-shot runtime: nothing to close.
         return None
+
+    def run_command(
+        self,
+        *,
+        worktree: Path,
+        command_argv: list[str],
+        env: dict | None = None,
+    ) -> str:
+        """Execute a fully-formed argv via the configured timeout."""
+        completed = self._run(command_argv, cwd=worktree, timeout=self._timeout)
+        return getattr(completed, "stdout", "") or ""

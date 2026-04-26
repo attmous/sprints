@@ -78,6 +78,14 @@ class Runtime(Protocol):
         session_name: str,
     ) -> None: ...
 
+    def run_command(
+        self,
+        *,
+        worktree: Path,
+        command_argv: list[str],
+        env: dict[str, str] | None = None,
+    ) -> str: ...
+
 
 _RUNTIME_KINDS: dict[str, type] = {}
 
