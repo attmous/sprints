@@ -93,3 +93,66 @@ All five fields are optional. The `active-lane` label is auto-injected into
 When `priority:` is configured, label priority becomes primary and the legacy
 `[P1]`/`[P2]` title priority is demoted to a tertiary tiebreak. When `priority:`
 is empty, title priority remains primary (full back-compat).
+
+## Runtime + agent config (Phase A — runtime-agnostic)
+
+Each agent role chooses a runtime, optionally a `command:` array, and optionally a `prompt:` template path.
+
+**Runtime profile** declares a default invocation:
+
+```yaml
+runtimes:
+  codex-acpx:
+    kind: acpx-codex
+    command: ["acpx", "--model", "{model}", "--cwd", "{worktree}",
+              "codex", "prompt", "-s", "{session_name}", "{prompt_path}"]
+    session-idle-freshness-seconds: 900
+    session-idle-grace-seconds: 1800
+    session-nudge-cooldown-seconds: 600
+```
+
+**Agent role** picks a runtime and optionally overrides `command:` (full replacement) and/or `prompt:` (template path):
+
+```yaml
+agents:
+  coder:
+    default:
+      runtime: codex-acpx
+      model: gpt-5
+      # prompt: implied as <workspace>/config/prompts/coder.md,
+      #         falls back to bundled prompts/coder.md
+    high:
+      runtime: codex-acpx
+      model: gpt-5
+      command: ["acpx", "--model", "{model}", "--cwd", "{worktree}",
+                "codex", "prompt", "-s", "{session_name}",
+                "--reasoning", "high", "{prompt_path}"]
+```
+
+**Placeholders** filled by the dispatcher:
+- `{model}` — agent's `model:` value
+- `{prompt_path}` — absolute path to the rendered prompt file
+- `{worktree}` — lane worktree directory
+- `{session_name}` — lane session identifier
+
+**Prompt resolution order** (highest priority first):
+1. `prompt:` on the agent role (absolute or relative to `<workspace>/config/`)
+2. `<workspace>/config/prompts/<role>.md`
+3. Bundled `workflows/code_review/prompts/<role>.md`
+
+**Runtime kinds:**
+- `acpx-codex` — persistent Codex sessions via `acpx`
+- `claude-cli` — one-shot Claude CLI invocations
+- `hermes-agent` — operator-supplied hermes-agent CLI; requires `command:` (no built-in invocation)
+
+To swap a coder from Codex to Claude, change one line:
+
+```yaml
+agents:
+  coder:
+    default:
+      runtime: claude-oneshot   # was: codex-acpx
+      model: claude-sonnet-4
+```
+
+No code changes required.
