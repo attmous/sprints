@@ -1,13 +1,14 @@
 """Generic agent dispatcher.
 
 Resolves runtime + command + prompt-template path from workspace config,
-materializes the rendered prompt to a file inside the worktree, fills
-placeholders in the command argv, and invokes the runtime.
+loads and renders the resolved prompt template, materializes the rendered
+text to a file inside the worktree, fills placeholders in the command argv,
+and invokes the runtime.
 
-Phase A only — no model-tied call sites. Coding/review prompts are still
-rendered by the legacy ``prompts.py`` helpers; the rendered string is
-passed in as ``rendered_prompt`` and written to a temp file before the
-runtime is invoked.
+Phase A only — no model-tied call sites. The dispatcher itself owns
+template loading + rendering so that the workspace prompt-override surface
+(``agents.<role>.prompt`` or ``<workspace>/config/prompts/<role>.md``)
+actually drives what the agent sees.
 """
 from __future__ import annotations
 
@@ -74,15 +75,15 @@ def resolve_prompt_template_path(
     return bundled
 
 
-def _materialize_prompt(*, worktree: Path, role: str, tier: str | None, rendered_prompt: str) -> Path:
+def _materialize_prompt(*, worktree: Path, role: str, tier: str | None, rendered_text: str) -> Path:
     """Write the already-rendered prompt to a deterministic file under
     <worktree>/.daedalus/dispatch/, return the path."""
     out_dir = Path(worktree) / ".daedalus" / "dispatch"
     out_dir.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(rendered_prompt.encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(rendered_text.encode("utf-8")).hexdigest()[:12]
     label = f"{role}-{tier}" if tier else role
     out = out_dir / f"{label}-{digest}.txt"
-    out.write_text(rendered_prompt, encoding="utf-8")
+    out.write_text(rendered_text, encoding="utf-8")
     return out
 
 
@@ -113,19 +114,21 @@ def dispatch_agent(
     *,
     workspace,
     role: str,
-    rendered_prompt: str,
+    prompt_kwargs: dict[str, Any] | None = None,
     session_name: str,
     worktree: Path,
     tier: str | None = None,
     extra_placeholders: dict[str, str] | None = None,
 ) -> str:
-    """Resolve config, run the agent, return stdout.
+    """Resolve config, load + render prompt template, run the agent, return stdout.
 
     Behavior:
       - Resolves agent role (tiered for 'coder', flat otherwise).
       - Resolves runtime via ``workspace.runtime(<name>)``.
       - Resolves command (agent override -> runtime default -> None).
-      - If a command is present: materializes ``rendered_prompt`` to a file,
+      - Resolves prompt template path (agent.prompt -> workspace override ->
+        bundled), loads it, and renders via ``.format(**prompt_kwargs)``.
+      - If a command is present: materializes the rendered text to a file,
         substitutes placeholders, invokes ``runtime.run_command(...)``.
       - If no command is present: invokes ``runtime.run_prompt(...)`` with the
         rendered prompt as a string (preserves pre-Phase-A behavior).
@@ -139,6 +142,14 @@ def dispatch_agent(
     runtime_cfg = runtimes_cfg.get(runtime_name) or {}
     model = cfg.get("model") or ""
 
+    # Resolve + load + render the template (the dispatcher, not the caller,
+    # owns this so workspace/agent overrides actually take effect).
+    template_path = resolve_prompt_template_path(
+        workspace=workspace, role=role, agent_cfg=cfg,
+    )
+    template_text = template_path.read_text(encoding="utf-8")
+    rendered_text = template_text.format(**(prompt_kwargs or {}))
+
     command = _resolve_command(agent_cfg=cfg, runtime_cfg=runtime_cfg)
 
     if command is None:
@@ -146,16 +157,12 @@ def dispatch_agent(
         return runtime.run_prompt(
             worktree=worktree,
             session_name=session_name,
-            prompt=rendered_prompt,
+            prompt=rendered_text,
             model=model,
         )
 
-    # Validate prompt template resolution even if not used in the command —
-    # this surfaces config mistakes early.
-    resolve_prompt_template_path(workspace=workspace, role=role, agent_cfg=cfg)
-
     prompt_path = _materialize_prompt(
-        worktree=worktree, role=role, tier=tier, rendered_prompt=rendered_prompt,
+        worktree=worktree, role=role, tier=tier, rendered_text=rendered_text,
     )
     placeholders = {
         "model": model,

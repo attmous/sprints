@@ -116,6 +116,15 @@ def _make_workspace(tmp_path, agents_cfg, runtimes_cfg, fake_run, *, workspace_d
     return ws
 
 
+def _seed_workspace_coder_prompt(tmp_path, content: str = "static test prompt") -> Path:
+    """Drop a no-placeholder coder.md override into <tmp_path>/config/prompts/."""
+    cfg_dir = tmp_path / "config" / "prompts"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    p = cfg_dir / "coder.md"
+    p.write_text(content)
+    return p
+
+
 def _runtimes_cfg():
     return {
         "codex-acpx": {
@@ -132,6 +141,7 @@ def _runtimes_cfg():
 def test_dispatch_agent_substitutes_placeholders(tmp_path):
     from workflows.code_review.dispatch import dispatch_agent
 
+    _seed_workspace_coder_prompt(tmp_path)
     fake_run = MagicMock(return_value=MagicMock(stdout="ok"))
     agents = {
         "coder": {
@@ -141,7 +151,7 @@ def test_dispatch_agent_substitutes_placeholders(tmp_path):
     ws = _make_workspace(tmp_path, agents, _runtimes_cfg(), fake_run)
     out = dispatch_agent(
         workspace=ws, role="coder", tier="default",
-        rendered_prompt="hi", session_name="lane-42", worktree=tmp_path,
+        prompt_kwargs={}, session_name="lane-42", worktree=tmp_path,
     )
     assert out == "ok"
     argv = fake_run.call_args[0][0]
@@ -151,7 +161,7 @@ def test_dispatch_agent_substitutes_placeholders(tmp_path):
     # one element should be the rendered-prompt file path
     prompt_files = [a for a in argv if a.endswith(".txt")]
     assert len(prompt_files) == 1
-    assert Path(prompt_files[0]).read_text() == "hi"
+    assert Path(prompt_files[0]).read_text() == "static test prompt"
 
 
 def test_dispatch_agent_unknown_role_raises(tmp_path):
@@ -161,7 +171,7 @@ def test_dispatch_agent_unknown_role_raises(tmp_path):
     with pytest.raises(DispatchConfigError):
         dispatch_agent(
             workspace=ws, role="nonexistent",
-            rendered_prompt="x", session_name="s", worktree=tmp_path,
+            prompt_kwargs={}, session_name="s", worktree=tmp_path,
         )
 
 
@@ -169,12 +179,13 @@ def test_dispatch_agent_uses_runtime_default_when_no_override(tmp_path):
     """Agent without command: -> runtime profile's command."""
     from workflows.code_review.dispatch import dispatch_agent
 
+    _seed_workspace_coder_prompt(tmp_path)
     fake_run = MagicMock(return_value=MagicMock(stdout="ok"))
     agents = {"coder": {"default": {"name": "c", "model": "m", "runtime": "codex-acpx"}}}
     ws = _make_workspace(tmp_path, agents, _runtimes_cfg(), fake_run)
     dispatch_agent(
         workspace=ws, role="coder", tier="default",
-        rendered_prompt="x", session_name="s", worktree=tmp_path,
+        prompt_kwargs={}, session_name="s", worktree=tmp_path,
     )
     argv = fake_run.call_args[0][0]
     assert argv[0] == "acpx"  # runtime default kicked in
@@ -184,6 +195,7 @@ def test_dispatch_agent_role_command_overrides_runtime(tmp_path):
     """Agent's command: fully replaces runtime command."""
     from workflows.code_review.dispatch import dispatch_agent
 
+    _seed_workspace_coder_prompt(tmp_path)
     fake_run = MagicMock(return_value=MagicMock(stdout="ok"))
     agents = {
         "coder": {
@@ -196,7 +208,7 @@ def test_dispatch_agent_role_command_overrides_runtime(tmp_path):
     ws = _make_workspace(tmp_path, agents, _runtimes_cfg(), fake_run)
     dispatch_agent(
         workspace=ws, role="coder", tier="default",
-        rendered_prompt="x", session_name="s", worktree=tmp_path,
+        prompt_kwargs={}, session_name="s", worktree=tmp_path,
     )
     argv = fake_run.call_args[0][0]
     assert argv[0] == "my-tool"
@@ -263,6 +275,7 @@ def test_dispatch_agent_legacy_fallback_calls_run_prompt(tmp_path):
     }
     agents = {"coder": {"default": {"name": "c", "model": "m", "runtime": "codex-acpx"}}}
 
+    _seed_workspace_coder_prompt(tmp_path)
     fake_run = MagicMock(return_value=MagicMock(stdout="should-not-be-called"))
     ws = _make_workspace(tmp_path, agents, runtimes_cfg, fake_run)
 
@@ -272,10 +285,11 @@ def test_dispatch_agent_legacy_fallback_calls_run_prompt(tmp_path):
 
     out = dispatch_agent(
         workspace=ws, role="coder", tier="default",
-        rendered_prompt="hi", session_name="s", worktree=tmp_path,
+        prompt_kwargs={}, session_name="s", worktree=tmp_path,
     )
     assert out == "legacy-output"
     rt.run_prompt.assert_called_once()
+    assert rt.run_prompt.call_args.kwargs["prompt"] == "static test prompt"
     fake_run.assert_not_called()
 
 
@@ -288,3 +302,54 @@ def test_dispatch_agent_raises_when_no_bundled_prompt_exists(tmp_path):
     ws.config = {"agents": {}}
     with pytest.raises(DispatchConfigError, match="no prompt template found"):
         resolve_prompt_template_path(workspace=ws, role="madeup-role", agent_cfg={})
+
+
+def test_dispatch_agent_uses_workspace_prompt_override_in_dispatched_command(tmp_path):
+    """Regression test for Codex P2: workspace override must drive what the agent sees."""
+    from workflows.code_review.dispatch import dispatch_agent
+
+    cfg_dir = tmp_path / "config"
+    (cfg_dir / "prompts").mkdir(parents=True)
+    (cfg_dir / "prompts" / "coder.md").write_text("from-workspace-override")
+
+    fake_run = MagicMock(return_value=MagicMock(stdout="ok"))
+    agents = {"coder": {"default": {"name": "c", "model": "m", "runtime": "codex-acpx"}}}
+    ws = _make_workspace(tmp_path, agents, _runtimes_cfg(), fake_run, workspace_dir=tmp_path)
+
+    dispatch_agent(
+        workspace=ws, role="coder", tier="default",
+        prompt_kwargs={}, session_name="s", worktree=tmp_path,
+    )
+
+    argv = fake_run.call_args[0][0]
+    prompt_files = [a for a in argv if a.endswith(".txt")]
+    assert len(prompt_files) == 1
+    assert Path(prompt_files[0]).read_text() == "from-workspace-override"
+
+
+def test_dispatch_agent_uses_explicit_prompt_in_dispatched_command(tmp_path):
+    """Regression test for Codex P2: agent's prompt: key must drive what the agent sees."""
+    from workflows.code_review.dispatch import dispatch_agent
+
+    explicit = tmp_path / "explicit-coder.md"
+    explicit.write_text("from-explicit-{model}")
+
+    fake_run = MagicMock(return_value=MagicMock(stdout="ok"))
+    agents = {
+        "coder": {
+            "default": {
+                "name": "c", "model": "gpt-x", "runtime": "codex-acpx",
+                "prompt": str(explicit),
+            },
+        },
+    }
+    ws = _make_workspace(tmp_path, agents, _runtimes_cfg(), fake_run, workspace_dir=tmp_path)
+
+    dispatch_agent(
+        workspace=ws, role="coder", tier="default",
+        prompt_kwargs={"model": "gpt-x"}, session_name="s", worktree=tmp_path,
+    )
+
+    argv = fake_run.call_args[0][0]
+    prompt_files = [a for a in argv if a.endswith(".txt")]
+    assert Path(prompt_files[0]).read_text() == "from-explicit-gpt-x"
