@@ -69,3 +69,49 @@ def test_render_frame_handles_stale_source():
     })
     # No crash; "[stale]" appears somewhere
     assert "stale" in out.lower()
+
+
+import json
+import sqlite3
+
+
+def _make_workflow_root(tmp_path):
+    root = tmp_path / "yoyopod_core"
+    (root / "runtime" / "memory").mkdir(parents=True)
+    (root / "runtime" / "state" / "daedalus").mkdir(parents=True)
+    (root / "config").mkdir()
+    (root / "workspace").mkdir()
+    return root
+
+
+def test_build_snapshot_combines_all_sources(tmp_path):
+    watch = _module()
+    root = _make_workflow_root(tmp_path)
+
+    # Seed daedalus-events
+    (root / "runtime" / "memory" / "daedalus-events.jsonl").write_text(
+        json.dumps({"at": "2026-04-26T22:00:01Z", "event": "lane_action_dispatched"}) + "\n"
+    )
+    # Seed workflow-audit
+    (root / "runtime" / "memory" / "workflow-audit.jsonl").write_text(
+        json.dumps({"at": "2026-04-26T22:00:02Z", "action": "merge-and-promote"}) + "\n"
+    )
+    # Seed lanes table
+    db = root / "runtime" / "state" / "daedalus" / "daedalus.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE lanes (project_key TEXT, lane_id TEXT, state TEXT, github_issue_number INTEGER)")
+    conn.execute("INSERT INTO lanes VALUES ('yoyopod', '329', 'under_review', 329)")
+    conn.commit()
+    conn.close()
+    # Seed alert state
+    (root / "runtime" / "memory" / "daedalus-alert-state.json").write_text(
+        json.dumps({"active": True, "message": "stale dispatch"})
+    )
+
+    snap = watch.build_snapshot(root)
+    assert len(snap["active_lanes"]) == 1
+    assert snap["active_lanes"][0]["lane_id"] == "329"
+    # interleaved + sorted recent events
+    assert any(e.get("source") == "daedalus" for e in snap["recent_events"])
+    assert any(e.get("source") == "workflow" for e in snap["recent_events"])
+    assert snap["alert_state"]["active"] is True

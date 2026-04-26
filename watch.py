@@ -73,3 +73,32 @@ def render_frame_to_string(snapshot: Mapping[str, Any]) -> str:
         console.print(alerts_panel)
     console.print(_events_table(snapshot.get("recent_events") or []))
     return console.export_text()
+
+
+# Sibling-import boilerplate for the aggregator.
+try:
+    from . import watch_sources as _watch_sources  # type: ignore[import-not-found]
+except ImportError:
+    import importlib.util as _ilu
+    from pathlib import Path as _Path
+    _spec = _ilu.spec_from_file_location("daedalus_watch_sources_for_watch", _Path(__file__).resolve().parent / "watch_sources.py")
+    _watch_sources = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_watch_sources)
+
+
+def build_snapshot(workflow_root) -> dict[str, Any]:
+    """Aggregate all data sources into one TUI snapshot dict."""
+    daedalus_events = _watch_sources.recent_daedalus_events(workflow_root, limit=25)
+    workflow_audit = _watch_sources.recent_workflow_audit(workflow_root, limit=25)
+
+    # Tag source onto each row, then merge + sort newest-first by 'at'.
+    daedalus_tagged = [{**e, "source": "daedalus"} for e in daedalus_events]
+    workflow_tagged = [{**e, "source": "workflow"} for e in workflow_audit]
+    merged = daedalus_tagged + workflow_tagged
+    merged.sort(key=lambda e: e.get("at") or "", reverse=True)
+
+    return {
+        "active_lanes": _watch_sources.active_lanes(workflow_root),
+        "alert_state": _watch_sources.alert_state(workflow_root),
+        "recent_events": merged[:50],
+    }
