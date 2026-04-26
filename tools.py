@@ -1090,18 +1090,36 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     status_cmd = sub.add_parser("status", help="Show Daedalus runtime status.")
     status_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     status_cmd.add_argument("--json", action="store_true")
+    status_cmd.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (text|json). --json flag is a back-compat alias for --format json.",
+    )
     status_cmd.set_defaults(func=run_cli_command)
 
     report_cmd = sub.add_parser("shadow-report", help="Summarize the live legacy lane, Daedalus shadow decision, compatibility, and recent shadow actions.")
     report_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     report_cmd.add_argument("--recent-actions-limit", type=int, default=5)
     report_cmd.add_argument("--json", action="store_true")
+    report_cmd.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (text|json). --json flag is a back-compat alias for --format json.",
+    )
     report_cmd.set_defaults(func=run_cli_command)
 
     doctor_cmd = sub.add_parser("doctor", help="Diagnose Daedalus runtime freshness, lease ownership, shadow parity, and active-lane consistency.")
     doctor_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     doctor_cmd.add_argument("--recent-actions-limit", type=int, default=5)
     doctor_cmd.add_argument("--json", action="store_true")
+    doctor_cmd.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (text|json). --json flag is a back-compat alias for --format json.",
+    )
     doctor_cmd.set_defaults(func=run_cli_command)
 
     service_install_cmd = sub.add_parser("service-install", help="Install the supervised Daedalus systemd user service.")
@@ -1161,6 +1179,12 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     service_status_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
     service_status_cmd.add_argument("--service-name")
     service_status_cmd.add_argument("--json", action="store_true")
+    service_status_cmd.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (text|json). --json flag is a back-compat alias for --format json.",
+    )
     service_status_cmd.set_defaults(func=run_cli_command)
 
     service_logs_cmd = sub.add_parser("service-logs", help="Show recent logs for the supervised Daedalus systemd user service.")
@@ -1201,6 +1225,12 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     active_gate_status_cmd = sub.add_parser("active-gate-status", help="Show Daedalus active-execution gate state.")
     active_gate_status_cmd.add_argument("--workflow-root", default=str(DEFAULT_WORKFLOW_ROOT))
     active_gate_status_cmd.add_argument("--json", action="store_true")
+    active_gate_status_cmd.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (text|json). --json flag is a back-compat alias for --format json.",
+    )
     active_gate_status_cmd.set_defaults(func=run_cli_command)
 
     set_active_execution_cmd = sub.add_parser("set-active-execution", help="Enable or disable Daedalus active execution.")
@@ -1324,6 +1354,19 @@ def _record_operator_command_event(*, workflow_root: Path, args: argparse.Namesp
             },
         },
     )
+
+
+def _resolve_format(format_arg: str | None, json_flag: bool | None) -> str:
+    """Resolve the effective output format from ``--format`` and ``--json``.
+
+    The legacy ``--json`` flag wins when set so existing scripts don't get
+    silently downgraded. Otherwise, ``--format`` is honored. Default is text.
+    """
+    if json_flag:
+        return "json"
+    if format_arg == "json":
+        return "json"
+    return "text"
 
 
 def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
@@ -1486,8 +1529,17 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
     raise DaedalusCommandError(f"unknown daedalus command: {args.daedalus_command}")
 
 
-def render_result(command: str, result: dict[str, Any], *, json_output: bool) -> str:
-    if json_output:
+def render_result(
+    command: str,
+    result: dict[str, Any],
+    *,
+    json_output: bool | None = None,
+    output_format: str | None = None,
+) -> str:
+    # Resolve effective format. New callers pass output_format; legacy callers pass json_output.
+    if output_format is None:
+        output_format = "json" if json_output else "text"
+    if output_format == "json":
         return json.dumps(result, indent=2, sort_keys=True)
     if command == "init":
         return f"initialized db={result.get('db_path')} project={result.get('project_key')}"
@@ -1694,7 +1746,8 @@ def execute_raw_args(raw_args: str) -> str:
         if args.daedalus_command == "migrate-systemd":
             return cmd_migrate_systemd(args, parser)
         result = execute_namespace(args)
-        return render_result(args.daedalus_command, result, json_output=getattr(args, "json", False))
+        fmt = _resolve_format(getattr(args, "format", None), getattr(args, "json", False))
+        return render_result(args.daedalus_command, result, output_format=fmt)
     except DaedalusCommandError as exc:
         return f"daedalus error: {exc}"
     except SystemExit:
@@ -1706,7 +1759,8 @@ def execute_raw_args(raw_args: str) -> str:
 
 def run_cli_command(args: argparse.Namespace) -> None:
     args._command_source = "cli"
-    print(render_result(args.daedalus_command, execute_namespace(args), json_output=getattr(args, "json", False)))
+    fmt = _resolve_format(getattr(args, "format", None), getattr(args, "json", False))
+    print(render_result(args.daedalus_command, execute_namespace(args), output_format=fmt))
 
 
 if __name__ == "__main__":
