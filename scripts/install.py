@@ -9,6 +9,7 @@ PLUGIN_NAME = "daedalus"
 PAYLOAD_ITEMS = [
     "__init__.py",
     "alerts.py",
+    "formatters.py",
     "migration.py",
     "plugin.yaml",
     "runtime.py",
