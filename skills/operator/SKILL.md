@@ -62,3 +62,34 @@ Inside Hermes sessions:
 - `iterate-active` / `run-active` are guarded: they will only execute actions when Daedalus active execution is enabled, the runtime is in `active` mode, and current Daedalus-vs-wrapper parity is still compatible.
 - `set-active-execution --enabled true|false` toggles the guarded executor directly. Pair it with the supervised active service when you want a real executor instead of manual active runs.
 - The plugin also registers a CLI command tree for future compatibility, but the reliable operator surface in the current Hermes build is the slash command.
+
+## Configurable Lane Selection
+
+Daedalus picks "the next issue to promote to active lane" via `pick_next_lane_issue`.
+Default behavior: any open issue not yet labeled `active-lane`, sorted by `[P1]/[P2]`
+title priority, then issue number ASC. To customize, add a `lane-selection:` block
+to `workflow.yaml`:
+
+```yaml
+# Severity-priority routing example
+lane-selection:
+  require-labels:
+    - needs-review              # only promote issues marked ready
+  exclude-labels:
+    - blocked                   # operator escape-hatch
+    - do-not-touch
+  priority:
+    - severity:critical         # higher in list = higher priority
+    - severity:high
+    - severity:medium
+  tiebreak: oldest              # within bucket: oldest createdAt wins
+```
+
+All five fields are optional. The `active-lane` label is auto-injected into
+`exclude-labels` so the picker can never select an already-promoted lane.
+
+`tiebreak` options: `oldest` (default), `newest`, `random`.
+
+When `priority:` is configured, label priority becomes primary and the legacy
+`[P1]`/`[P2]` title priority is demoted to a tertiary tiebreak. When `priority:`
+is empty, title priority remains primary (full back-compat).

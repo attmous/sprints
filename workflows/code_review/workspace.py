@@ -13,6 +13,26 @@ from typing import Any
 from workflows.code_review.runtimes import build_runtimes
 
 
+def _derive_lane_selection_cfg(yaml_cfg, *, active_lane_label):
+    """Synthesize the parsed lane-selection config from raw workflow.yaml.
+
+    Lazy-import to avoid a circular-import at module load (workspace is the
+    central bootstrap site).
+    """
+    try:
+        from .lane_selection import parse_config
+    except ImportError:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            "daedalus_lane_selection_for_workspace",
+            Path(__file__).resolve().parent / "lane_selection.py",
+        )
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        parse_config = _mod.parse_config
+    return parse_config(workflow_yaml=yaml_cfg or {}, active_lane_label=active_lane_label)
+
+
 def _yaml_to_legacy_view(yaml_cfg: dict, workspace_root: "Path | None" = None) -> dict:
     """Project the new YAML shape onto the old JSON key shape.
 
@@ -433,6 +453,7 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
     # -- config constants ------------------------------------------------
     engine_owner = str(config.get("engineOwner", "openclaw"))
     active_lane_label = str(config.get("activeLaneLabel", "active-lane"))
+    lane_selection_cfg = _derive_lane_selection_cfg(yaml_cfg, active_lane_label=active_lane_label)
     core_job_names = list(config.get("coreJobNames", []))
     hermes_job_names = list(config.get("hermesJobNames", []))
     issue_watcher_re = re.compile(str(config.get("issueWatcherNameRegex", r"issue-\d+-watch")))
@@ -563,6 +584,7 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
         HEALTH_PATH=health_path,
         AUDIT_LOG_PATH=audit_log_path,
         ACTIVE_LANE_LABEL=active_lane_label,
+        LANE_SELECTION_CFG=lane_selection_cfg,
         ENGINE_OWNER=engine_owner,
         CORE_JOB_NAMES=core_job_names,
         HERMES_JOB_NAMES=hermes_job_names,
@@ -904,11 +926,13 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
 
     def _pick_next_lane_issue():
         items = ns._run_json(
-            ["gh", "issue", "list", "--state", "open", "--limit", "100", "--json", "number,title,url,labels"],
+            ["gh", "issue", "list", "--state", "open", "--limit", "100", "--json", "number,title,url,labels,createdAt"],
             cwd=ns.REPO_PATH,
         )
         return ns._load_adapter_github_module().pick_next_lane_issue(
-            items, active_lane_label=ns.ACTIVE_LANE_LABEL,
+            items,
+            active_lane_label=ns.ACTIVE_LANE_LABEL,
+            lane_selection_cfg=ns.LANE_SELECTION_CFG,
         )
 
     def _issue_add_label(issue_number, label):

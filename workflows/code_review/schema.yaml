@@ -155,6 +155,26 @@ properties:
         type: array
         items: {type: string}
 
+  lane-selection:
+    type: object
+    additionalProperties: false
+    properties:
+      require-labels:
+        type: array
+        items: {type: string}
+      allow-any-of:
+        type: array
+        items: {type: string}
+      exclude-labels:
+        type: array
+        items: {type: string}
+      priority:
+        type: array
+        items: {type: string}
+      tiebreak:
+        type: string
+        enum: [oldest, newest, random]
+
   observability:
     type: object
     properties:

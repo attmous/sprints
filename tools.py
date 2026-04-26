@@ -1447,7 +1447,10 @@ def _record_operator_command_event(*, workflow_root: Path, args: argparse.Namesp
     now_iso = daedalus._now_iso()
     arguments_json = {}
     for key, value in vars(args).items():
-        if key in {"func", "json", "_command_source"}:
+        # Skip non-serializable argparse plumbing. ``handler`` is a function
+        # reference set by the new string-returning subcommands (watch,
+        # set-observability, get-observability) — it would crash json.dumps.
+        if key in {"func", "handler", "json", "_command_source"}:
             continue
         if isinstance(value, Path):
             arguments_json[key] = str(value)
@@ -1861,8 +1864,6 @@ def execute_raw_args(raw_args: str) -> str:
 
 def run_cli_command(args: argparse.Namespace) -> None:
     args._command_source = "cli"
-    fmt = _resolve_format(getattr(args, "format", None), getattr(args, "json", False))
-    print(render_result(args.daedalus_command, execute_namespace(args), output_format=fmt))
     # Some subcommands have handlers that return strings directly, not dicts.
     # ``execute_namespace`` only knows about the legacy dict-returning commands,
     # so without this branch the new (string-returning) commands would fall
@@ -1880,7 +1881,8 @@ def run_cli_command(args: argparse.Namespace) -> None:
         if handler is not None:
             print(handler(args, parser=None))
             return
-    print(render_result(args.daedalus_command, execute_namespace(args), json_output=getattr(args, "json", False)))
+    fmt = _resolve_format(getattr(args, "format", None), getattr(args, "json", False))
+    print(render_result(args.daedalus_command, execute_namespace(args), output_format=fmt))
 
 
 if __name__ == "__main__":
