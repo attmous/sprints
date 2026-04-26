@@ -359,13 +359,14 @@ def _make_comment_publisher(
     override_dir = workflow_root / "runtime" / "state" / "daedalus"
     state_dir = workflow_root / "runtime" / "state" / "lane-comments"
 
-    effective = _obs.resolve_effective_config(
-        workflow_yaml=workflow_yaml or {},
-        override_dir=override_dir,
-        workflow_name="code-review",
-    )
-    if not effective["github-comments"].get("enabled"):
-        return None
+    # Always return a publisher callable so a later
+    # ``/daedalus set-observability --github-comments on`` override can take
+    # effect at the next audit event without a service restart. The publisher
+    # below re-resolves the effective config on every call and short-circuits
+    # when the result is disabled — that is the gate, not this bootstrap-time
+    # lookup. (Earlier versions short-circuited here when initially-disabled,
+    # which permanently severed the audit hook from the publisher and made
+    # runtime overrides ineffective until a process restart.)
 
     def publisher(*, action, summary, extra):
         # Re-resolve the config every call so a /daedalus set-observability

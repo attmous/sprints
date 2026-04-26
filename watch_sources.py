@@ -78,13 +78,30 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
     except sqlite3.OperationalError:
         return []
     try:
+        # Real columns per runtime.py lanes schema:
+        #   lane_id (PK), issue_number, workflow_state, lane_status, ...
+        # An earlier draft queried `state` and `github_issue_number` which
+        # raised sqlite3.OperationalError against any real db, silently
+        # returning [] and making /daedalus watch falsely report
+        # "no active lanes" even when lanes existed.
         cur = conn.execute(
-            "SELECT lane_id, state, github_issue_number FROM lanes WHERE state NOT IN ('merged', 'closed')"
+            "SELECT lane_id, workflow_state, issue_number, lane_status "
+            "FROM lanes "
+            "WHERE lane_status NOT IN ('merged', 'closed', 'archived')"
         )
-        out = [
-            {"lane_id": row[0], "state": row[1], "github_issue_number": row[2]}
-            for row in cur.fetchall()
-        ]
+        out = []
+        for row in cur.fetchall():
+            out.append({
+                "lane_id": row[0],
+                # `state` is the key the renderer (watch.py) consumes; we
+                # source it from workflow_state. Both names are exposed for
+                # consumers that care.
+                "state": row[1],
+                "workflow_state": row[1],
+                "github_issue_number": row[2],
+                "issue_number": row[2],
+                "lane_status": row[3],
+            })
     except sqlite3.OperationalError:
         out = []
     finally:

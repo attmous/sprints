@@ -1815,6 +1815,16 @@ def execute_raw_args(raw_args: str) -> str:
             return cmd_migrate_filesystem(args, parser)
         if args.daedalus_command == "migrate-systemd":
             return cmd_migrate_systemd(args, parser)
+        # New commands return strings directly (not dicts), so they bypass
+        # execute_namespace which only knows about the legacy dict-returning
+        # branches. Without these explicit routes the new subcommands fall
+        # through to "unknown daedalus command".
+        if args.daedalus_command == "watch":
+            return _lazy_cmd_watch(args, parser)
+        if args.daedalus_command == "set-observability":
+            return cmd_set_observability(args, parser)
+        if args.daedalus_command == "get-observability":
+            return cmd_get_observability(args, parser)
         result = execute_namespace(args)
         return render_result(args.daedalus_command, result, json_output=getattr(args, "json", False))
     except DaedalusCommandError as exc:

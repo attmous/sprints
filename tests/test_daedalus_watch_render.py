@@ -99,8 +99,12 @@ def test_build_snapshot_combines_all_sources(tmp_path):
     # Seed lanes table
     db = root / "runtime" / "state" / "daedalus" / "daedalus.db"
     conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE lanes (project_key TEXT, lane_id TEXT, state TEXT, github_issue_number INTEGER)")
-    conn.execute("INSERT INTO lanes VALUES ('yoyopod', '329', 'under_review', 329)")
+    conn.execute(
+        "CREATE TABLE lanes ("
+        "  lane_id TEXT PRIMARY KEY, issue_number INTEGER, "
+        "  workflow_state TEXT, lane_status TEXT)"
+    )
+    conn.execute("INSERT INTO lanes VALUES ('lane-329', 329, 'under_review', 'active')")
     conn.commit()
     conn.close()
     # Seed alert state
@@ -110,7 +114,8 @@ def test_build_snapshot_combines_all_sources(tmp_path):
 
     snap = watch.build_snapshot(root)
     assert len(snap["active_lanes"]) == 1
-    assert snap["active_lanes"][0]["lane_id"] == "329"
+    assert snap["active_lanes"][0]["lane_id"] == "lane-329"
+    assert snap["active_lanes"][0]["issue_number"] == 329
     # interleaved + sorted recent events
     assert any(e.get("source") == "daedalus" for e in snap["recent_events"])
     assert any(e.get("source") == "workflow" for e in snap["recent_events"])
