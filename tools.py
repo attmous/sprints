@@ -1838,6 +1838,23 @@ def execute_raw_args(raw_args: str) -> str:
 
 def run_cli_command(args: argparse.Namespace) -> None:
     args._command_source = "cli"
+    # Some subcommands have handlers that return strings directly, not dicts.
+    # ``execute_namespace`` only knows about the legacy dict-returning commands,
+    # so without this branch the new (string-returning) commands would fall
+    # through to ``unknown daedalus command``. This mirrors the special-cases
+    # in ``execute_raw_args`` for the slash-command path.
+    string_returning = {
+        "migrate-filesystem",
+        "migrate-systemd",
+        "watch",
+        "set-observability",
+        "get-observability",
+    }
+    if getattr(args, "daedalus_command", None) in string_returning:
+        handler = getattr(args, "handler", None)
+        if handler is not None:
+            print(handler(args, parser=None))
+            return
     print(render_result(args.daedalus_command, execute_namespace(args), json_output=getattr(args, "json", False)))
 
 
