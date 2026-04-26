@@ -826,8 +826,8 @@ def fetch_codex_cloud_review(
             "api",
             "graphql",
             "-f",
-            "query=# repo:%s\nquery { repository(owner:\"%s\", name:\"%s\") { pullRequest(number: %d) { state headRefOid reviewThreads(first: 100) { nodes { id isResolved isOutdated path line comments(first: 20) { nodes { author { login } body url createdAt } } } } } } }"
-            % (repo_slug, owner, name, pr_number),
+            "query=query { repository(owner:\"%s\", name:\"%s\") { pullRequest(number: %d) { state headRefOid reviewThreads(first: 100) { nodes { id isResolved isOutdated path line comments(first: 20) { nodes { author { login } body url createdAt } } } } } } }"
+            % (owner, name, pr_number),
         ],
         cwd=cwd,
     )

@@ -63,8 +63,10 @@ def test_github_comments_reviewer_uses_configured_repo_slug():
     args, _ = ctx.run_json.call_args
     cmd_argv = args[0]
     flat = " ".join(cmd_argv)
-    assert "different/repo" in flat
-    assert "acme/widget" not in flat
+    # Repo slug appears split as owner/name in the GraphQL query
+    assert 'owner:"different"' in flat
+    assert 'name:"repo"' in flat
+    assert 'owner:"acme"' not in flat
 
 
 def test_github_comments_reviewer_uses_configured_logins():
