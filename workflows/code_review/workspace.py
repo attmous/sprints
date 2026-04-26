@@ -288,6 +288,38 @@ def _build_adapter_module_loaders(workspace_root: Path) -> dict[str, Any]:
     }
 
 
+def _make_audit_fn(
+    *,
+    audit_log_path,
+    publisher=None,
+):
+    """Build an ``audit(action, summary, **extra)`` closure that:
+
+      1. Always appends a JSONL row to ``audit_log_path``.
+      2. If ``publisher`` is provided, calls ``publisher(action=..., summary=..., extra=...)``
+         after the write. Publisher exceptions are swallowed — observability
+         must never break workflow execution.
+    """
+    def audit(action, summary, **extra):
+        _append_jsonl(
+            audit_log_path,
+            {
+                "at": _now_iso(),
+                "action": action,
+                "summary": summary,
+                **extra,
+            },
+        )
+        if publisher is not None:
+            try:
+                publisher(action=action, summary=summary, extra=dict(extra))
+            except Exception:
+                # Best-effort observability hook; never raise into the caller.
+                pass
+
+    return audit
+
+
 def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNamespace:
     """Build the workspace accessor used by adapter CLI / orchestrator code.
 
@@ -409,16 +441,7 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
     def save_ledger(payload: dict[str, Any]) -> None:
         _write_json(ledger_path, payload)
 
-    def audit(action: str, summary: str, **extra: Any) -> None:
-        _append_jsonl(
-            audit_log_path,
-            {
-                "at": _now_iso(),
-                "action": action,
-                "summary": summary,
-                **extra,
-            },
-        )
+    audit = _make_audit_fn(audit_log_path=audit_log_path, publisher=None)
 
     # Pre-declared so closures below can resolve them once ``ns`` is built.
     # Bindings happen after ``ns`` is created, below.
