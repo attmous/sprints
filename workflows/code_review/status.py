@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from workflows.code_review.health import compute_health, compute_stale_lane_reasons
-from workflows.code_review.migrations import get_review
+from workflows.code_review.migrations import get_ledger_field, get_review
 from workflows.code_review.paths import (
     lane_memo_path,
     lane_state_path,
@@ -434,12 +434,15 @@ def assemble_status_payload(
             "workflowIdle": ledger_idle,
             "reviewState": effective_review_state,
             "readyToCloseCount": len(ledger.get("readyToClose", [])),
-            "codexCloudAutoResolved": ledger.get("codexCloudAutoResolved"),
+            "externalReviewAutoResolved": get_ledger_field(ledger, "externalReviewAutoResolved"),
             "sessionNudge": ledger.get("sessionNudge"),
             "repairBrief": effective_repair_brief,
             "codexModel": implementation.get("codexModel") or preferred_codex_model or (ledger.get("implementation") or {}).get("codexModel"),
-            "claudeModel": ledger.get("claudeModel") or ledger.get("interReviewAgentModel") or (get_review(reviews, "internalReview").get("model")) or inter_review_agent_model,
-            "interReviewAgentModel": ledger.get("interReviewAgentModel") or ledger.get("claudeModel") or (get_review(reviews, "internalReview").get("model")) or inter_review_agent_model,
+            "internalReviewerModel": (
+                get_ledger_field(ledger, "internalReviewerModel")
+                or (get_review(reviews, "internalReview").get("model"))
+                or inter_review_agent_model
+            ),
             "workflowActors": ledger.get("workflowActors") or actor_labels,
         },
         "implementation": {
@@ -924,7 +927,7 @@ def write_lane_state(
         "review": {
             "repairBriefHeadSha": (repair_brief or {}).get("forHeadSha"),
             "lastClaudeReviewedHeadSha": ((get_review(reviews, "internalReview")).get("reviewedHeadSha")) or ((existing.get("review") or {}).get("lastClaudeReviewedHeadSha")),
-            "lastClaudeVerdict": ((get_review(reviews, "internalReview")).get("verdict")) or ((existing.get("review") or {}).get("lastClaudeVerdict")),
+            "lastInternalVerdict": ((get_review(reviews, "internalReview")).get("verdict")) or ((existing.get("review") or {}).get("lastInternalVerdict")),
             "localClaudeReviewCount": local_inter_review_agent_review_count((get_review(reviews, "internalReview") or None), existing),
             "currentClaudeRunId": ((get_review(reviews, "internalReview")).get("runId")),
             "currentClaudeTargetHeadSha": inter_review_agent_target_head((get_review(reviews, "internalReview") or None)),

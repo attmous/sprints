@@ -919,7 +919,7 @@ def test_assemble_status_payload_returns_fully_shaped_status_dict():
     assert result["reviews"]["interReviewAgent"] == reviews["internalReview"]
     assert result["nextAction"]["reason"] == "no-forward-action-needed"
     # Model fields fall back to the provided inter_review_agent_model when ledger entry is missing.
-    assert result["ledger"]["claudeModel"] == "claude-sonnet-4-6"
+    assert result["ledger"]["internalReviewerModel"] == "claude-sonnet-4-6"
 
 
 def test_apply_ledger_reviews_and_header_writes_expected_keys():

@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from workflows.code_review.migrations import get_ledger_field
 from workflows.code_review.runtimes import build_runtimes
 
 
@@ -123,7 +124,7 @@ def _yaml_to_legacy_view(yaml_cfg: dict, workspace_root: "Path | None" = None) -
         },
         "reviewPolicy": {
             "interReviewAgentPassWithFindingsReviews": internal_review_gate.get("pass-with-findings-tolerance", 1),
-            "interReviewAgentModel": int_reviewer.get("model", "claude-sonnet-4-6"),
+            "internalReviewerModel": int_reviewer.get("model", "claude-sonnet-4-6"),
             "interReviewAgentMaxTurns": claude_cli.get("max-turns-per-invocation", 24),
             "interReviewAgentTimeoutSeconds": claude_cli.get("timeout-seconds", 1200),
             "freezeCoderWhileInterReviewAgentRunning": int_reviewer.get("freeze-coder-while-running", True),
@@ -499,9 +500,9 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
         or review_policy.get("claudePassWithFindingsReviews", 1)
     )
     inter_review_agent_model = str(
-        review_policy.get("interReviewAgentModel")
-        or review_policy.get("internalReviewerAgentModel")
-        or review_policy.get("claudeModel", "claude-sonnet-4-6")
+        review_policy.get("internalReviewerModel")
+        or review_policy.get("interReviewAgentModel")
+        or "claude-sonnet-4-6"
     )
     inter_review_agent_max_turns = int(
         review_policy.get("interReviewAgentMaxTurns")
