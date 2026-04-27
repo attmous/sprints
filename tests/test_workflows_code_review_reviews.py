@@ -904,7 +904,7 @@ def test_maybe_dispatch_repair_handoff_dispatches_claude_branch_when_routable(tm
     assert result["dispatched"] is True
     assert result["mode"] == "claude_repair_handoff"
     assert result["issueNumber"] == 224
-    assert ledger["claudeRepairHandoff"]["sessionName"] == "lane-224"
+    assert ledger["internalReviewRepairHandoff"]["sessionName"] == "lane-224"
     assert captured["run_acpx"]["session_name"] == "lane-224"
     assert captured["audit"][0]["action"] == "claude-repair-handoff-dispatched"
     # Record helper actually wrote .lane-state.json
@@ -958,7 +958,7 @@ def test_maybe_dispatch_repair_handoff_dispatches_codex_cloud_branch_when_routab
     assert result["dispatched"] is True
     assert result["mode"] == "codex_cloud_repair_handoff"
     assert result["issueNumber"] == 224
-    assert ledger["codexCloudRepairHandoff"]["sessionName"] == "lane-224"
+    assert ledger["externalReviewRepairHandoff"]["sessionName"] == "lane-224"
     assert captured["audit"][0]["action"] == "codex-cloud-repair-handoff-dispatched"
 
 

@@ -378,8 +378,9 @@ def run_dispatch_inter_review_agent_review(
         agent_role=agent_role,
     )
     ledger['reviews'].pop('claudeCode', None)
-    ledger['claudeModel'] = inter_review_agent_model
-    ledger['interReviewAgentModel'] = inter_review_agent_model
+    ledger['internalReviewerModel'] = inter_review_agent_model
+    ledger.pop('claudeModel', None)
+    ledger.pop('interReviewAgentModel', None)
     ledger['workflowActors'] = actor_labels_payload_fn(impl.get('codexModel'))
     save_ledger_fn(ledger)
     audit_inter_review_agent_transition_fn(previous, ledger['reviews']['internalReview'])
@@ -414,8 +415,9 @@ def run_dispatch_inter_review_agent_review(
             agent_role=agent_role,
         )
         ledger['reviews'].pop('claudeCode', None)
-        ledger['claudeModel'] = inter_review_agent_model
-        ledger['interReviewAgentModel'] = inter_review_agent_model
+        ledger['internalReviewerModel'] = inter_review_agent_model
+        ledger.pop('claudeModel', None)
+        ledger.pop('interReviewAgentModel', None)
         ledger['workflowActors'] = actor_labels_payload_fn(impl.get('codexModel'))
         save_ledger_fn(ledger)
         audit_inter_review_agent_transition_fn(previous, ledger['reviews']['internalReview'])
@@ -437,8 +439,9 @@ def run_dispatch_inter_review_agent_review(
     previous = get_review(ledger['reviews'], 'internalReview').copy()
     ledger['reviews']['internalReview'] = final_review
     ledger['reviews'].pop('claudeCode', None)
-    ledger['claudeModel'] = inter_review_agent_model
-    ledger['interReviewAgentModel'] = inter_review_agent_model
+    ledger['internalReviewerModel'] = inter_review_agent_model
+    ledger.pop('claudeModel', None)
+    ledger.pop('interReviewAgentModel', None)
     ledger['workflowActors'] = actor_labels_payload_fn(impl.get('codexModel'))
     save_ledger_fn(ledger)
     audit_inter_review_agent_transition_fn(previous, final_review)
@@ -446,8 +449,7 @@ def run_dispatch_inter_review_agent_review(
     return {
         'dispatched': True,
         'headSha': head_sha,
-        'claudeModel': inter_review_agent_model,
-        'interReviewAgentModel': inter_review_agent_model,
+        'internalReviewerModel': inter_review_agent_model,
         'review': final_review,
         'after': after,
     }

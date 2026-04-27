@@ -935,8 +935,9 @@ def test_apply_ledger_reviews_and_header_writes_expected_keys():
     )
     assert ledger["schemaVersion"] == 6
     assert ledger["reviewLoopState"] == "awaiting_reviews"
-    assert ledger["claudeModel"] == "claude-sonnet-4-6"
-    assert ledger["interReviewAgentModel"] == "claude-sonnet-4-6"
+    assert ledger["internalReviewerModel"] == "claude-sonnet-4-6"
+    assert "claudeModel" not in ledger
+    assert "interReviewAgentModel" not in ledger
     assert ledger["codexModel"] == "gpt-5.3-codex"
     assert ledger["workflowActors"] == {"coder": "x"}
     assert ledger["approval"] == {}

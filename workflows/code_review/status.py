@@ -546,8 +546,9 @@ def apply_ledger_reviews_and_header(
     """
     ledger["schemaVersion"] = 6
     ledger["reviewLoopState"] = review_loop_state
-    ledger["claudeModel"] = inter_review_agent_model
-    ledger["interReviewAgentModel"] = inter_review_agent_model
+    ledger["internalReviewerModel"] = inter_review_agent_model
+    ledger.pop("claudeModel", None)
+    ledger.pop("interReviewAgentModel", None)
     ledger["codexModel"] = codex_model
     ledger["workflowActors"] = actor_labels
     ledger.setdefault("approval", {})

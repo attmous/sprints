@@ -503,7 +503,7 @@ def test_run_dispatch_inter_review_agent_review_records_completed_review_on_succ
     result = actions_module.run_dispatch_inter_review_agent_review(**deps)
     assert result["dispatched"] is True
     assert result["headSha"] == "head123"
-    assert result["interReviewAgentModel"] == "claude-sonnet-4-6"
+    assert result["internalReviewerModel"] == "claude-sonnet-4-6"
     # Two save_ledger calls: running transition + completion transition
     assert len(state["save_ledger_calls"]) == 2
     first_saved = state["save_ledger_calls"][0]

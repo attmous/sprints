@@ -492,7 +492,8 @@ def reconcile(workspace: Any, *, write_health: bool = True, fix_watchers: bool =
             "signal": (get_review(reviews, "externalReview").get("prBodySignal") or {}).get("content"),
             "threadIds": resolved_codex_threads,
         }
-        ledger["codexCloudAutoResolved"] = resolution_event
+        ledger["externalReviewAutoResolved"] = resolution_event
+        ledger.pop("codexCloudAutoResolved", None)
         ws.audit(
             "reconcile",
             "Resolved superseded Codex Cloud review threads after clean PR-body signal",
@@ -510,7 +511,8 @@ def reconcile(workspace: Any, *, write_health: bool = True, fix_watchers: bool =
         ledger["reviewLoopState"] = review_loop_state
         ledger["reviews"]["externalReview"] = get_review(reviews, "externalReview")
         ledger["reviews"].pop("codexCloud", None)
-        ledger["codexCloudAutoResolved"] = resolution_event
+        ledger["externalReviewAutoResolved"] = resolution_event
+        ledger.pop("codexCloudAutoResolved", None)
         if ledger.get("pr"):
             ledger["pr"]["mergeBlocked"] = merge_blocked
             ledger["pr"]["mergeBlockers"] = merge_blockers
