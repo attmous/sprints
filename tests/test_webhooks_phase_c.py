@@ -155,3 +155,43 @@ def test_http_json_webhook_matches_default_all_events():
     cfg = [{"name": "wh1", "kind": "http-json", "url": "https://x"}]
     wh = build_webhooks(cfg, run_fn=None)[0]
     assert wh.matches({"action": "anything"}) is True
+
+
+def test_slack_incoming_webhook_registered():
+    from workflows.code_review.webhooks import _WEBHOOK_KINDS
+    from workflows.code_review.webhooks import slack_incoming  # noqa: F401
+    assert "slack-incoming" in _WEBHOOK_KINDS
+
+
+def test_slack_incoming_payload_shape():
+    from workflows.code_review.webhooks import build_webhooks
+
+    cfg = [{
+        "name": "slack", "kind": "slack-incoming",
+        "url": "https://hooks.slack.com/services/X/Y/Z",
+    }]
+    webhooks = build_webhooks(cfg, run_fn=None)
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__ = lambda self: self
+        mock_urlopen.return_value.__exit__ = lambda self, *a: None
+        mock_urlopen.return_value.status = 200
+        webhooks[0].deliver({
+            "action": "merge_and_promote",
+            "summary": "Merged PR #42",
+            "issueNumber": 42,
+            "headSha": "abc123",
+            "at": "2026-04-26T12:00:00Z",
+        })
+
+    req = mock_urlopen.call_args[0][0]
+    assert req.full_url.startswith("https://hooks.slack.com/")
+    import json
+    payload = json.loads(req.data.decode("utf-8"))
+    assert "text" in payload
+    assert "blocks" in payload
+    assert "merge_and_promote" in payload["text"]
+    assert "Merged PR #42" in payload["text"]
+    # Block layout: section + context
+    assert any(b.get("type") == "section" for b in payload["blocks"])
+    assert any(b.get("type") == "context" for b in payload["blocks"])
