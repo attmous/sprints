@@ -707,20 +707,12 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
     # Build the external reviewer once; downstream shims delegate to it.
     from workflows.code_review.reviewers import ReviewerContext, build_reviewer
 
-    # Resolve config: agents.external-reviewer first, top-level codex-bot
-    # block as a deprecated fallback (one-release back-compat). The YAML
-    # shape exposes agents/codex-bot at the top level; the legacy JSON view
-    # doesn't surface them, so fall back to empty dicts in that case.
+    # Resolve config from agents.external-reviewer. The legacy top-level
+    # codex-bot block fallback was removed in Phase D-2; operators must use
+    # the modern agents.external-reviewer.{logins,clean-reactions,pending-reactions}
+    # form.
     _yaml_agents = (yaml_cfg or {}).get("agents", {}) or {}
     ext_reviewer_cfg = dict(_yaml_agents.get("external-reviewer") or {})
-    codex_bot_block = (yaml_cfg or {}).get("codex-bot") or config.get("codex-bot") or {}
-    for legacy_key, modern_key in (
-        ("logins", "logins"),
-        ("clean-reactions", "clean-reactions"),
-        ("pending-reactions", "pending-reactions"),
-    ):
-        if modern_key not in ext_reviewer_cfg and legacy_key in codex_bot_block:
-            ext_reviewer_cfg[modern_key] = codex_bot_block[legacy_key]
 
     # Default repo-slug preserves current hardcoded behavior for unmodified configs.
     if "repo-slug" not in ext_reviewer_cfg:
@@ -1602,7 +1594,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         )
 
     def _render_codex_cloud_repair_handoff_prompt(*, issue, codex_review, repair_brief, lane_memo_path, lane_state_path, pr_url):
-        return ns._load_adapter_prompts_module().render_codex_cloud_repair_handoff_prompt(
+        return ns._load_adapter_prompts_module().render_external_reviewer_repair_handoff_prompt(
             issue=issue,
             codex_review=codex_review,
             repair_brief=repair_brief,

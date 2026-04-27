@@ -50,18 +50,9 @@ def migrate_review_keys(ledger: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     return ledger, changed
 
 
-def get_review(reviews: dict[str, Any] | None, new_key: str) -> dict[str, Any]:
-    """Read a review by its new key; fall back to the legacy key."""
-    reviews = reviews or {}
-    value = reviews.get(new_key)
-    if value:
-        return value
-    legacy_key = _LEGACY_KEY_FOR.get(new_key)
-    if legacy_key:
-        legacy_value = reviews.get(legacy_key)
-        if legacy_value:
-            return legacy_value
-    return {}
+def get_review(reviews: dict | None, new_key: str) -> dict:
+    """Read a review by its new key. Returns empty dict if absent."""
+    return ((reviews or {}).get(new_key)) or {}
 
 
 def migrate_persisted_ledger(path: Path | str) -> bool:

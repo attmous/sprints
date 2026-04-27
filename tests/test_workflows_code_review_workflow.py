@@ -192,7 +192,7 @@ def test_derive_next_action_dispatches_claude_repair_handoff_when_review_is_acti
                 "laneState": {},
             },
             "reviews": {
-                "claudeCode": {
+                "internalReview": {
                     "reviewScope": "local-prepublish",
                     "status": "completed",
                     "verdict": "REWORK",
@@ -228,7 +228,7 @@ def test_derive_next_action_dispatches_codex_cloud_repair_handoff_when_review_is
                 "laneState": {},
             },
             "reviews": {
-                "codexCloud": {
+                "externalReview": {
                     "reviewScope": "postpublish-pr",
                     "status": "completed",
                     "verdict": "REWORK",
@@ -264,7 +264,7 @@ def test_derive_next_action_dispatches_postpublish_repair_when_codex_findings_re
                 "laneState": {},
             },
             "reviews": {
-                "codexCloud": {
+                "externalReview": {
                     "reviewScope": "postpublish-pr",
                     "status": "completed",
                     "verdict": "REWORK",
@@ -326,7 +326,7 @@ def test_derive_next_action_short_circuits_when_claude_review_is_running_on_loca
                 "laneState": {},
             },
             "reviews": {
-                "claudeCode": {
+                "internalReview": {
                     "reviewScope": "local-prepublish",
                     "status": "running",
                     "requestedHeadSha": "head123",

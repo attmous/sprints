@@ -179,10 +179,6 @@ def render_external_reviewer_repair_handoff_prompt(
     )
 
 
-# Back-compat alias — Phase D will remove all callers.
-render_codex_cloud_repair_handoff_prompt = render_external_reviewer_repair_handoff_prompt
-
-
 def render_claude_repair_handoff_prompt(
     *,
     issue: dict[str, Any] | None,

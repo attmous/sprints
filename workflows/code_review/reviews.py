@@ -597,7 +597,7 @@ def synthesize_repair_brief(
     for source, review in (reviews or {}).items():
         if not review.get("required"):
             continue
-        if source in ("externalReview", "codexCloud"):
+        if source == "externalReview":
             for thread in review.get("threads", []):
                 if thread.get("status") != "open" or thread.get("isOutdated"):
                     continue
@@ -1322,7 +1322,7 @@ def maybe_dispatch_repair_handoff(
 
     from workflows.code_review.prompts import (
         render_claude_repair_handoff_prompt,
-        render_codex_cloud_repair_handoff_prompt,
+        render_external_reviewer_repair_handoff_prompt,
     )
 
     lane_state_path_fn = lane_state_path_fn or _default_lane_state_path
@@ -1426,7 +1426,7 @@ def maybe_dispatch_repair_handoff(
             lane_state_path=lane_state_path_str,
             now_iso=now_iso,
         )
-        repair_prompt = render_codex_cloud_repair_handoff_prompt(
+        repair_prompt = render_external_reviewer_repair_handoff_prompt(
             issue=issue,
             codex_review=get_review(reviews, "externalReview"),
             repair_brief=repair_brief,

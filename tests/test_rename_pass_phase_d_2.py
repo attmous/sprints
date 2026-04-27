@@ -54,3 +54,52 @@ def test_fetch_external_review_pr_body_signal_aliased():
         fetch_codex_pr_body_signal,
     )
     assert fetch_codex_pr_body_signal is fetch_external_review_pr_body_signal
+
+
+def test_render_codex_cloud_repair_handoff_prompt_alias_dropped():
+    from workflows.code_review import prompts
+    assert not hasattr(prompts, "render_codex_cloud_repair_handoff_prompt")
+
+
+def test_action_dispatcher_only_accepts_run_internal_review():
+    """The 'run_claude_review' alias is dropped — dispatcher matches only the new name."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "workflows/code_review/actions.py").read_text()
+    assert "'run_internal_review'" in src or '"run_internal_review"' in src
+    assert "'run_claude_review'" not in src
+    assert '"run_claude_review"' not in src
+
+
+def test_get_review_no_longer_falls_back_to_legacy_key():
+    from workflows.code_review.migrations import get_review
+    # With the legacy fallback dropped, only the new key is found.
+    assert get_review({"claudeCode": {"v": 1}}, "internalReview") == {}
+    assert get_review({"codexCloud": {"v": 2}}, "externalReview") == {}
+
+
+def test_parity_map_no_longer_includes_run_claude_review_pair():
+    from pathlib import Path
+    runtime_src = (Path(__file__).resolve().parent.parent / "runtime.py").read_text()
+    tools_src = (Path(__file__).resolve().parent.parent / "tools.py").read_text()
+    legacy = '("run_claude_review", "request_internal_review")'
+    assert legacy not in runtime_src
+    assert legacy not in tools_src
+
+
+def test_synthesize_repair_brief_no_longer_routes_codex_cloud_key():
+    """After the alias drop, source='codexCloud' falls through to the else branch."""
+    from workflows.code_review.reviews import synthesize_repair_brief
+    reviews = {
+        "codexCloud": {
+            "required": True,
+            "threads": [
+                {"id": "t1", "severity": "critical", "status": "open", "summary": "x"},
+            ],
+        }
+    }
+    out = synthesize_repair_brief(reviews, head_sha="head", now_iso="2026-04-26T00:00:00Z")
+    # The threads should NOT appear as externalReview-prefixed must-fix items.
+    must_fix = (out or {}).get("mustFix", []) if out else []
+    must_fix_ids = [item.get("id", "") for item in must_fix]
+    assert not any(i.startswith("externalReview:") for i in must_fix_ids)
+    assert not any(i.startswith("codexCloud:") for i in must_fix_ids)

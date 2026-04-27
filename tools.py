@@ -82,8 +82,7 @@ def _compatibility_pairs() -> set[tuple[str | None, str | None]]:
     return {
         ("publish_ready_pr", "publish_pr"),
         ("merge_and_promote", "merge_pr"),
-        ("run_claude_review", "request_internal_review"),
-        ("run_internal_review", "request_internal_review"),  # Phase D-1 alias
+        ("run_internal_review", "request_internal_review"),
         ("dispatch_codex_turn", "dispatch_implementation_turn"),
         ("dispatch_codex_turn", "dispatch_repair_handoff"),
         ("push_pr_update", "push_pr_update"),

@@ -3285,8 +3285,7 @@ def compare_with_legacy_status(*, workflow_root: Path, legacy_status: dict[str, 
     compatibility = {
         ("publish_ready_pr", "publish_pr"),
         ("merge_and_promote", "merge_pr"),
-        ("run_claude_review", "request_internal_review"),
-        ("run_internal_review", "request_internal_review"),  # Phase D-1 alias
+        ("run_internal_review", "request_internal_review"),
         ("dispatch_codex_turn", "dispatch_implementation_turn"),
         ("noop", "noop"),
         ("noop", None),

@@ -67,14 +67,15 @@ def test_get_review_returns_new_when_present():
     assert get_review(reviews, "internalReview") == {"v": 1}
 
 
-def test_get_review_falls_back_to_legacy_when_only_legacy_present():
+def test_get_review_no_longer_falls_back_to_legacy():
+    """Phase D-2: legacy-key fallback dropped after one-release deprecation window."""
     from workflows.code_review.migrations import get_review
 
     reviews = {"claudeCode": {"v": 1}}
-    assert get_review(reviews, "internalReview") == {"v": 1}
+    assert get_review(reviews, "internalReview") == {}
 
     reviews = {"codexCloud": {"v": 2}}
-    assert get_review(reviews, "externalReview") == {"v": 2}
+    assert get_review(reviews, "externalReview") == {}
 
 
 def test_get_review_prefers_new_when_both_present():
@@ -165,43 +166,20 @@ def test_existing_yoyopod_ledger_migrates_cleanly(tmp_path):
 
 def test_action_dispatcher_accepts_run_internal_review():
     """The dispatcher matches the new literal."""
-    # This test is structural — actions.py has a single dispatch site at line 473.
-    # We test by reading the source and asserting both literals are matched.
     from pathlib import Path
     src = Path(__file__).resolve().parent.parent / "workflows/code_review/actions.py"
     text = src.read_text()
-    # Expected dispatcher form: action_type in ('run_internal_review', 'run_claude_review')
     assert "run_internal_review" in text
-    assert "run_claude_review" in text  # back-compat alias retained
-
-
-def test_action_dispatcher_accepts_run_claude_review_alias():
-    """Same as above, framed from the alias side."""
-    from pathlib import Path
-    src = Path(__file__).resolve().parent.parent / "workflows/code_review/actions.py"
-    text = src.read_text()
-    # Both literals should appear in the same expression
-    assert "'run_internal_review'" in text or '"run_internal_review"' in text
-    assert "'run_claude_review'" in text or '"run_claude_review"' in text
 
 
 def test_parity_gate_accepts_run_internal_review():
     """Phase D-1 alias regression: parity compatibility map must accept the new
-    relay action type, otherwise active mode blocks the lane with shadow-parity-mismatch.
-
-    derive_next_action populates legacy_status["nextAction"]["type"] with
-    "run_internal_review" after the rename. compare_with_legacy_status compares
-    (legacy_action.type, relay_action_type). The relay shadow path still emits
-    "request_internal_review" via derive_shadow_actions_for_lane, so the
-    compatibility map must include ("run_internal_review", "request_internal_review")
-    in addition to the legacy ("run_claude_review", "request_internal_review")."""
+    relay action type, otherwise active mode blocks the lane with shadow-parity-mismatch."""
     from pathlib import Path
     repo_root = Path(__file__).resolve().parent.parent
     runtime_src = (repo_root / "runtime.py").read_text()
     tools_src = (repo_root / "tools.py").read_text()
-    # Both source files carry a parity compatibility map; both must alias.
     for src in (runtime_src, tools_src):
-        assert "run_claude_review" in src
         assert "run_internal_review" in src
         assert (
             '("run_internal_review", "request_internal_review")' in src

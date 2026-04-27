@@ -73,10 +73,10 @@ def test_render_claude_repair_handoff_prompt_includes_review_summary_and_fix_lis
     assert 'Do not publish yet.' in result
 
 
-def test_render_codex_cloud_repair_handoff_prompt_includes_pr_url_and_guardrails():
+def test_render_external_reviewer_repair_handoff_prompt_includes_pr_url_and_guardrails():
     prompts_module = load_module("daedalus_workflows_code_review_prompts_test", "workflows/code_review/prompts.py")
 
-    result = prompts_module.render_codex_cloud_repair_handoff_prompt(
+    result = prompts_module.render_external_reviewer_repair_handoff_prompt(
         issue={"number": 224, "title": "Issue 224"},
         codex_review={"reviewedHeadSha": "def456", "summary": "Codex Cloud found follow-up work."},
         repair_brief={"mustFix": [], "shouldFix": [{"summary": "Tighten edge case"}]},

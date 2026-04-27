@@ -724,7 +724,7 @@ def test_apply_active_lane_ledger_transition_sets_approved_for_clean_publish_rea
             "commitsAhead": 0,
             "laneState": {},
         },
-        reviews={"claudeCode": {"reviewScope": "local-prepublish", "reviewedHeadSha": "prsha", "verdict": "PASS_CLEAN"}, "codexCloud": {}},
+        reviews={"internalReview": {"reviewScope": "local-prepublish", "reviewedHeadSha": "prsha", "verdict": "PASS_CLEAN"}, "externalReview": {}},
         previous_claude_review={},
         publish_ready=True,
         review_loop_state="clean",
@@ -805,7 +805,7 @@ def test_derive_latest_progress_returns_approved_event_when_published_pr_is_clea
         implementation={"status": "under_review", "updatedAt": "2026-04-23T00:00:00Z"},
         ledger={"workflowState": "under_review"},
         open_pr={"number": 301},
-        reviews={"codexCloud": {"status": "completed", "verdict": "PASS_CLEAN", "updatedAt": "2026-04-23T00:05:00Z"}},
+        reviews={"externalReview": {"status": "completed", "verdict": "PASS_CLEAN", "updatedAt": "2026-04-23T00:05:00Z"}},
         review_loop_state="clean",
         merge_blocked=False,
         now_iso="2026-04-23T00:06:00Z",
@@ -846,7 +846,7 @@ def test_derive_latest_progress_uses_now_when_no_implementation_updatedAt_and_un
 def test_assemble_status_payload_returns_fully_shaped_status_dict():
     status_module = load_module("daedalus_workflows_code_review_status_asp", "workflows/code_review/status.py")
 
-    reviews = {"claudeCode": {"model": "claude-sonnet-4-6"}, "codexCloud": {}, "rockClaw": {}}
+    reviews = {"internalReview": {"model": "claude-sonnet-4-6"}, "externalReview": {}, "rockClaw": {}}
     implementation = {
         "worktree": "/tmp/worktree",
         "branch": "yoyopod-issue-224",
@@ -916,7 +916,7 @@ def test_assemble_status_payload_returns_fully_shaped_status_dict():
     assert result["implementation"]["branch"] == "yoyopod-issue-224"
     assert result["preflight"]["claudeReview"]["shouldRun"] is False
     assert result["preflight"]["interReviewAgent"] == result["preflight"]["claudeReview"]
-    assert result["reviews"]["interReviewAgent"] == reviews["claudeCode"]
+    assert result["reviews"]["interReviewAgent"] == reviews["internalReview"]
     assert result["nextAction"]["reason"] == "no-forward-action-needed"
     # Model fields fall back to the provided inter_review_agent_model when ledger entry is missing.
     assert result["ledger"]["claudeModel"] == "claude-sonnet-4-6"

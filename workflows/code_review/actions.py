@@ -474,7 +474,7 @@ def run_tick_raw(
     action = before.get('nextAction') or {'type': 'noop', 'reason': 'no-forward-action-needed'}
     executed: dict[str, Any] | None = None
     action_type = action.get('type')
-    if action_type in ('run_internal_review', 'run_claude_review'):
+    if action_type == 'run_internal_review':
         executed = dispatch_inter_review_agent_review_fn()
     elif action_type == 'dispatch_codex_turn':
         executed = dispatch_implementation_turn_fn()
