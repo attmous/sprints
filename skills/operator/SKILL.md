@@ -239,3 +239,17 @@ webhooks:
 ```
 
 (Extra fields beyond `at`/`action`/`summary` come from the action's audit context — they vary by action.)
+
+## Persisted-state migration (Phase D-1)
+
+The workflow ledger renames two `reviews.*` keys for provider neutrality:
+- `reviews.claudeCode` → `reviews.internalReview`
+- `reviews.codexCloud` → `reviews.externalReview`
+
+**Migration is automatic.** On workspace bootstrap, the engine rewrites the persisted ledger in place (atomic temp-file + rename). Idempotent: subsequent boots are no-ops.
+
+**Back-compat reads.** For one release, code paths use a `get_review(reviews, new_key)` helper that falls back to the legacy key if the migration hasn't run yet (e.g., a stale process wrote an old key after migration).
+
+**Action-type literal.** The transient action `run_claude_review` is renamed to `run_internal_review`. The dispatcher accepts both for one release.
+
+**What this means for you:** nothing — the rename is transparent. If you write external tooling that reads the ledger directly (e.g., a dashboard parsing `yoyopod-workflow-status.json`), update it to use `reviews.internalReview` / `reviews.externalReview`.
