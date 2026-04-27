@@ -183,3 +183,27 @@ def test_action_dispatcher_accepts_run_claude_review_alias():
     # Both literals should appear in the same expression
     assert "'run_internal_review'" in text or '"run_internal_review"' in text
     assert "'run_claude_review'" in text or '"run_claude_review"' in text
+
+
+def test_parity_gate_accepts_run_internal_review():
+    """Phase D-1 alias regression: parity compatibility map must accept the new
+    relay action type, otherwise active mode blocks the lane with shadow-parity-mismatch.
+
+    derive_next_action populates legacy_status["nextAction"]["type"] with
+    "run_internal_review" after the rename. compare_with_legacy_status compares
+    (legacy_action.type, relay_action_type). The relay shadow path still emits
+    "request_internal_review" via derive_shadow_actions_for_lane, so the
+    compatibility map must include ("run_internal_review", "request_internal_review")
+    in addition to the legacy ("run_claude_review", "request_internal_review")."""
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parent.parent
+    runtime_src = (repo_root / "runtime.py").read_text()
+    tools_src = (repo_root / "tools.py").read_text()
+    # Both source files carry a parity compatibility map; both must alias.
+    for src in (runtime_src, tools_src):
+        assert "run_claude_review" in src
+        assert "run_internal_review" in src
+        assert (
+            '("run_internal_review", "request_internal_review")' in src
+            or '("run_internal_review","request_internal_review")' in src
+        )
