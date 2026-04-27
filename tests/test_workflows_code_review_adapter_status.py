@@ -931,7 +931,7 @@ def test_apply_ledger_reviews_and_header_writes_expected_keys():
         codex_model="gpt-5.3-codex",
         inter_review_agent_model="claude-sonnet-4-6",
         actor_labels={"coder": "x"},
-        reviews={"rockClaw": {"a": 1}, "claudeCode": {"b": 2}, "codexCloud": {"c": 3}},
+        reviews={"rockClaw": {"a": 1}, "internalReview": {"b": 2}, "externalReview": {"c": 3}},
     )
     assert ledger["schemaVersion"] == 6
     assert ledger["reviewLoopState"] == "awaiting_reviews"
@@ -940,7 +940,7 @@ def test_apply_ledger_reviews_and_header_writes_expected_keys():
     assert ledger["codexModel"] == "gpt-5.3-codex"
     assert ledger["workflowActors"] == {"coder": "x"}
     assert ledger["approval"] == {}
-    assert ledger["reviews"] == {"rockClaw": {"a": 1}, "claudeCode": {"b": 2}, "codexCloud": {"c": 3}}
+    assert ledger["reviews"] == {"rockClaw": {"a": 1}, "internalReview": {"b": 2}, "externalReview": {"c": 3}}
 
 
 def test_apply_ledger_implementation_merge_preserves_prior_ledger_keys():

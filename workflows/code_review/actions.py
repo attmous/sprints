@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
+from workflows.code_review.migrations import get_review
 from workflows.code_review.paths import lane_memo_path, lane_state_path
 from workflows.code_review.sessions import (
     expected_lane_branch,
@@ -365,8 +366,8 @@ def run_dispatch_inter_review_agent_review(
     run_id = new_inter_review_agent_run_id_fn()
     ledger = load_ledger_fn()
     ledger.setdefault('reviews', {})
-    previous = (ledger['reviews'].get('claudeCode') or {}).copy()
-    ledger['reviews']['claudeCode'] = build_inter_review_agent_running_review(
+    previous = get_review(ledger['reviews'], 'internalReview').copy()
+    ledger['reviews']['internalReview'] = build_inter_review_agent_running_review(
         previous,
         run_id=run_id,
         head_sha=head_sha,
@@ -376,11 +377,12 @@ def run_dispatch_inter_review_agent_review(
         agent_name=internal_reviewer_agent_name,
         agent_role=agent_role,
     )
+    ledger['reviews'].pop('claudeCode', None)
     ledger['claudeModel'] = inter_review_agent_model
     ledger['interReviewAgentModel'] = inter_review_agent_model
     ledger['workflowActors'] = actor_labels_payload_fn(impl.get('codexModel'))
     save_ledger_fn(ledger)
-    audit_inter_review_agent_transition_fn(previous, ledger['reviews']['claudeCode'])
+    audit_inter_review_agent_transition_fn(previous, ledger['reviews']['internalReview'])
     memo_path = Path(impl['laneMemoPath']) if impl.get('laneMemoPath') else lane_memo_path(worktree)
     state_path = Path(impl['laneStatePath']) if impl.get('laneStatePath') else lane_state_path(worktree)
     try:
@@ -397,8 +399,8 @@ def run_dispatch_inter_review_agent_review(
         failed_at = now_iso_fn()
         ledger = load_ledger_fn()
         ledger.setdefault('reviews', {})
-        previous = (ledger['reviews'].get('claudeCode') or {}).copy()
-        ledger['reviews']['claudeCode'] = build_inter_review_agent_failed_review(
+        previous = get_review(ledger['reviews'], 'internalReview').copy()
+        ledger['reviews']['internalReview'] = build_inter_review_agent_failed_review(
             previous,
             run_id=run_id,
             head_sha=head_sha,
@@ -411,11 +413,12 @@ def run_dispatch_inter_review_agent_review(
             agent_name=internal_reviewer_agent_name,
             agent_role=agent_role,
         )
+        ledger['reviews'].pop('claudeCode', None)
         ledger['claudeModel'] = inter_review_agent_model
         ledger['interReviewAgentModel'] = inter_review_agent_model
         ledger['workflowActors'] = actor_labels_payload_fn(impl.get('codexModel'))
         save_ledger_fn(ledger)
-        audit_inter_review_agent_transition_fn(previous, ledger['reviews']['claudeCode'])
+        audit_inter_review_agent_transition_fn(previous, ledger['reviews']['internalReview'])
         raise
     completed_at = now_iso_fn()
     final_review = build_inter_review_agent_completed_review(
@@ -431,8 +434,9 @@ def run_dispatch_inter_review_agent_review(
     )
     ledger = load_ledger_fn()
     ledger.setdefault('reviews', {})
-    previous = (ledger['reviews'].get('claudeCode') or {}).copy()
-    ledger['reviews']['claudeCode'] = final_review
+    previous = get_review(ledger['reviews'], 'internalReview').copy()
+    ledger['reviews']['internalReview'] = final_review
+    ledger['reviews'].pop('claudeCode', None)
     ledger['claudeModel'] = inter_review_agent_model
     ledger['interReviewAgentModel'] = inter_review_agent_model
     ledger['workflowActors'] = actor_labels_payload_fn(impl.get('codexModel'))

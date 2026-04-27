@@ -1211,10 +1211,10 @@ def test_build_reviews_block_routes_postpublish_defaults_when_pr_is_ready_for_re
         advisory_reviewer_agent_name="Advisory_Reviewer_Agent",
         now_iso="2026-04-23T00:00:00Z",
     )
-    assert reviews["claudeCode"]["required"] is False
-    assert reviews["codexCloud"]["required"] is True
-    assert reviews["codexCloud"]["reviewScope"] == "postpublish-pr"
-    assert reviews["codexCloud"]["agentName"] == "External_Reviewer_Agent"
+    assert reviews["internalReview"]["required"] is False
+    assert reviews["externalReview"]["required"] is True
+    assert reviews["externalReview"]["reviewScope"] == "postpublish-pr"
+    assert reviews["externalReview"]["agentName"] == "External_Reviewer_Agent"
     assert reviews["rockClaw"]["required"] is False
 
 
@@ -1242,10 +1242,10 @@ def test_build_reviews_block_seeds_local_prepublish_for_draft_pr_state():
         now_iso="2026-04-23T00:00:00Z",
         claude_seed_fn=fake_seed,
     )
-    assert reviews["claudeCode"]["required"] is True
-    assert reviews["claudeCode"]["reviewScope"] == "local-prepublish"
-    assert reviews["codexCloud"]["required"] is False
-    assert reviews["codexCloud"]["agentName"] == "External_Reviewer_Agent"
+    assert reviews["internalReview"]["required"] is True
+    assert reviews["internalReview"]["reviewScope"] == "local-prepublish"
+    assert reviews["externalReview"]["required"] is False
+    assert reviews["externalReview"]["agentName"] == "External_Reviewer_Agent"
 
 
 def test_audit_inter_review_agent_transition_is_noop_when_nothing_changed():

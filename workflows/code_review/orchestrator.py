@@ -508,7 +508,8 @@ def reconcile(workspace: Any, *, write_health: bool = True, fix_watchers: bool =
         merge_blockers = status.get("derivedMergeBlockers") or merge_blockers
         merge_blocked = bool(status.get("derivedMergeBlocked"))
         ledger["reviewLoopState"] = review_loop_state
-        ledger["reviews"]["codexCloud"] = reviews["codexCloud"]
+        ledger["reviews"]["externalReview"] = get_review(reviews, "externalReview")
+        ledger["reviews"].pop("codexCloud", None)
         ledger["codexCloudAutoResolved"] = resolution_event
         if ledger.get("pr"):
             ledger["pr"]["mergeBlocked"] = merge_blocked

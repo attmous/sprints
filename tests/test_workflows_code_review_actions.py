@@ -508,8 +508,8 @@ def test_run_dispatch_inter_review_agent_review_records_completed_review_on_succ
     assert len(state["save_ledger_calls"]) == 2
     first_saved = state["save_ledger_calls"][0]
     second_saved = state["save_ledger_calls"][1]
-    assert first_saved["reviews"]["claudeCode"]["status"] == "running"
-    assert second_saved["reviews"]["claudeCode"]["status"] == "completed"
+    assert first_saved["reviews"]["internalReview"]["status"] == "running"
+    assert second_saved["reviews"]["internalReview"]["status"] == "completed"
     # Audit transitions called once per save
     assert len(state["audit_transitions"]) == 2
 
@@ -532,8 +532,8 @@ def test_run_dispatch_inter_review_agent_review_records_failed_review_and_rerais
 
     # After failure path we should still have 2 ledger saves (running + failed)
     assert len(state["save_ledger_calls"]) == 2
-    assert state["save_ledger_calls"][1]["reviews"]["claudeCode"]["status"] == "failed"
-    assert state["save_ledger_calls"][1]["reviews"]["claudeCode"]["failureClass"] == "max_turns_exhausted"
+    assert state["save_ledger_calls"][1]["reviews"]["internalReview"]["status"] == "failed"
+    assert state["save_ledger_calls"][1]["reviews"]["internalReview"]["failureClass"] == "max_turns_exhausted"
 
 
 def _tick_raw_deps():

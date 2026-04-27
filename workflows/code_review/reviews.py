@@ -1506,14 +1506,14 @@ def build_reviews_block(
                 agent_name=advisory_reviewer_agent_name,
                 agent_role="advisory_reviewer_agent",
             ),
-            "claudeCode": normalize_review(
+            "internalReview": normalize_review(
                 {**(existing_claude_review or {}), "model": (existing_claude_review or {}).get("model") or inter_review_agent_model},
                 required=False,
                 pending_summary="Claude pre-publish gate already completed before publication.",
                 agent_name=internal_reviewer_agent_name,
                 agent_role="internal_reviewer_agent",
             ),
-            "codexCloud": {
+            "externalReview": {
                 **codex_cloud,
                 "required": True,
                 "reviewScope": "postpublish-pr",
@@ -1533,14 +1533,14 @@ def build_reviews_block(
             agent_name=advisory_reviewer_agent_name,
             agent_role="advisory_reviewer_agent",
         ),
-        "claudeCode": normalize_review(
+        "internalReview": normalize_review(
             claude_seed,
             required=local_candidate_exists,
             pending_summary="Pending local unpublished branch review before publication.",
             agent_name=internal_reviewer_agent_name,
             agent_role="internal_reviewer_agent",
         ),
-        "codexCloud": {
+        "externalReview": {
             **codex_cloud,
             "agentName": codex_cloud.get("agentName") or external_reviewer_agent_name,
             "agentRole": codex_cloud.get("agentRole") or "external_reviewer_agent",
