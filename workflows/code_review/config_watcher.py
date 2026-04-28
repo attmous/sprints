@@ -74,11 +74,16 @@ class ConfigWatcher:
 
     def __post_init__(self) -> None:
         snap = self.snapshot_ref.get()
-        # Initialize from the loaded snapshot's mtime; size unknown at boot,
-        # so a first poll will always detect a change and re-stat. That's
-        # fine — re-parse on first tick is cheap and validates the on-disk
-        # bytes match the snapshot we booted with.
-        self._last_key = (snap.source_mtime, -1)
+        # Seed with the real on-disk (mtime, size) so the first poll is a
+        # true no-op when nothing changed since the bootstrap parse. If
+        # the file vanished between bootstrap and watcher construction,
+        # fall back to the snapshot's mtime + size=-1 (next poll will
+        # reload as soon as the file reappears).
+        try:
+            st = self.workflow_yaml_path.stat()
+            self._last_key = (st.st_mtime, st.st_size)
+        except OSError:
+            self._last_key = (snap.source_mtime, -1)
 
     def poll(self) -> None:
         """One tick of the watcher loop. Cheap when no change.

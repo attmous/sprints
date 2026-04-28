@@ -77,3 +77,47 @@ def test_parse_and_validate_raises_on_schema_violation(tmp_path):
     p.write_text("workflow: code-review\n")  # missing required fields
     with pytest.raises(ValidationError):
         parse_and_validate(p)
+
+
+def _seed_snapshot(tmp_path: Path):
+    """Helper: write valid yaml + return (path, snapshot)."""
+    from workflows.code_review.config_watcher import parse_and_validate
+
+    p = tmp_path / "workflow.yaml"
+    p.write_text(_VALID_YAML)
+    return p, parse_and_validate(p)
+
+
+def test_watcher_poll_swaps_on_mtime_change(tmp_path):
+    import os
+    from workflows.code_review.config_snapshot import AtomicRef
+    from workflows.code_review.config_watcher import ConfigWatcher
+
+    p, initial = _seed_snapshot(tmp_path)
+    ref = AtomicRef(initial)
+    events: list[tuple[str, dict]] = []
+    w = ConfigWatcher(p, ref, lambda t, d: events.append((t, d)))
+
+    # Edit file with a future mtime
+    new_yaml = _VALID_YAML.replace("test-instance", "edited-instance")
+    p.write_text(new_yaml)
+    os.utime(p, (initial.source_mtime + 5, initial.source_mtime + 5))
+
+    w.poll()
+    assert ref.get().config["instance"]["name"] == "edited-instance"
+    assert any(t == "daedalus.config_reloaded" for t, _ in events)
+
+
+def test_watcher_poll_no_change_is_noop(tmp_path):
+    from workflows.code_review.config_snapshot import AtomicRef
+    from workflows.code_review.config_watcher import ConfigWatcher
+
+    p, initial = _seed_snapshot(tmp_path)
+    ref = AtomicRef(initial)
+    events: list[tuple[str, dict]] = []
+    w = ConfigWatcher(p, ref, lambda t, d: events.append((t, d)))
+
+    w.poll()
+    w.poll()
+    assert ref.get() is initial
+    assert events == []
