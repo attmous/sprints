@@ -126,17 +126,16 @@ A **labeled issue** is the trigger. The **engine** ticks; for every active issue
 ## Philosophy
 
 - **State is tracked, not guessed.** The workflow always knows where each issue stands.
-- **A bad edit doesn't crash anything.** It just gets ignored until you fix it.
+- **A bad edit in the workflow.yaml doesn't crash anything.** It just gets ignored until you fix it.
 - **Recovery is automatic.** Lost workers never block forward motion.
-- **`--json` is the default operator dialect.** Humans read formatters, scripts read JSON.
 - **No packaging theater.** This is a plugin payload — flat top level, on purpose.
+- **`--json` is the default operator dialect.** Humans read formatters, scripts read JSON.
 
 ## Documentation
 
 - **[docs/architecture.md](docs/architecture.md)** — the big picture, end to end.
 - **[docs/concepts/](docs/concepts/)** — short explainers for each moving part: lanes, leases, runtimes, events, hot-reload, stalls.
 - **[docs/operator/](docs/operator/)** — day-to-day commands, the operator cheat sheet, the full slash-command catalogue.
-- **[docs/adr/](docs/adr/)** — architectural decision records.
 
 ## License
 
