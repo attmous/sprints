@@ -10,17 +10,13 @@
 
 *This Daedalus does the orchestration version of all three.*
 
-<br>
-
-[Architecture](docs/architecture.md) · [Concepts](docs/concepts/) · [Operator](docs/operator/cheat-sheet.md) · [ADRs](docs/adr/)
-
 </div>
 
 ---
 
 ## What it is
 
-Daedalus runs your agent workflows reliably, 24/7. You describe the work — its stages, hand-offs, and definition of "done". Daedalus turns it into a system that ships. The first workflow we ship and dogfood is **Code-Review** (`Issue → Code → Review → Merge`). More are coming.
+Daedalus automates your **SDLC** with agents — driven by your GitHub issues. Label an issue (default: `active-lane`, configurable in `workflow.yaml`) and Daedalus walks it through your workflow: picks the right agent for each stage, tracks state, survives crashes, ships when done. The first workflow we ship and dogfood is **Code-Review** (`Issue → Code → Review → Merge`). More are coming.
 
 ## Three myths, three guarantees
 
@@ -97,6 +93,35 @@ Inside Hermes:
 ```
 
 The full operator surface is in the [cheat sheet](docs/operator/cheat-sheet.md); every slash command is catalogued in [slash-commands.md](docs/operator/slash-commands.md).
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  ISSUE["🏷️ GitHub issue<br/><sub><i>active-lane label</i></sub>"]
+
+  subgraph DAEDALUS["⚙️ Daedalus engine"]
+    direction TB
+    WF["workflow.yaml<br/><sub>stages · roles · gates</sub>"]
+    LANE["Lane<br/><sub>one run per active issue</sub>"]
+    WF -. drives .-> LANE
+  end
+
+  subgraph AGENTS["🤖 Agents per role"]
+    direction TB
+    A1["Coder · Claude"]
+    A2["Reviewer · Codex"]
+    A3["Merger · …"]
+  end
+
+  PR["✅ Merged PR"]
+
+  ISSUE ==> DAEDALUS
+  DAEDALUS == dispatches ==> AGENTS
+  AGENTS == commits / comments / merges ==> PR
+```
+
+A **labeled issue** is the trigger. The **engine** ticks; for every active issue, it spins up a **lane** — one run of the workflow defined in `workflow.yaml` — and dispatches to the **agent** configured for the current stage. Agents write commits, post review comments, and eventually merge. When the workflow's last gate clears, the PR closes the loop.
 
 ## Philosophy
 
