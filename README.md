@@ -8,7 +8,7 @@
 
 *Daedalus the craftsman built the Labyrinth, gave Theseus the thread, and warned Icarus not to fly too close to the sun.*
 
-*This Daedalus does the orchestration version of all three.*
+*This one does all three.*
 
 </div>
 
