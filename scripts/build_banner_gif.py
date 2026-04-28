@@ -230,29 +230,40 @@ def build_constellation(seed_origin: tuple[int, int]) -> tuple[list, list]:
 
 # ──────────────────────────── code overlays ───────────────────────────────
 
-CODE_PY = [
-    ("def ", CYAN), ("reconcile_stalls", INK), ("(snapshot, running, now):", INK),
-]
-CODE_PY_2 = [
-    ("    for ", INK), ("entry ", INK), ("in ", CYAN), ("running.values():", INK),
-]
-CODE_PY_3 = [
-    ("        if ", INK), ("entry.runtime", INK), (".last_activity_ts() ", CYAN),
-    ("is None: ", INK), ("continue", CYAN),
-]
-
-CODE_YAML = [
-    ("stall:", CYAN),
-    ("  timeout_ms: ", INK), ("600000", CYAN_BRIGHT),
-    ("runtimes:", CYAN),
-    ("  coder:", INK),
-    ("    kind: ", INK), ("claude-cli", CYAN_BRIGHT),
+# Top block — multi-agent config. Each line shows a distinct role +
+# model + runtime so the reader sees this isn't one model, it's a team.
+CODE_AGENTS_TOP = [
+    [("agents:", CYAN)],
+    [("  coder    ", INK), ("→ ", INK_SOFT),
+     ("claude", CYAN_BRIGHT), ("/", INK_SOFT), ("sonnet-4.5", INK)],
+    [("  reviewer ", INK), ("→ ", INK_SOFT),
+     ("codex", CYAN_BRIGHT), ("/", INK_SOFT), ("gpt-5", INK)],
+    [("  merger   ", INK), ("→ ", INK_SOFT),
+     ("claude", CYAN_BRIGHT), ("/", INK_SOFT), ("haiku", INK)],
 ]
 
-CODE_EVENT = [
-    ('{"type": ', INK), ('"daedalus.stall_terminated"', CYAN_BRIGHT), (",", INK),
-    (' "lane_id": ', INK), ('"01HF…"', INK_SOFT), (",", INK),
-    (' "reason": ', INK), ('"stall_timeout"', CYAN_BRIGHT), ("}", INK),
+# Middle block — a GitHub-native lane state. Repo + issue number in the
+# code overlay are the strongest "this works on real GitHub" signal.
+CODE_GITHUB_MID = [
+    [('{', INK), ('"repo"', CYAN), (': ', INK),
+     ('"attmous/daedalus"', INK), (',', INK)],
+    [(' "issue"', CYAN), (': ', INK), ('#42', CYAN_BRIGHT), (',', INK),
+     ('  "label"', CYAN), (': ', INK), ('"active-lane"', INK), (',', INK)],
+    [(' "state"', CYAN), (': ', INK),
+     ('"awaiting_review"', CYAN_BRIGHT), ('}', INK)],
+]
+
+# Bottom block — turn log showing the agents collaborating in sequence.
+# This is the most evocative of "multiple agents working an issue."
+CODE_TURNLOG_BOT = [
+    [("[coder]    ", CYAN), ("claude/sonnet  ", INK),
+     ("✓ wrote 3 files", INK_SOFT)],
+    [("[reviewer] ", CYAN), ("codex/gpt-5    ", INK),
+     ("⚠ 2 nits, 1 fix", INK_SOFT)],
+    [("[coder]    ", CYAN), ("claude/sonnet  ", INK),
+     ("✓ pushed fixes", INK_SOFT)],
+    [("[reviewer] ", CYAN), ("codex/gpt-5    ", INK),
+     ("✓ approved →  merge", INK_SOFT)],
 ]
 
 
@@ -298,11 +309,25 @@ def draw_margin_icons(d: ImageDraw.ImageDraw, alpha: int) -> None:
     d.line((dx + 4, dy + 11, dx + 12, dy + 11), fill=col, width=1)
     d.line((dx + 4, dy + 16, dx + 9, dy + 16), fill=col, width=1)
 
-    # Mini bar-chart icon
-    cx2, cy2 = W - 56, 250
-    for i, h in enumerate([6, 12, 9, 14]):
-        d.rectangle((cx2 + i * 4, cy2 + 14 - h, cx2 + i * 4 + 3, cy2 + 14),
-                    outline=col, width=1)
+    # GitHub-mark glyph — circle silhouette with a stylised cat-tail tick.
+    # Conveys "GitHub" without infringing the official Octocat by being a
+    # generic round shoulder + ear silhouette. Filled cyan-soft to read as
+    # a mark, not an outlined icon like the others above.
+    gx, gy, gr = W - 50, 252, 13
+    d.ellipse((gx - gr, gy - gr, gx + gr, gy + gr), fill=col)
+    # ear nubs
+    d.ellipse((gx - gr - 1, gy - gr - 2, gx - gr + 6, gy - gr + 5), fill=col)
+    d.ellipse((gx + gr - 5, gy - gr - 2, gx + gr + 1, gy - gr + 5), fill=col)
+    # tail flick
+    d.line((gx + gr - 3, gy + gr - 3, gx + gr + 4, gy + gr + 4),
+           fill=col, width=2)
+    # negative-space "eyes" (paper colour) so it reads as a face/mark
+    paper_alpha = (*PAPER, alpha)
+    d.ellipse((gx - 5, gy - 3, gx - 1, gy + 1), fill=paper_alpha)
+    d.ellipse((gx + 1, gy - 3, gx + 5, gy + 1), fill=paper_alpha)
+    # tiny "GH" label below the mark
+    d.text((gx - 11, gy + gr + 4), "GitHub",
+           font=F_CAPTION, fill=col)
 
 
 # ──────────────────────────── brushstroke ─────────────────────────────────
@@ -444,14 +469,14 @@ def render_frame(f: int) -> Image.Image:
     cd = ImageDraw.Draw(code_layer)
     a0, a1, a2 = code_alpha(f, 0), code_alpha(f, 1), code_alpha(f, 2)
     if a0 > 0:
-        draw_code_block(cd, [CODE_PY, CODE_PY_2, CODE_PY_3],
-                        BUST_X - 280, 40, F_CODE, a0)
+        draw_code_block(cd, CODE_AGENTS_TOP,
+                        BUST_X - 290, 30, F_CODE, a0)
     if a1 > 0:
-        draw_code_block(cd, CODE_EVENT, BUST_X - 320, 160, F_CODE_SMALL, a1)
+        draw_code_block(cd, CODE_GITHUB_MID,
+                        BUST_X - 320, 145, F_CODE_SMALL, a1)
     if a2 > 0:
-        draw_code_block(cd,
-                        [[(t, c)] for t, c in CODE_YAML],
-                        BUST_X - 240, 240, F_CODE_SMALL, a2)
+        draw_code_block(cd, CODE_TURNLOG_BOT,
+                        BUST_X - 280, 230, F_CODE_SMALL, a2)
     im.paste(code_layer, (0, 0), code_layer)
 
     # ─── Title block (left) — drawn last so it sits on top of everything ──
@@ -474,10 +499,14 @@ def render_frame(f: int) -> Image.Image:
     td.text((TITLE_X, TITLE_Y + 185), "Workflows that don't melt.",
             font=F_SUB, fill=(*CYAN, 255))
 
-    # Caption
+    # Caption — workflow stages (the high-level value, not implementation)
     td.text((TITLE_X, TITLE_Y + 240),
-            "Hot-reload  ·  leases  ·  stalls  ·  shadow → active",
-            font=F_TAG, fill=(*INK_SOFT, 255))
+            "Issue   →   Code   →   Review   →   Merge",
+            font=F_TAG, fill=(*INK, 255))
+    # GitHub-native beat — one short italic line under the workflow flow
+    td.text((TITLE_X, TITLE_Y + 264),
+            "Out of the box on GitHub.",
+            font=font(FONT_DISPLAY_ITALIC, 17), fill=(*INK_SOFT, 255))
 
     im.paste(text_layer, (0, 0), text_layer)
 
