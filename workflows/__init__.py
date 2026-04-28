@@ -98,9 +98,11 @@ def run_cli(
         )
 
     # Symphony §6.3 dispatch preflight. If the loaded workflow module
-    # exposes ``run_preflight``, call it before dispatch. On failure,
-    # emit a ``daedalus.dispatch_skipped`` event to the workflow's
-    # event log (best-effort) and abort with WorkflowContractError.
+    # exposes ``run_preflight``, call it before dispatch — but only for
+    # commands the workflow declares as dispatch-gated. Codex P1 on
+    # PR #21: gating ALL commands prevents operators from running
+    # diagnostic / repair commands when the config is unhealthy, which
+    # is exactly when those commands are needed.
     #
     # NOTE on reconciliation: Symphony §6.3 says preflight failure must
     # not block reconciliation. Daedalus's tick is a one-shot CLI
@@ -109,7 +111,14 @@ def run_cli(
     # config is fixed. Within a single invocation, dispatch is aborted —
     # the structured event-log trail is the operator-visible signal.
     preflight_fn = getattr(module, "run_preflight", None)
-    if callable(preflight_fn):
+    gated_commands = getattr(module, "PREFLIGHT_GATED_COMMANDS", None)
+    invoked_command = argv[0] if argv else None
+    should_gate = (
+        callable(preflight_fn)
+        and gated_commands is not None
+        and invoked_command in gated_commands
+    )
+    if should_gate:
         result = preflight_fn(cfg)
         if not getattr(result, "ok", True):
             _emit_dispatch_skipped_event(

@@ -14,11 +14,17 @@ from workflows.code_review.preflight import PreflightResult, run_preflight
 
 
 def _minimal_ok_config() -> dict:
+    """Minimal config matching the actual code-review schema field paths.
+
+    Codex P2 on PR #21 fix: the preflight reads ``runtimes.<name>.kind``
+    and ``agents.external-reviewer.kind`` (the real schema layout), not
+    legacy top-level ``runtime`` / ``external-reviewer`` keys.
+    """
     return {
         "workflow": "code-review",
         "schema-version": 1,
-        "runtime": {"kind": "claude-cli"},
-        "external-reviewer": {"kind": "github-comments"},
+        "runtimes": {"r1": {"kind": "claude-cli"}},
+        "agents": {"external-reviewer": {"kind": "github-comments"}},
         "tracker": {"kind": "github"},
         "repository": {"github-token": "literal-token"},
     }
@@ -42,7 +48,7 @@ def test_non_dict_config_yields_front_matter_error():
 
 def test_unknown_runtime_kind():
     cfg = _minimal_ok_config()
-    cfg["runtime"]["kind"] = "totally-bogus"
+    cfg["runtimes"]["r1"]["kind"] = "totally-bogus"
     result = run_preflight(cfg)
     assert result.ok is False
     assert result.error_code == "unsupported_runtime_kind"
@@ -52,7 +58,7 @@ def test_unknown_runtime_kind():
 
 def test_unknown_reviewer_kind():
     cfg = _minimal_ok_config()
-    cfg["external-reviewer"]["kind"] = "carrier-pigeon"
+    cfg["agents"]["external-reviewer"]["kind"] = "carrier-pigeon"
     result = run_preflight(cfg)
     assert result.ok is False
     assert result.error_code == "unsupported_reviewer_kind"
@@ -96,7 +102,7 @@ def test_absent_optional_sections_ok():
 
 def test_can_reconcile_true_on_failure():
     cfg = _minimal_ok_config()
-    cfg["runtime"]["kind"] = "broken"
+    cfg["runtimes"]["r1"]["kind"] = "broken"
     result = run_preflight(cfg)
     assert result.ok is False
     assert result.can_reconcile is True

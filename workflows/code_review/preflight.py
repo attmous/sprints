@@ -49,24 +49,38 @@ def run_preflight(config: Mapping[str, Any]) -> PreflightResult:
             f"expected dict, got {type(config).__name__}",
         )
 
-    runtime = config.get("runtime") or {}
-    rk = runtime.get("kind") if isinstance(runtime, dict) else None
-    if rk and rk not in _RECOGNIZED_RUNTIME_KINDS:
-        return PreflightResult(
-            False,
-            "unsupported_runtime_kind",
-            f"runtime.kind={rk!r} not in {sorted(_RECOGNIZED_RUNTIME_KINDS)}",
-        )
+    # Codex P2 on PR #21: walk the actual schema field paths.
+    # Code-review workflow.yaml shape:
+    #   runtimes:
+    #     <name>: { kind: acpx-codex | claude-cli | hermes-agent, ... }
+    #     <name>: { ... }
+    #   agents:
+    #     external-reviewer: { kind: github-comments | disabled, ... }  (optional kind)
+    runtimes = config.get("runtimes") or {}
+    if isinstance(runtimes, dict):
+        for name, rt_cfg in runtimes.items():
+            if not isinstance(rt_cfg, dict):
+                continue
+            rk = rt_cfg.get("kind")
+            if rk and rk not in _RECOGNIZED_RUNTIME_KINDS:
+                return PreflightResult(
+                    False,
+                    "unsupported_runtime_kind",
+                    f"runtimes.{name}.kind={rk!r} not in {sorted(_RECOGNIZED_RUNTIME_KINDS)}",
+                )
 
-    reviewer = config.get("external-reviewer") or {}
-    if isinstance(reviewer, dict):
-        rk2 = reviewer.get("kind")
-        if rk2 and rk2 not in _RECOGNIZED_REVIEWER_KINDS:
-            return PreflightResult(
-                False,
-                "unsupported_reviewer_kind",
-                f"external-reviewer.kind={rk2!r} not in {sorted(_RECOGNIZED_REVIEWER_KINDS)}",
-            )
+    agents = config.get("agents") or {}
+    if isinstance(agents, dict):
+        reviewer = agents.get("external-reviewer") or {}
+        if isinstance(reviewer, dict):
+            rk2 = reviewer.get("kind")
+            # external-reviewer.kind is optional; only validate when present.
+            if rk2 and rk2 not in _RECOGNIZED_REVIEWER_KINDS:
+                return PreflightResult(
+                    False,
+                    "unsupported_reviewer_kind",
+                    f"agents.external-reviewer.kind={rk2!r} not in {sorted(_RECOGNIZED_REVIEWER_KINDS)}",
+                )
 
     tracker = config.get("tracker") or {}
     if isinstance(tracker, dict):
