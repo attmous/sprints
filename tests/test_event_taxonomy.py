@@ -67,3 +67,38 @@ def test_event_aliases_table_integrity():
     for legacy, canonical in et.EVENT_ALIASES.items():
         assert canonical in canonical_names or canonical.startswith("daedalus.") or "_" in canonical, \
             f"alias {legacy!r} -> {canonical!r} not a known canonical name"
+
+
+def test_round_trip_canonical_writer_reader(tmp_path):
+    """Writer writes canonical; reader reads canonical via canonicalize."""
+    import json
+    from workflows.code_review.event_taxonomy import (
+        canonicalize, TURN_COMPLETED, DAEDALUS_LANE_CLAIMED,
+    )
+
+    log = tmp_path / "events.jsonl"
+    with log.open("w") as f:
+        f.write(json.dumps({"type": TURN_COMPLETED}) + "\n")
+        f.write(json.dumps({"type": DAEDALUS_LANE_CLAIMED}) + "\n")
+
+    seen = []
+    for line in log.read_text().splitlines():
+        e = json.loads(line)
+        seen.append(canonicalize(e["type"]))
+    assert seen == [TURN_COMPLETED, DAEDALUS_LANE_CLAIMED]
+
+
+def test_legacy_log_lines_canonicalize_on_read(tmp_path):
+    """Old jsonl files with legacy names still resolve through canonicalize."""
+    import json
+    from workflows.code_review.event_taxonomy import (
+        canonicalize, SESSION_STARTED, DAEDALUS_REPAIR_HANDOFF,
+    )
+
+    log = tmp_path / "events.jsonl"
+    log.write_text(
+        json.dumps({"type": "claude_review_started"}) + "\n" +
+        json.dumps({"type": "codex_handoff_dispatched"}) + "\n"
+    )
+    canon = [canonicalize(json.loads(l)["type"]) for l in log.read_text().splitlines()]
+    assert canon == [SESSION_STARTED, DAEDALUS_REPAIR_HANDOFF]
