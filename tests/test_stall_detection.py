@@ -45,3 +45,13 @@ def test_acpx_codex_runtime_updates_last_activity_on_app_server_event():
 
     rt._record_activity()
     assert rt.last_activity_ts() is not None
+
+
+def test_hermes_agent_runtime_updates_last_activity_on_callback():
+    from workflows.code_review.runtimes.hermes_agent import HermesAgentRuntime
+
+    rt = HermesAgentRuntime({"kind": "hermes-agent"}, run=None, run_json=None)
+    assert rt.last_activity_ts() is None
+
+    rt._record_activity()
+    assert rt.last_activity_ts() is not None
