@@ -11,6 +11,20 @@
 The subject of the bust is Plato; we use it as a generic "classical wise craftsman"
 stand-in for Daedalus — there is no canonical surviving bust of Daedalus himself.
 
+## Caduceus illustration — `source/caduceus.jpg`
+
+- **Subject:** Caduceus (Hermes's herald wand) — line-art drawing.
+- **Source:** [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Caduceus2_(PSF).jpg) — Pearson Scott Foresman archives.
+- **Status:** Public domain (released by Pearson Scott Foresman to the Wikimedia Foundation).
+- **Used in:** `assets/daedalus-banner.gif` (inline icon, recoloured to warm gold).
+
+## GitHub mark — `source/github-mark.png`
+
+- **Subject:** GitHub Octicons mark.
+- **Source:** [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Octicons-mark-github.svg) — rasterised from the official SVG in the [github/octicons](https://github.com/github/octicons) repo.
+- **License:** MIT — see the Octicons repository for the full notice.
+- **Used in:** `assets/daedalus-banner.gif` (inline icon next to the GitHub-native caption clause).
+
 ## Typeface — `fonts/PlayfairDisplay*.ttf`
 
 - **Family:** Playfair Display (Roman + Italic, variable weight)

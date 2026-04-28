@@ -99,9 +99,7 @@ def render_frame(scene: Scene, f: int) -> Image.Image:
     im.paste(margin, (0, 0), margin)
 
     # 7. left-side title block (always opaque; underline animates draw-in)
-    text_layer = Image.new("RGBA", (config.W, config.H), (0, 0, 0, 0))
-    td = ImageDraw.Draw(text_layer)
-    text_block.draw(td, underline_progress=timeline.underline_progress(f))
-    im.paste(text_layer, (0, 0), text_layer)
+    # text_block now paints onto `im` directly so it can paste PNG icons.
+    text_block.draw(im, underline_progress=timeline.underline_progress(f))
 
     return im

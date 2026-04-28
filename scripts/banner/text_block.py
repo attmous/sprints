@@ -1,13 +1,46 @@
-"""Title + subtitle + the bottom captions on the left side."""
+"""Title + subtitle + the bottom captions on the left side.
+
+Now takes the Image object too, because the inline icons are PNG-embedded
+(real artwork, recoloured) rather than drawn primitives.
+
+Layout:
+
+    ┌────────────────────────────────────────────────────────────┐
+    │ ☤    Daedalus              [code] [bust]                  │
+    │      ─                                                     │
+    │      Agents that fly.                                      │
+    │      Workflows that don't melt.                            │
+    │      Issue → Code → Review → Merge                         │
+    │      A Hermes Agent plugin · Reads issues, writes PRs.    │
+    │      [GH] GitHub now — Linear next.                        │
+    └────────────────────────────────────────────────────────────┘
+
+The caduceus is a tall decorative emblem on the far-left margin.
+The GitHub mark is inline next to its tagline clause.
+"""
 from __future__ import annotations
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 from . import config, icons, typography
 
 
-def draw(d: ImageDraw.ImageDraw, *, underline_progress: float) -> None:
-    """Paint the entire left-side title block onto an RGBA-aware draw."""
+def draw(im: Image.Image, *, underline_progress: float) -> None:
+    """Paint the entire left-side title block onto `im`."""
+
+    # ── Caduceus emblem on the far-left margin ──────────────────────────
+    icons.paste_caduceus(
+        im,
+        cx=config.CADUCEUS_X + 30,
+        cy=config.CADUCEUS_Y + config.CADUCEUS_HEIGHT // 2,
+        height=config.CADUCEUS_HEIGHT,
+        color=config.HERMES_GOLD,
+    )
+
+    # ── Text on its own RGBA layer ──────────────────────────────────────
+    text_layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(text_layer)
+
     x = config.TITLE_X
     y = config.TITLE_Y
 
@@ -28,37 +61,27 @@ def draw(d: ImageDraw.ImageDraw, *, underline_progress: float) -> None:
     d.text((x, y + config.OFFSET_SUBTITLE_2), "Workflows that don't melt.",
            font=typography.subtitle(), fill=(*config.CYAN, 255))
 
-    # Workflow flow caption
+    # Workflow flow
     d.text((x, y + config.OFFSET_FLOW),
            "Issue   →   Code   →   Review   →   Merge",
            font=typography.caption_sans(), fill=(*config.INK, 255))
 
-    # ── one inline caption with both icons as visual punctuation ────────
-    # Layout (left → right):
-    #   [caduceus] A Hermes Agent plugin, [GH] fluent in GitHub.
-    #
-    # Each icon anchors its clause. Spacing constants live here, not in
-    # config, because they're tightly coupled to glyph widths.
-    cap_y = y + config.OFFSET_INLINE_CAPTION
+    # Caption line 1 — plugin + behaviour
     cap_font = typography.caption_serif_italic()
-    cursor = x
-
-    # Caduceus icon
-    icons.draw_caduceus(d, cursor + 9, cap_y + 9,
-                        height=20, color=config.HERMES_GOLD)
-    cursor += 22
-
-    # First clause — italic display serif, ink colour
-    clause1 = "A Hermes Agent plugin,"
-    d.text((cursor, cap_y), clause1, font=cap_font,
-           fill=(*config.INK, 255))
-    cursor += cap_font.getbbox(clause1)[2] + 12
-
-    # GitHub mark
-    icons.draw_github_mark(d, cursor + 8, cap_y + 11,
-                           size=15, color=config.INK)
-    cursor += 21
-
-    # Second clause — same italic display serif, slightly softer ink
-    d.text((cursor, cap_y), "fluent in GitHub.",
+    d.text((x, y + config.OFFSET_CAPTION_1),
+           "A Hermes Agent plugin  ·  Reads issues, writes PRs.",
            font=cap_font, fill=(*config.INK, 255))
+
+    im.paste(text_layer, (0, 0), text_layer)
+
+    # ── Caption line 2 — GitHub mark + roadmap (PNG icon needs Image) ──
+    cap_y_2 = y + config.OFFSET_CAPTION_2
+    icons.paste_github_mark(im,
+                            cx=x + 9, cy=cap_y_2 + 10,
+                            height=18, color=config.INK)
+    cap_layer_2 = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    cd2 = ImageDraw.Draw(cap_layer_2)
+    cd2.text((x + 26, cap_y_2),
+             "GitHub now — Linear next.",
+             font=cap_font, fill=(*config.INK_SOFT, 255))
+    im.paste(cap_layer_2, (0, 0), cap_layer_2)

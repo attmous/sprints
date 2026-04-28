@@ -1,23 +1,111 @@
 """Reusable icon glyphs.
 
-Three groups:
-  * `draw_margin_icons` — small editorial vignettes in the right margin
-  * `draw_github_mark`  — a recognisable but trademark-clean GitHub-ish
-                          silhouette, drawable inline at any size
-  * `draw_caduceus`     — Hermes's herald wand: staff + two snakes + wings
-                          (line drawing in PIL, scales to any size)
+Two groups:
 
-Adding new icons: drop a `draw_<name>(d, cx, cy, ...)` function below
+  PNG-embedded icons — load a real artwork once, recolour to any tint,
+  paste into the banner at the requested size:
+    * `paste_caduceus`     — Hermes's herald wand (Wikimedia line drawing)
+    * `paste_github_mark`  — official Octicons GitHub mark
+
+  Programmatic glyphs — drawn directly with PIL primitives, useful for
+  small ambient decorations:
+    * `draw_margin_icons`  — small editorial vignettes
+    * `draw_github_mark`   — fallback silhouette (no PNG required)
+    * `draw_caduceus`      — fallback line drawing
+
+Adding new icons: drop a `paste_<name>` or `draw_<name>` function below
 and import it where you need it. Each icon paints into an existing
-ImageDraw — no global state.
+Image / ImageDraw — no global state.
 """
 from __future__ import annotations
 
 import math
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from . import config, typography
+
+
+# ── PNG-embedded icons ──────────────────────────────────────────────────
+
+_png_cache: dict[str, Image.Image] = {}
+
+
+def _load_png(path) -> Image.Image:
+    key = str(path)
+    if key not in _png_cache:
+        _png_cache[key] = Image.open(path).convert("RGBA")
+    return _png_cache[key].copy()
+
+
+def _recolour(src: Image.Image, color: tuple[int, int, int],
+              alpha: int = 255) -> Image.Image:
+    """Recolour a single-tone artwork to `color`.
+
+    Picks the right "silhouette mask" for the source format:
+
+    * **Alpha-shaped PNG** (e.g. Octicons Github mark — opaque shape on
+      a transparent background): use the alpha channel directly.
+    * **Line-art on white** (e.g. PSF caduceus — black ink on a white
+      background): use inverted luminance so dark ink becomes opaque
+      coloured pixels and the white background drops out.
+
+    We detect the alpha-shaped case by checking whether the source
+    actually has variable alpha. If it does, alpha is the silhouette;
+    otherwise we fall back to luminance.
+    """
+    if src.mode == "RGBA":
+        a_channel = src.split()[3]
+        a_min, a_max = a_channel.getextrema()
+        has_real_alpha = a_min < 250 and a_max > 5
+    else:
+        has_real_alpha = False
+
+    if has_real_alpha:
+        mask = a_channel
+    else:
+        # Line-art: dark pixels are the silhouette.
+        grey = ImageOps.grayscale(src)
+        mask = ImageOps.invert(grey)
+
+    out = Image.new("RGBA", src.size, (*color, 0))
+    fill = Image.new("RGBA", src.size, (*color, alpha))
+    out.paste(fill, (0, 0), mask)
+    return out
+
+
+def paste_png(im: Image.Image, src_path, cx: int, cy: int,
+              height: int, color: tuple[int, int, int],
+              alpha: int = 255) -> None:
+    """Paste a single-tone PNG at (cx, cy) scaled to `height`, recoloured."""
+    if alpha <= 0:
+        return
+    src = _load_png(src_path)
+    aspect = src.width / src.height
+    target_h = height
+    target_w = max(1, int(round(target_h * aspect)))
+    src = src.resize((target_w, target_h), Image.LANCZOS)
+    tinted = _recolour(src, color, alpha)
+    im.paste(tinted, (cx - target_w // 2, cy - target_h // 2), tinted)
+
+
+def paste_caduceus(im: Image.Image, cx: int, cy: int, height: int,
+                   color: tuple[int, int, int] = config.HERMES_GOLD,
+                   alpha: int = 255) -> None:
+    """Hermes's herald wand — PNG-embedded line drawing."""
+    paste_png(im, config.ASSETS / "source" / "caduceus.jpg",
+              cx, cy, height, color, alpha)
+
+
+def paste_github_mark(im: Image.Image, cx: int, cy: int, height: int,
+                      color: tuple[int, int, int] = config.INK,
+                      alpha: int = 255) -> None:
+    """Official Octicons GitHub mark — PNG-embedded."""
+    paste_png(im, config.ASSETS / "source" / "github-mark.png",
+              cx, cy, height, color, alpha)
+
+
+# ── programmatic fallbacks (kept for ambient decoration) ────────────────
 
 
 # ── right-margin editorial vignettes ────────────────────────────────────
