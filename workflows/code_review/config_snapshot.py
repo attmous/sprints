@@ -52,6 +52,11 @@ class ConfigSnapshot:
     prompts: Mapping[str, Any]
     loaded_at: float
     source_mtime: float
+    # Codex P2 on PR #19: track on-disk size at snapshot-construction time so
+    # ConfigWatcher can seed its (mtime, size) change-detection key from the
+    # snapshot without re-stat()ing the live file. Defaults to -1 (sentinel)
+    # for back-compat with existing call sites that don't supply it.
+    source_size: int = -1
 
     def __post_init__(self) -> None:
         # Wrap incoming dicts in read-only views so callers cannot mutate
