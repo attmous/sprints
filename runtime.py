@@ -2424,7 +2424,7 @@ def _recent_relay_events_for_lane(*, event_log_path: Path, lane_id: str | None, 
         selected.append(
             {
                 "event_id": entry.get("event_id"),
-                "event_type": entry.get("event_type"),
+                "event_type": canonicalize_event_type(entry.get("event_type") or ""),
                 "created_at": entry.get("created_at"),
                 "causal_action_id": entry.get("causal_action_id"),
             }
