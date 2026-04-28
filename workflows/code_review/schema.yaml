@@ -215,6 +215,17 @@ properties:
             type: array
             items: {type: string}
 
+  server:
+    type: object
+    additionalProperties: false
+    properties:
+      port:
+        type: integer
+        minimum: 0
+        maximum: 65535
+      bind:
+        type: string
+
   webhooks:
     type: array
     items:

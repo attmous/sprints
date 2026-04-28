@@ -78,6 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
     tick_parser = sub.add_parser("tick", help="Run one workflow-watchdog control-loop tick.")
     tick_parser.add_argument("--json", action="store_true", help="Print machine-readable tick output.")
 
+    serve_parser = sub.add_parser(
+        "serve",
+        help="Run the optional HTTP status surface (Symphony §13.7).",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="TCP port to bind. Overrides config.server.port. 0 = ephemeral (tests).",
+    )
+
     return parser
 
 
@@ -261,6 +272,25 @@ def main(workspace: Any, argv: list[str] | None = None) -> int:
     if args.command == "tick":
         result = workspace.tick()
         print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "serve":
+        # Symphony §13.7 — long-running HTTP status surface. Read config
+        # from the workspace; CLI --port overrides config.server.port.
+        cfg = getattr(workspace, "CONFIG", None) or {}
+        server_cfg = cfg.get("server") if isinstance(cfg, dict) else None
+        server_cfg = server_cfg or {}
+        port = args.port if args.port is not None else server_cfg.get("port", 8080)
+        bind = server_cfg.get("bind", "127.0.0.1")
+        # Imported lazily so workspaces that never call ``serve`` do not
+        # take the server import cost.
+        from workflows.code_review.server import start_server
+        handle = start_server(workspace.WORKSPACE, port=port, bind=bind)
+        print(f"daedalus serve listening on http://{bind}:{handle.port}/")
+        try:
+            handle.thread.join()
+        except KeyboardInterrupt:
+            handle.shutdown()
         return 0
 
     parser.error("unknown command")

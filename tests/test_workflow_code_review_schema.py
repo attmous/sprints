@@ -122,3 +122,46 @@ def test_schema_rejects_github_comments_missing_enabled():
     except jsonschema.ValidationError:
         return
     raise AssertionError("expected ValidationError when 'enabled' missing")
+
+
+def test_schema_accepts_config_without_server_block():
+    """Back-compat: server block is optional (Symphony §13.7 — disabled by default)."""
+    schema = _load_schema()
+    config = _minimal_valid_config()
+    jsonschema.validate(config, schema)
+
+
+def test_schema_accepts_server_block():
+    schema = _load_schema()
+    config = _minimal_valid_config()
+    config["server"] = {"port": 8080, "bind": "127.0.0.1"}
+    jsonschema.validate(config, schema)
+
+
+def test_schema_accepts_server_block_port_only():
+    schema = _load_schema()
+    config = _minimal_valid_config()
+    config["server"] = {"port": 0}  # ephemeral port, used by tests
+    jsonschema.validate(config, schema)
+
+
+def test_schema_rejects_server_unknown_field():
+    schema = _load_schema()
+    config = _minimal_valid_config()
+    config["server"] = {"port": 8080, "unexpected": "x"}
+    try:
+        jsonschema.validate(config, schema)
+    except jsonschema.ValidationError:
+        return
+    raise AssertionError("expected ValidationError for unknown server field")
+
+
+def test_schema_rejects_server_port_out_of_range():
+    schema = _load_schema()
+    config = _minimal_valid_config()
+    config["server"] = {"port": 70000}
+    try:
+        jsonschema.validate(config, schema)
+    except jsonschema.ValidationError:
+        return
+    raise AssertionError("expected ValidationError for out-of-range port")
