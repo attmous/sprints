@@ -1,331 +1,358 @@
 # Daedalus Operator Cheat Sheet
 
-## 1. 10-second mental model
+> **When confused, trust GitHub + live derived status first, Daedalus DB second, stale ledger prose last.**
 
-- **Workflow CLI** = the policy brain, exposed via
-  `~/.hermes/plugins/daedalus/workflows/__main__.py --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type>`
-  (historically this replaced a workflow-local wrapper script, now retired)
-- **Daedalus runtime** = durable orchestrator around that brain
-- **systemd active service** = keeps Daedalus alive 24/7
-- **Codex** = internal coder
-- **Claude** = internal unpublished-branch gate
-- **Codex Cloud** = external PR reviewer
-- **SQLite** = canonical Daedalus runtime truth now
-- **JSONL** = append-only event/audit history
-- **lane-state + lane-memo** = lane-local handoff artifacts
-
-If status looks weird, always ask:
-1. What does the workflow CLI's `status --json` think?
-2. What does Daedalus think?
-3. Is the active service alive?
-4. Is GitHub truth drifting away from persisted ledger truth?
+This doc is for the 3am debugging session. Everything here is copy-paste ready.
 
 ---
 
-## 2. Core surfaces
+## Quick Reference
 
-### Workflow CLI (plugin-owned; replaces the retired workflow-local wrapper)
-```bash
-python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> status --json
-python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> tick --json
-python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> dispatch-implementation-turn --json
-python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> dispatch-claude-review --json
+| What You Need | Command / Query |
+|:---|:---|
+| **Check status** | `/daedalus status` |
+| **Full health check** | `/daedalus doctor` |
+| **Live dashboard** | `/daedalus watch` |
+| **Service health** | `systemctl --user status daedalus-active@<profile>.service` |
+| **Recent logs** | `journalctl --user -u daedalus-active@<profile>.service -n 200` |
+| **Lane actions (SQL)** | `select action_id, action_type, status, retry_count from lane_actions where lane_id='lane:220' order by requested_at desc;` |
+| **Lane state (SQL)** | `select lane_id, workflow_state, review_state, current_head_sha from lanes where lane_id='lane:220';` |
+
+---
+
+## Mental Model
+
+```
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│   GitHub     │───►│   Wrapper    │───►│   Daedalus   │
+│   (truth)    │    │   (brain)    │    │   (runtime)  │
+└──────────────┘    └──────────────┘    └──────────────┘
+       │                    │                    │
+       │                    │                    │
+       ▼                    ▼                    ▼
+  Issue labels        nextAction          SQLite DB
+  PR head             health              JSONL events
+  Review threads      reviewLoopState     Leases
 ```
 
-### Daedalus runtime direct
-```bash
-python3 ~/\.hermes/plugins/daedalus/runtime.py status --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> --json
-python3 ~/\.hermes/plugins/daedalus/runtime.py shadow-report --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> --json
-python3 ~/\.hermes/plugins/daedalus/runtime.py doctor --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> --json
-python3 ~/\.hermes/plugins/daedalus/runtime.py request-active-actions --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> --lane-id lane:220 --json
-```
+**Three layers, three commands:**
 
-### Daedalus slash command inside Hermes
+| Layer | Command | Answers |
+|:---|:---|:---|
+| **GitHub** | `gh issue view 220`, `gh pr view 42` | Labels, head, draft, review threads |
+| **Wrapper** | `workflow status --json` | `nextAction`, `health`, `derivedReviewLoopState` |
+| **Daedalus** | `/daedalus doctor` | Runtime freshness, ownership, action compatibility, failures |
+
+---
+
+## Core Commands
+
+### Slash Commands (Inside Hermes)
+
 ```text
-/daedalus status
-/daedalus shadow-report
-/daedalus doctor
-/daedalus active-gate-status
+/daedalus status              # Runtime row, lane count, paths, freshness
+/daedalus doctor              # Full health check across all subsystems
+/daedalus watch               # Live TUI: lanes + alerts + events
+/daedalus shadow-report       # Diff shadow plan vs active reality
+/daedalus active-gate-status  # What's blocking promotion to active
+/daedalus service-status      # systemd health snapshot
+/daedalus get-observability   # Effective config (merged layers)
 ```
 
-### Active service
+### Workflow CLI (Direct)
+
 ```bash
-systemctl --user status daedalus-active@<owner>-<repo>-<workflow-type>.service --no-pager
-journalctl --user -u daedalus-active@<owner>-<repo>-<workflow-type>.service -n 200 --no-pager
+# Status
+python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
+  --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
+  status --json
+
+# Tick (manual dispatch)
+python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
+  --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
+  tick --json
+
+# Implementation turn
+python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
+  --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
+  dispatch-implementation-turn --json
+
+# Claude review
+python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
+  --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
+  dispatch-claude-review --json
+```
+
+### Daedalus Runtime (Direct)
+
+```bash
+# Status
+python3 ~/.hermes/plugins/daedalus/runtime.py \
+  status --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
+  --json
+
+# Doctor
+python3 ~/.hermes/plugins/daedalus/runtime.py \
+  doctor --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
+  --json
+
+# Shadow report
+python3 ~/.hermes/plugins/daedalus/runtime.py \
+  shadow-report --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
+  --json
+
+# Active actions for a lane
+python3 ~/.hermes/plugins/daedalus/runtime.py \
+  request-active-actions \
+  --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
+  --lane-id lane:220 --json
+```
+
+### Service Control
+
+```bash
+# Check service
+systemctl --user status \
+  daedalus-active@<owner>-<repo>-<workflow-type>.service --no-pager
+
+# View logs
+journalctl --user -u \
+  daedalus-active@<owner>-<repo>-<workflow-type>.service \
+  -n 200 --no-pager
+
+# Restart
+systemctl --user restart \
+  daedalus-active@<owner>-<repo>-<workflow-type>.service
 ```
 
 ---
 
-## 3. Source of truth order
+## Key Files
 
-Use this order when debugging:
-1. **GitHub truth**
-   - active issue label
-   - PR existence / head / draft state
-   - Codex Cloud review threads/signals
-2. **Wrapper read model**
-   - `status --json`
-   - especially `nextAction`, `health`, `derivedReviewLoopState`
-3. **Daedalus runtime state**
-   - `daedalus.db`
-   - `shadow-report`
-   - `doctor`
-4. **Lane handoff files**
-   - `.lane-state.json`
-   - `.lane-memo.md`
-5. **Legacy/archive cron files**
-   - history only, not scheduler truth
+| File | Purpose |
+|:---|:---|
+| `~/.hermes/workflows/<profile>/state/daedalus/daedalus.db` | Canonical runtime state (SQLite) |
+| `~/.hermes/workflows/<profile>/memory/daedalus-events.jsonl` | Append-only event history |
+| `~/.hermes/workflows/<profile>/memory/workflow-status.json` | Wrapper status projection |
+| `~/.hermes/workflows/<profile>/memory/workflow-health.json` | Wrapper health projection |
+| `/tmp/issue-<N>/.lane-state.json` | Lane-local handoff state |
+| `/tmp/issue-<N>/.lane-memo.md` | Lane-local handoff notes |
+| `~/.config/systemd/user/daedalus-active@<profile>.service` | Service unit file |
 
 ---
 
-## 4. Key files
+## Lane States
 
-### Workflow root
-- `~/.hermes/workflows/<owner>-<repo>-<workflow-type>`
+### Local Phase (No PR yet)
 
-### Main repo clone
-- `~/.hermes/workspaces/<repo-name>`
+```
+implementing → awaiting_claude_prepublish → ready_to_publish
+     ↑                    │
+     └──── findings ──────┘
+```
 
-### Workflow CLI (plugin-owned; replaces the retired workflow-local wrapper)
-- `~/.hermes/plugins/daedalus/workflows/__main__.py`
-  (always pass `--workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type>`)
+### Published Phase (PR exists)
 
-### Daedalus plugin
-- `~/.hermes/plugins/daedalus/__init__.py`
-- `~/.hermes/plugins/daedalus/tools.py`
-- `~/.hermes/plugins/daedalus/runtime.py`
-- `~/.hermes/plugins/daedalus/alerts.py`
+```
+under_review → findings_open → approved → merged
+     ↑              │
+     └── findings ──┘
+```
 
-### Daedalus canonical state
-- `~/.hermes/workflows/<owner>-<repo>-<workflow-type>/state/daedalus/daedalus.db`
-- `~/.hermes/workflows/<owner>-<repo>-<workflow-type>/memory/daedalus-events.jsonl`
+### Health Overlays
 
-### Wrapper projections
-- `~/.hermes/workflows/<owner>-<repo>-<workflow-type>/memory/workflow-status.json`
-- `~/.hermes/workflows/<owner>-<repo>-<workflow-type>/memory/workflow-health.json`
-- `~/.hermes/workflows/<owner>-<repo>-<workflow-type>/memory/workflow-audit.jsonl`
-
-### Lane-local handoff artifacts
-- `/tmp/issue-<N>/.lane-state.json`
-- `/tmp/issue-<N>/.lane-memo.md`
-
-### Service unit
-- `~/.config/systemd/user/daedalus-active@<owner>-<repo>-<workflow-type>.service`
+| State | Meaning |
+|:---|:---|
+| `healthy` | All systems nominal |
+| `stale-ledger` | Persisted truth differs from live derived state |
+| `stale-lane` | Lane hasn't progressed in N ticks |
+| `operator_attention_required` | Human judgment needed |
 
 ---
 
-## 5. State machine at a glance
+## Reviewer Policy
 
-### Local lane phase
-- `implementing`
-- `implementing_local`
-- `awaiting_claude_prepublish`
-- `claude_prepublish_findings`
-- `ready_to_publish`
-
-### Published PR phase
-- `under_review`
-- `findings_open`
-- `approved`
-
-### Operational health overlays
-- `healthy`
-- `stale-ledger`
-- `stale-lane`
-- `disabled-core-jobs`
-- `missing-core-jobs`
-- `operator_attention_required`
+| Phase | Required Reviewer | Gate |
+|:---|:---|:---|
+| **Before PR** | Claude (internal) | Must pass before publish |
+| **After PR** | Codex Cloud (external) | Must pass before merge |
+| **Advisory** | Rock Claw | Informative only |
 
 ---
 
-## 6. Reviewer policy
+## Actor Model
 
-### Before PR exists
-Required reviewer:
-- **Claude only**
-
-Meaning:
-- local unpublished branch must clear Claude gate before publish
-
-### After PR is ready for review
-Required reviewer:
-- **Codex Cloud only**
-
-Meaning:
-- merge blocked until PR head is clean
-
-### Advisory reviewer
-- **Rock Claw** is informative, not always the primary gate
+| Role | Model | Purpose |
+|:---|:---|:---|
+| Internal Coder | `gpt-5.3-codex-spark/high` | Default implementation |
+| Escalation Coder | `gpt-5.4` | Large-effort / complex tasks |
+| Internal Reviewer | `claude-sonnet-4-6` | Local unpublished branch gate |
+| External Reviewer | Codex Cloud | Published PR review |
+| Advisory Reviewer | Rock Claw | Optional additional eyes |
 
 ---
 
-## 7. Actor model
+## Handoff Map
 
-Configured actor labels:
-- `Internal_Coder_Agent`
-- `Escalation_Coder_Agent`
-- `Internal_Reviewer_Agent`
-- `External_Reviewer_Agent`
-- `Advisory_Reviewer_Agent`
+```
+Orchestrator ──► Coder ──► Internal Reviewer (Claude) ──► Publish ──► External Reviewer (Codex Cloud) ──► Merge
+     │              │                    │                                    │                          │
+     │              │                    └─► repair ──────────────────────────┘                          │
+     │              │                                                                                    │
+     │              └─► repair ◄─────────────────────────────────────────────────────────────────────────┘
+     │
+     └─► restart session (if stale)
+```
 
-### Backing models today
-- internal coder default: `gpt-5.3-codex-spark/high`
-- internal coder escalation: `gpt-5.4`
-- internal reviewer: `claude-sonnet-4-6`
-
----
-
-## 8. What the wrapper owns vs what Daedalus owns
-
-### Wrapper owns
-- semantic workflow policy
-- status/read model
-- `nextAction`
-- implementation dispatch
-- Claude review dispatch
-- publish / merge / promote logic
-- repair-handoff gating logic
-
-### Daedalus owns
-- canonical runtime DB
-- leases / heartbeats
-- action queue rows
-- event log
-- active vs shadow execution
-- failure tracking
-- retry bookkeeping
-- service supervision surface
-
-Short version:
-- **Wrapper decides what should happen**
-- **Daedalus decides how to orchestrate it durably**
+| Step | Wrapper Action | Daedalus Action |
+|:---|:---|:---|
+| 1. Orchestrator → Coder | `dispatch-implementation-turn` | `dispatch_implementation_turn` |
+| 2. Coder → Claude | `run_claude_review` | `request_internal_review` |
+| 3. Claude → Coder repair | local findings → lane session | `dispatch_repair_handoff` |
+| 4. Claude → Publish | wrapper derives publish | `publish_pr` |
+| 5. Publish → Codex Cloud | external review triggered | — |
+| 6. Codex Cloud → Coder repair | post-publish findings | `dispatch_repair_handoff` |
+| 7. Clean → Merge | `merge_and_promote` | `merge_pr` |
 
 ---
 
-## 9. Handoff map
+## Action Types
 
-### 1. Orchestrator -> coder
-- wrapper: `dispatch-implementation-turn`
-- Daedalus action: `dispatch_implementation_turn`
-
-### 2. Coder -> Claude local gate
-- wrapper semantic action: `run_claude_review`
-- Daedalus action: `request_internal_review`
-
-### 3. Claude -> coder repair handoff
-- local unpublished findings go back into the Codex lane session
-- deduped by lane-state handoff metadata
-
-### 4. Claude -> publish
-- once local gate satisfied, wrapper derives publish path
-
-### 5. Published PR -> Codex Cloud
-- external reviewer becomes required
-
-### 6. Codex Cloud -> coder repair handoff
-- post-publish findings route back to coder session
-
-### 7. Clean PR -> merge/promote
-- merge PR
-- close issue
-- remove `active-lane`
-- promote next issue
-
----
-
-## 10. Daedalus action types
-
-### Coder actions
+### Coder Actions
 - `dispatch_implementation_turn`
 - `dispatch_repair_handoff`
 - `restart_actor_session`
 
-### Review action
+### Review Actions
 - `request_internal_review`
 
-### PR lifecycle actions
+### PR Lifecycle Actions
 - `publish_pr`
 - `push_pr_update`
 - `merge_pr`
 
-### Why naming differs
-Wrapper semantic names:
-- `run_claude_review`
-- `publish_ready_pr`
-- `merge_and_promote`
+---
 
-Daedalus execution names:
-- `request_internal_review`
-- `publish_pr`
-- `merge_pr`
+## Common Failure Signatures
 
-That’s expected. Daedalus speaks execution language.
+### A. Wrapper says `run_claude_review`, Daedalus returns `[]`
+
+**Likely cause:** Failed active `request_internal_review` for the same head wedged the idempotency key.
+
+**Check:**
+```sql
+select action_id, action_type, status, retry_count
+from lane_actions
+where lane_id='lane:220' and action_type='request_internal_review'
+order by requested_at desc;
+```
+
+**Fix:** Already in place — failed internal-review actions can requeue with incremented `retry_count`.
 
 ---
 
-## 11. Day-2 operating patterns
+### B. Wrapper says review is `running` but nothing is actually running
 
-### What is happening right now?
-```bash
-python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> status --json
+**Likely cause:** `dispatch_claude_review()` failed after marking review as running.
+
+**Fix:** Already in place — failure now resets Claude review back to retryable pending state.
+
+---
+
+### C. `health = stale-ledger`
+
+**Meaning:** Persisted ledger truth and live derived truth differ.
+
+**Typical causes:**
+- PR was published or updated
+- Codex Cloud review changed faster than ledger reconciliation
+- Live GitHub truth outran persisted state
+
+**Operator move:** Trust derived live state more than stale ledger prose.
+
+---
+
+### D. `nextAction = noop` on a lane with obvious open findings
+
+**Ask:**
+- Is the lane local/no-PR or published/PR-backed?
+- Is the coder session stale?
+- Did a repair handoff already go out?
+- Is the local head ahead of PR head?
+- Are you looking at wrapper truth or Daedalus truth?
+
+---
+
+## SQL Debugging
+
+### Show recent lane actions
+```sql
+select action_id, action_type, status, retry_count,
+       requested_at, failed_at, completed_at
+from lane_actions
+where lane_id='lane:220'
+order by requested_at desc;
 ```
-Check:
-- `health`
-- `activeLane`
-- `openPr`
-- `nextAction`
-- `derivedReviewLoopState`
-- `derivedMergeBlocked`
 
-### Is Daedalus healthy?
-```bash
-python3 ~/\.hermes/plugins/daedalus/runtime.py doctor --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> --json
-```
-Check:
-- runtime freshness
-- ownership posture
-- action compatibility
-- unresolved active failures
-- split-brain hints
-
-### Is the service actually alive?
-```bash
-systemctl --user status daedalus-active@<owner>-<repo>-<workflow-type>.service --no-pager
-journalctl --user -u daedalus-active@<owner>-<repo>-<workflow-type>.service -n 200 --no-pager
+### Show lane review rows
+```sql
+select reviewer_scope, status, verdict,
+       requested_head_sha, reviewed_head_sha,
+       review_scope, requested_at, completed_at
+from lane_reviews
+where lane_id='lane:220';
 ```
 
-### What active actions does Daedalus think exist?
+### Show actor row
+```sql
+select actor_id, backend_identity, runtime_status,
+       session_action_recommendation, last_used_at,
+       can_continue, can_nudge
+from lane_actors
+where lane_id='lane:220';
+```
+
+### Show lane row
+```sql
+select lane_id, issue_number, workflow_state, review_state,
+       current_head_sha, active_pr_number, merge_state, merge_blocked
+from lanes
+where lane_id='lane:220';
+```
+
+### Show recent events
 ```bash
-python3 ~/\.hermes/plugins/daedalus/runtime.py request-active-actions \
-  --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> \
-  --lane-id lane:220 --json
+# Tail JSONL event log
+tail -n 50 ~/.hermes/workflows/<profile>/memory/daedalus-events.jsonl | jq .
 ```
 
 ---
 
-## 11.5. Webhook debugging
+## Webhook Debugging
 
 ### Show configured webhooks
 ```bash
-python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py \
-  --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> status --json | jq '.webhooks'
+python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
+  --workflow-root ~/.hermes/workflows/<profile> \
+  status --json | jq '.webhooks'
 ```
 
 ### Test a webhook manually
 ```bash
-# Trigger a test event to all configured webhooks
-python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py \
-  --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> dispatch-test-webhook --event action=test
+python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
+  --workflow-root ~/.hermes/workflows/<profile> \
+  dispatch-test-webhook --event action=test
 ```
 
 ---
 
-## 11.6. Comments debugging
+## Comments Debugging
 
 ### Show comment publisher state
 ```bash
-python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py \
-  --workflow-root ~/\.hermes/workflows/<owner>-<repo>-<workflow-type> status --json | jq '.comments'
+python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
+  --workflow-root ~/.hermes/workflows/<profile> \
+  status --json | jq '.comments'
 ```
 
 ### Force a comment sync
@@ -336,9 +363,9 @@ python3 ~/\.hermes/plugins/daedalus/workflows/__main__.py \
 
 ---
 
-## 11.7. Config hot-reload debugging
+## Config Hot-Reload
 
-### Check if a bad workflow.yaml is being ignored
+### Check if a bad edit is being ignored
 ```bash
 /daedalus doctor
 ```
@@ -347,7 +374,7 @@ Look for `config_reload_failed` in the event tail or doctor output.
 ### Force a config re-read
 ```bash
 # Touch the file; the next tick will pick it up.
-touch ~/.hermes/workflows/<owner>-<repo>-<workflow-type>/workflow.yaml
+touch ~/.hermes/workflows/<profile>/workflow.yaml
 ```
 
 ### Show effective config (merged layers)
@@ -357,95 +384,29 @@ touch ~/.hermes/workflows/<owner>-<repo>-<workflow-type>/workflow.yaml
 
 ---
 
-## 12. Common failure signatures
+## Policy Knobs
 
-### A. Wrapper says `run_claude_review`, Daedalus returns `[]`
-Likely cause:
-- failed active `request_internal_review` row for same head wedged the old idempotency key
-
-Check:
-- `daedalus.db` -> `lane_actions`
-
-Current fix already in place:
-- failed internal-review actions can now requeue with incremented `retry_count`
-
-### B. Wrapper says review is `running` but nothing is actually running
-Likely cause:
-- `dispatch_claude_review()` failed after marking review running
-
-Current fix already in place:
-- failure now resets Claude review back to retryable pending state
-
-### C. `health=stale-ledger`
-Meaning:
-- persisted ledger truth and live derived truth differ
-
-Typical causes:
-- PR was published or updated
-- Codex Cloud review changed faster than ledger reconciliation
-- live GitHub truth outran persisted state
-
-Operator move:
-- trust derived live state more than stale ledger prose
-
-### D. `nextAction=noop` on a lane that obviously has open findings
-Ask:
-- is the lane actually local/no-PR or published/PR-backed?
-- is the coder session stale?
-- did a repair handoff already go out?
-- is the local head ahead of PR head?
-- are you looking at wrapper truth or Daedalus truth?
+| Knob | Value |
+|:---|:---|
+| Coder default model | `gpt-5.3-codex-spark/high` |
+| Coder large-effort model | `gpt-5.3-codex` |
+| Coder escalation model | `gpt-5.4` |
+| Claude model | `claude-sonnet-4-6` |
+| Claude pass-with-findings reviews | `1` |
+| Claude max turns | `12` |
+| Lane failure retry budget | `3` |
+| Lane no-progress tick budget | `3` |
+| Operator-attention thresholds | `5 / 5` |
 
 ---
 
-## 13. SQL debugging cheats
+## See Also
 
-### Show recent lane actions
-```sql
-select action_id, action_type, status, retry_count, requested_at, failed_at, completed_at
-from lane_actions
-where lane_id='lane:220'
-order by requested_at desc;
-```
-
-### Show lane review rows
-```sql
-select reviewer_scope, status, verdict, requested_head_sha, reviewed_head_sha, review_scope, requested_at, completed_at
-from lane_reviews
-where lane_id='lane:220';
-```
-
-### Show actor row
-```sql
-select actor_id, backend_identity, runtime_status, session_action_recommendation, last_used_at, can_continue, can_nudge
-from lane_actors
-where lane_id='lane:220';
-```
-
-### Show lane row
-```sql
-select lane_id, issue_number, workflow_state, review_state, current_head_sha, active_pr_number, merge_state, merge_blocked
-from lanes
-where lane_id='lane:220';
-```
-
----
-
-## 14. Current important policy knobs
-
-From the legacy JSON workflow config:
-- coder default model: `gpt-5.3-codex-spark/high`
-- coder large-effort model: `gpt-5.3-codex`
-- coder escalation model: `gpt-5.4`
-- Claude model: `claude-sonnet-4-6`
-- Claude pass-with-findings reviews: `1`
-- Claude max turns: `12`
-- lane failure retry budget: `3`
-- lane no-progress tick budget: `3`
-- operator-attention thresholds: `5 / 5`
-
----
-
-## 15. The one-sentence operator rulebook
-
-**When confused, trust GitHub + live derived status first, Daedalus DB second, stale ledger prose last.**
+| Doc | What It Covers |
+|:---|:---|
+| [Operator Guide](./README.md) | Landing page for all operator docs |
+| [Slash Commands](./slash-commands.md) | Complete catalog of `/daedalus` commands |
+| [HTTP Status Surface](./http-status.md) | JSON health snapshots for dashboards |
+| [Installation](./installation.md) | First-time setup |
+| [Architecture Overview](../architecture.md) | How Daedalus works internally |
+| [Concepts](../concepts/README.md) | Leases, lanes, actions, failures, etc. |
