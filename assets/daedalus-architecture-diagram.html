@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daedalus Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot {
+      width: 14px; height: 14px; background: #22d3ee; border-radius: 50%;
+      animation: pulse 2s infinite; box-shadow: 0 0 12px #22d3ee;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.9rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5); border-radius: 1rem;
+      border: 1px solid #1e293b; padding: 1.5rem; overflow-x: auto; margin-bottom: 2rem;
+    }
+    svg { width: 100%; min-width: 1200px; display: block; }
+    .cards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1rem; margin-top: 2rem;
+    }
+    .card {
+      background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem;
+      border: 1px solid #1e293b; padding: 1.25rem;
+    }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; box-shadow: 0 0 8px #22d3ee; }
+    .card-dot.emerald { background: #34d399; box-shadow: 0 0 8px #34d399; }
+    .card-dot.violet { background: #a78bfa; box-shadow: 0 0 8px #a78bfa; }
+    .card-dot.amber { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+    .card-dot.rose { background: #fb7185; box-shadow: 0 0 8px #fb7185; }
+    .card h3 { font-size: 0.9rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.8rem; }
+    .card li { margin-bottom: 0.4rem; line-height: 1.4; }
+    .card li strong { color: #e2e8f0; font-weight: 500; }
+    .footer { text-align: center; margin-top: 2rem; color: #475569; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Daedalus Architecture</h1>
+      </div>
+      <p class="subtitle">Durable orchestration for agentic SDLC lanes — shadow → active → ship</p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg viewBox="0 0 1200 900">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrowhead-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrowhead-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <marker id="arrowhead-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+          <linearGradient id="glow-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.1"/>
+            <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+          </linearGradient>
+          <linearGradient id="glow-emerald" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#34d399" stop-opacity="0.1"/>
+            <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ============================================ -->
+        <!-- LAYER 1: EXTERNAL TRIGGERS (Top)             -->
+        <!-- ============================================ -->
+        <text x="600" y="30" fill="#64748b" font-size="11" font-weight="600" text-anchor="middle" letter-spacing="2">EXTERNAL TRIGGERS</text>
+        
+        <!-- GitHub Issue -->
+        <rect x="200" y="45" width="140" height="55" rx="8" fill="rgba(30, 41, 59, 0.6)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="270" y="68" fill="white" font-size="12" font-weight="600" text-anchor="middle">GitHub Issue</text>
+        <text x="270" y="85" fill="#94a3b8" font-size="9" text-anchor="middle">#42 · active-lane label</text>
+
+        <!-- Operator -->
+        <rect x="530" y="45" width="140" height="55" rx="8" fill="rgba(136, 19, 55, 0.3)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="600" y="68" fill="white" font-size="12" font-weight="600" text-anchor="middle">Operator</text>
+        <text x="600" y="85" fill="#94a3b8" font-size="9" text-anchor="middle">/daedalus commands</text>
+
+        <!-- Config -->
+        <rect x="860" y="45" width="140" height="55" rx="8" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="930" y="68" fill="white" font-size="12" font-weight="600" text-anchor="middle">workflow.yaml</text>
+        <text x="930" y="85" fill="#94a3b8" font-size="9" text-anchor="middle">Hot-reload config</text>
+
+        <!-- ============================================ -->
+        <!-- LAYER 2: DAEDALUS ENGINE (Center-Left)        -->
+        <!-- ============================================ -->
+        <rect x="50" y="130" width="520" height="420" rx="16" fill="rgba(8, 51, 68, 0.08)" stroke="#22d3ee" stroke-width="2" stroke-dasharray="12,6"/>
+        <text x="70" y="155" fill="#22d3ee" font-size="13" font-weight="700" letter-spacing="1">DAEDALUS ENGINE</text>
+        <text x="70" y="170" fill="#22d3ee" font-size="9" opacity="0.7">Orchestration Runtime</text>
+
+        <!-- Runtime Loop -->
+        <rect x="80" y="190" width="200" height="80" rx="10" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="2"/>
+        <text x="180" y="215" fill="white" font-size="13" font-weight="700" text-anchor="middle">Runtime Loop</text>
+        <text x="180" y="235" fill="#94a3b8" font-size="9" text-anchor="middle">Tick → Ingest → Derive</text>
+        <text x="180" y="250" fill="#94a3b8" font-size="9" text-anchor="middle">→ Dispatch → Record</text>
+
+        <!-- Leases -->
+        <rect x="340" y="190" width="200" height="55" rx="8" fill="rgba(8, 51, 68, 0.3)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="440" y="215" fill="white" font-size="12" font-weight="600" text-anchor="middle">Leases</text>
+        <text x="440" y="232" fill="#94a3b8" font-size="9" text-anchor="middle">Heartbeat · TTL · Recovery</text>
+
+        <!-- SQLite -->
+        <rect x="80" y="300" width="200" height="70" rx="8" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="2"/>
+        <text x="180" y="325" fill="white" font-size="13" font-weight="700" text-anchor="middle">SQLite</text>
+        <text x="180" y="342" fill="#94a3b8" font-size="9" text-anchor="middle">Canonical State</text>
+        <text x="180" y="357" fill="#a78bfa" font-size="8" text-anchor="middle">lanes · actions · reviews · failures</text>
+
+        <!-- JSONL -->
+        <rect x="340" y="300" width="200" height="70" rx="8" fill="rgba(76, 29, 149, 0.3)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="440" y="325" fill="white" font-size="13" font-weight="600" text-anchor="middle">JSONL Event Log</text>
+        <text x="440" y="342" fill="#94a3b8" font-size="9" text-anchor="middle">Append-Only History</text>
+        <text x="440" y="357" fill="#a78bfa" font-size="8" text-anchor="middle">turn_started · turn_completed · stall</text>
+
+        <!-- Shadow Mode -->
+        <rect x="80" y="400" width="200" height="55" rx="8" fill="rgba(120, 53, 15, 0.2)" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <text x="180" y="422" fill="white" font-size="12" font-weight="600" text-anchor="middle">Shadow Mode</text>
+        <text x="180" y="440" fill="#94a3b8" font-size="9" text-anchor="middle">Observe · Plan · No Side Effects</text>
+
+        <!-- Active Mode -->
+        <rect x="340" y="400" width="200" height="55" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="2"/>
+        <text x="440" y="422" fill="white" font-size="12" font-weight="600" text-anchor="middle">Active Mode</text>
+        <text x="440" y="440" fill="#94a3b8" font-size="9" text-anchor="middle">Execute · Dispatch · Real Side Effects</text>
+
+        <!-- Operator Surfaces -->
+        <rect x="80" y="480" width="460" height="50" rx="8" fill="rgba(136, 19, 55, 0.2)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="310" y="500" fill="white" font-size="12" font-weight="600" text-anchor="middle">Operator Surfaces</text>
+        <text x="310" y="518" fill="#94a3b8" font-size="9" text-anchor="middle">/daedalus status · doctor · watch · shadow-report · active-gate</text>
+
+        <!-- ============================================ -->
+        <!-- LAYER 3: WORKFLOW WRAPPER (Center-Right)      -->
+        <!-- ============================================ -->
+        <rect x="620" y="130" width="530" height="420" rx="16" fill="rgba(6, 78, 59, 0.08)" stroke="#34d399" stroke-width="2" stroke-dasharray="12,6"/>
+        <text x="640" y="155" fill="#34d399" font-size="13" font-weight="700" letter-spacing="1">WORKFLOW WRAPPER</text>
+        <text x="640" y="170" fill="#34d399" font-size="9" opacity="0.7">Semantic Policy Brain</text>
+
+        <!-- Status / Read Model -->
+        <rect x="650" y="190" width="220" height="60" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="2"/>
+        <text x="760" y="215" fill="white" font-size="13" font-weight="700" text-anchor="middle">Status / Read Model</text>
+        <text x="760" y="235" fill="#94a3b8" font-size="9" text-anchor="middle">nextAction · health · reviewLoopState</text>
+
+        <!-- Policy Engine -->
+        <rect x="910" y="190" width="220" height="60" rx="8" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="1020" y="215" fill="white" font-size="13" font-weight="600" text-anchor="middle">Policy Engine</text>
+        <text x="1020" y="235" fill="#94a3b8" font-size="9" text-anchor="middle">publish · merge · promote rules</text>
+
+        <!-- Actors -->
+        <rect x="650" y="280" width="140" height="55" rx="8" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="720" y="302" fill="white" font-size="11" font-weight="600" text-anchor="middle">Internal Coder</text>
+        <text x="720" y="320" fill="#94a3b8" font-size="9" text-anchor="middle">Codex · acpx</text>
+
+        <rect x="820" y="280" width="140" height="55" rx="8" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="890" y="302" fill="white" font-size="11" font-weight="600" text-anchor="middle">Internal Reviewer</text>
+        <text x="890" y="320" fill="#94a3b8" font-size="9" text-anchor="middle">Claude · claude-cli</text>
+
+        <rect x="990" y="280" width="140" height="55" rx="8" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="1060" y="302" fill="white" font-size="11" font-weight="600" text-anchor="middle">External Reviewer</text>
+        <text x="1060" y="320" fill="#94a3b8" font-size="9" text-anchor="middle">Codex Cloud</text>
+
+        <!-- Lane State Machine -->
+        <rect x="650" y="360" width="480" height="80" rx="10" fill="rgba(6, 78, 59, 0.2)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="890" y="382" fill="white" font-size="12" font-weight="600" text-anchor="middle">Lane State Machine</text>
+        <text x="890" y="405" fill="#94a3b8" font-size="9" text-anchor="middle">implementing → awaiting_claude_prepublish → ready_to_publish</text>
+        <text x="890" y="422" fill="#94a3b8" font-size="9" text-anchor="middle">→ under_review → findings_open → approved → merged</text>
+
+        <!-- Handoffs -->
+        <rect x="650" y="465" width="480" height="55" rx="8" fill="rgba(6, 78, 59, 0.15)" stroke="#34d399" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="890" y="485" fill="#34d399" font-size="11" font-weight="600" text-anchor="middle">Handoffs: Orchestrator → Coder → Reviewer → Publish → Merge</text>
+        <text x="890" y="505" fill="#94a3b8" font-size="9" text-anchor="middle">Explicit role handoffs, not vibes. Every handoff survives restarts.</text>
+
+        <!-- ============================================ -->
+        <!-- LAYER 4: SYSTEMD & WATCH (Bottom-Left)          -->
+        <!-- ============================================ -->
+        <rect x="50" y="580" width="520" height="120" rx="16" fill="rgba(136, 19, 55, 0.06)" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="8,4"/>
+        <text x="70" y="605" fill="#fb7185" font-size="12" font-weight="700" letter-spacing="1">SUPERVISION & OBSERVABILITY</text>
+
+        <!-- systemd -->
+        <rect x="80" y="620" width="160" height="55" rx="8" fill="rgba(136, 19, 55, 0.3)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="160" y="642" fill="white" font-size="11" font-weight="600" text-anchor="middle">systemd Service</text>
+        <text x="160" y="660" fill="#94a3b8" font-size="9" text-anchor="middle">daedalus-active@.service</text>
+
+        <!-- Watch TUI -->
+        <rect x="280" y="620" width="140" height="55" rx="8" fill="rgba(8, 51, 68, 0.3)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="350" y="642" fill="white" font-size="11" font-weight="600" text-anchor="middle">/daedalus watch</text>
+        <text x="350" y="660" fill="#94a3b8" font-size="9" text-anchor="middle">Live TUI · 1s refresh</text>
+
+        <!-- HTTP Server -->
+        <rect x="460" y="620" width="90" height="55" rx="8" fill="rgba(8, 51, 68, 0.3)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="505" y="642" fill="white" font-size="11" font-weight="600" text-anchor="middle">HTTP</text>
+        <text x="505" y="660" fill="#94a3b8" font-size="9" text-anchor="middle">localhost:8765</text>
+
+        <!-- ============================================ -->
+        <!-- LAYER 5: GITHUB & WEBHOOKS (Bottom-Right)     -->
+        <!-- ============================================ -->
+        <rect x="620" y="580" width="530" height="120" rx="16" fill="rgba(120, 53, 15, 0.06)" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="8,4"/>
+        <text x="640" y="605" fill="#fbbf24" font-size="12" font-weight="700" letter-spacing="1">EXTERNAL INTEGRATIONS</text>
+
+        <!-- GitHub -->
+        <rect x="650" y="620" width="180" height="55" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="740" y="642" fill="white" font-size="11" font-weight="600" text-anchor="middle">GitHub API</text>
+        <text x="740" y="660" fill="#94a3b8" font-size="9" text-anchor="middle">Issues · PRs · Reviews · Comments</text>
+
+        <!-- Webhooks -->
+        <rect x="870" y="620" width="140" height="55" rx="8" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="940" y="642" fill="white" font-size="11" font-weight="600" text-anchor="middle">Webhooks</text>
+        <text x="940" y="660" fill="#94a3b8" font-size="9" text-anchor="middle">Slack · HTTP JSON</text>
+
+        <!-- Comments -->
+        <rect x="1050" y="620" width="80" height="55" rx="8" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="1090" y="642" fill="white" font-size="11" font-weight="600" text-anchor="middle">Comments</text>
+        <text x="1090" y="660" fill="#94a3b8" font-size="9" text-anchor="middle">PR audit</text>
+
+        <!-- ============================================ -->
+        <!-- CONNECTIONS / ARROWS                          -->
+        <!-- ============================================ -->
+
+        <!-- Issue → Daedalus -->
+        <line x1="340" y1="72" x2="340" y2="130" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="350" y="108" fill="#94a3b8" font-size="8">labeled</text>
+
+        <!-- Operator → Daedalus -->
+        <line x1="600" y1="100" x2="600" y2="130" stroke="#fb7185" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Config → Daedalus -->
+        <line x1="930" y1="100" x2="570" y2="130" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Daedalus ↔ Wrapper (thick bidirectional) -->
+        <line x1="570" y1="250" x2="620" y2="250" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead-cyan)"/>
+        <line x1="620" y1="260" x2="570" y2="260" stroke="#34d399" stroke-width="2" marker-end="url(#arrowhead-emerald)"/>
+        <text x="595" y="245" fill="#22d3ee" font-size="8" text-anchor="middle">ingest</text>
+        <text x="595" y="275" fill="#34d399" font-size="8" text-anchor="middle">dispatch</text>
+
+        <!-- Runtime → SQLite -->
+        <line x1="180" y1="270" x2="180" y2="300" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Runtime → JSONL -->
+        <line x1="280" y1="230" x2="390" y2="300" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Shadow → Active gate -->
+        <line x1="280" y1="455" x2="340" y2="455" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="4,4" marker-end="url(#arrowhead)"/>
+        <text x="310" y="450" fill="#fbbf24" font-size="8" text-anchor="middle">promote</text>
+
+        <!-- Wrapper → Actors -->
+        <line x1="760" y1="250" x2="720" y2="280" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="890" y1="250" x2="890" y2="280" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="1020" y1="250" x2="1060" y2="280" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Wrapper → GitHub -->
+        <line x1="890" y1="500" x2="740" y2="580" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Daedalus → systemd -->
+        <line x1="310" y1="550" x2="160" y2="580" stroke="#fb7185" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Daedalus → Watch/HTTP -->
+        <line x1="350" y1="550" x2="350" y2="620" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="430" y1="530" x2="505" y2="620" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Wrapper → Webhooks -->
+        <line x1="1020" y1="500" x2="940" y2="580" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ============================================ -->
+        <!-- LEGEND                                        -->
+        <!-- ============================================ -->
+        <text x="1050" y="740" fill="white" font-size="10" font-weight="600">Legend</text>
+        
+        <rect x="1050" y="752" width="16" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="1072" y="760" fill="#94a3b8" font-size="8">Daedalus Engine</text>
+        
+        <rect x="1050" y="768" width="16" height="10" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="1072" y="776" fill="#94a3b8" font-size="8">Workflow Wrapper</text>
+        
+        <rect x="1050" y="784" width="16" height="10" rx="2" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="1072" y="792" fill="#94a3b8" font-size="8">State / Storage</text>
+        
+        <rect x="1050" y="800" width="16" height="10" rx="2" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="1072" y="808" fill="#94a3b8" font-size="8">Runtime / Actor</text>
+        
+        <rect x="1050" y="816" width="16" height="10" rx="2" fill="rgba(136, 19, 55, 0.3)" stroke="#fb7185" stroke-width="1"/>
+        <text x="1072" y="824" fill="#94a3b8" font-size="8">Operator / Alert</text>
+        
+        <rect x="1050" y="832" width="16" height="10" rx="2" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="1072" y="840" fill="#94a3b8" font-size="8">External</text>
+
+        <!-- Data flow label -->
+        <text x="600" y="730" fill="#64748b" font-size="10" font-weight="600" text-anchor="middle" letter-spacing="2">DATA FLOW</text>
+        <line x1="200" y1="740" x2="1000" y2="740" stroke="#1e293b" stroke-width="1"/>
+
+        <!-- Bottom tagline -->
+        <text x="600" y="870" fill="#475569" font-size="10" text-anchor="middle" font-style="italic">
+          "Turn fragile cron-loop automation into explicit, durable, role-based 24/7 workflow orchestration."
+        </text>
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>Daedalus Engine</h3>
+        </div>
+        <ul>
+          <li>• <strong>Runtime Loop:</strong> Tick → Ingest → Derive → Dispatch → Record</li>
+          <li>• <strong>Leases:</strong> Heartbeat-based ownership with automatic recovery</li>
+          <li>• <strong>Shadow Mode:</strong> Safe observation without side effects</li>
+          <li>• <strong>Active Mode:</strong> Real execution with failure tracking & retries</li>
+          <li>• <strong>Operator Surfaces:</strong> status, doctor, watch, shadow-report, active-gate</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>Workflow Wrapper</h3>
+        </div>
+        <ul>
+          <li>• <strong>Policy Brain:</strong> Decides nextAction, health, review state</li>
+          <li>• <strong>Actors:</strong> Internal Coder (Codex), Internal Reviewer (Claude), External Reviewer (Codex Cloud)</li>
+          <li>• <strong>State Machine:</strong> implementing → review → publish → merge</li>
+          <li>• <strong>Handoffs:</strong> Explicit, durable, survive restarts</li>
+          <li>• <strong>Semantic → Execution:</strong> Translates policy into dispatchable actions</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>State & Storage</h3>
+        </div>
+        <ul>
+          <li>• <strong>SQLite:</strong> Canonical runtime state — lanes, actions, reviews, failures, leases</li>
+          <li>• <strong>JSONL:</strong> Append-only event history for audit & replay</li>
+          <li>• <strong>Lane State:</strong> .lane-state.json + .lane-memo.md per workspace</li>
+          <li>• <strong>Hot-reload:</strong> workflow.yaml edits take effect on next tick</li>
+          <li>• <strong>Idempotency:</strong> Composite keys prevent duplicate actions</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>External Integrations</h3>
+        </div>
+        <ul>
+          <li>• <strong>GitHub:</strong> Issues, PRs, review threads, comment publishing</li>
+          <li>• <strong>Webhooks:</strong> Slack, HTTP JSON with SSRF guard</li>
+          <li>• <strong>Runtimes:</strong> claude-cli, acpx-codex, hermes-agent</li>
+          <li>• <strong>Models:</strong> gpt-5, claude-sonnet-4-6, gpt-5.4</li>
+          <li>• <strong>Config:</strong> workflow.yaml drives all behavior</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>Supervision & Ops</h3>
+        </div>
+        <ul>
+          <li>• <strong>systemd:</strong> daedalus-active@.service for 24/7 supervision</li>
+          <li>• <strong>Watch TUI:</strong> /daedalus watch — live lanes + alerts + events</li>
+          <li>• <strong>HTTP Status:</strong> localhost:8765 for dashboards & health checks</li>
+          <li>• <strong>Stall Detection:</strong> Automatic termination of wedged workers</li>
+          <li>• <strong>Alerts:</strong> Outage detection with deduplication</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>Design Principles</h3>
+        </div>
+        <ul>
+          <li>• <strong>Wrapper decides what.</strong> Daedalus decides how to orchestrate it durably.</li>
+          <li>• <strong>State is tracked, not guessed.</strong> SQLite is current truth.</li>
+          <li>• <strong>Bad edits don't crash.</strong> workflow.yaml errors are ignored until fixed.</li>
+          <li>• <strong>Recovery is automatic.</strong> Dead workers never block forward motion.</li>
+          <li>• <strong>Humans observe, don't schedule.</strong> Passive by default, intervene only when needed.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p class="footer">
+      Daedalus Architecture v1.0 • Hermes Agent Plugin • MIT License
+    </p>
+  </div>
+</body>
+</html>
