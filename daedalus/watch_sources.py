@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
+from engine.state import read_engine_scheduler_state
 from engine.work_items import work_item_from_change_delivery_lane, work_item_from_issue
 from workflows.contract import WorkflowContractError, load_workflow_contract
 
@@ -74,6 +76,20 @@ def _workflow_name(workflow_root: Path) -> str | None:
         return None
 
 
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _engine_scheduler(workflow_root: Path, workflow: str) -> dict[str, Any]:
+    payload = read_engine_scheduler_state(
+        runtime_paths(Path(workflow_root))["db_path"],
+        workflow=workflow,
+        now_iso=_now_iso(),
+        now_epoch=time.time(),
+    )
+    return payload or {}
+
+
 def _resolve_issue_runner_storage_path(workflow_root: Path, key: str, default: str) -> Path | None:
     try:
         contract = load_workflow_contract(Path(workflow_root))
@@ -107,10 +123,7 @@ def recent_workflow_audit(workflow_root: Path, limit: int = 50) -> list[dict[str
 def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
     workflow_root = Path(workflow_root)
     if _workflow_name(workflow_root) == "issue-runner":
-        scheduler_path = _resolve_issue_runner_storage_path(
-            workflow_root, "scheduler", "memory/workflow-scheduler.json"
-        )
-        scheduler = _load_optional_json(scheduler_path) or {}
+        scheduler = _engine_scheduler(workflow_root, "issue-runner")
         out: list[dict[str, Any]] = []
         for row in scheduler.get("running") or []:
             if not isinstance(row, dict):
@@ -245,8 +258,7 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
     if workflow_name not in {"issue-runner", "change-delivery"}:
         return {}
     if workflow_name == "change-delivery":
-        scheduler_path = _resolve_issue_runner_storage_path(workflow_root, "scheduler", "memory/workflow-scheduler.json")
-        scheduler_payload = _load_optional_json(scheduler_path) or {}
+        scheduler_payload = _engine_scheduler(workflow_root, "change-delivery")
         totals = scheduler_payload.get("codex_totals") or scheduler_payload.get("codexTotals") or {}
         codex_turns = _codex_turn_entries(scheduler_payload)
         return {
@@ -262,9 +274,8 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
             "rate_limits": totals.get("rate_limits"),
         }
     status_path = _resolve_issue_runner_storage_path(workflow_root, "status", "memory/workflow-status.json")
-    scheduler_path = _resolve_issue_runner_storage_path(workflow_root, "scheduler", "memory/workflow-scheduler.json")
     status_payload = _load_optional_json(status_path) or {}
-    scheduler_payload = _load_optional_json(scheduler_path) or {}
+    scheduler_payload = _engine_scheduler(workflow_root, "issue-runner")
     scheduler = {
         "running": scheduler_payload.get("running") or [],
         "retry_queue": scheduler_payload.get("retry_queue") or scheduler_payload.get("retryQueue") or [],

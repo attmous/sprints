@@ -2,7 +2,7 @@
 
 An **action** is the atomic unit of work `change-delivery` queues, executes, and tracks in SQLite. The workflow package decides *what should happen*; Daedalus decides *how to orchestrate it durably* by translating workflow semantic actions into execution actions.
 
-This page describes the `change-delivery` action queue. `issue-runner` uses a scheduler file with running-worker and retry entries instead of the `lane_actions` table.
+This page describes the `change-delivery` action queue. `issue-runner` uses shared engine running-worker and retry entries instead of the `lane_actions` table.
 
 ---
 

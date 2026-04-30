@@ -17,8 +17,8 @@ mechanics that make that decision safe to run unattended.
 | Tracker adapters | Normalize issue sources such as GitHub, `local-json`, and experimental Linear. |
 | Runtime adapters | Dispatch prompts/actions to Codex app-server, ACPX Codex, Claude CLI, Hermes Agent, or custom commands. |
 | Workspace lifecycle | Creates isolated workspaces and runs configured lifecycle hooks. |
-| SQLite store | Durable relational state for lane/action-heavy workflows such as `change-delivery`. |
-| Scheduler JSON | Durable worker, retry, Codex thread, token, and rate-limit state for scheduler-style workflows. |
+| SQLite store | Source of truth for engine execution state: work items, running work, retries, runtime sessions, token totals, and workflow-specific tables. |
+| Scheduler snapshot | Generated JSON view of worker, retry, Codex thread, token, and rate-limit state for operator tools that still consume files. |
 | JSONL audit | Append-only workflow/runtime event history for debugging and external publishing. |
 | Retry and recovery | Tracks attempts, due times, errors, restart recovery, and operator-attention thresholds. |
 | Observability | Feeds `/daedalus status`, `/daedalus doctor`, `/daedalus watch`, and optional HTTP status. |
@@ -36,13 +36,14 @@ the plugin-local `engine` package:
 | `engine.work_items` | Neutral work-item/result dataclasses plus issue/lane adapters. |
 | `engine.lifecycle` | Shared running, retry, clear, and restart-recovery mutation helpers. |
 | `engine.sqlite` | Daedalus SQLite connection setup with WAL, foreign keys, and busy timeout. |
+| `engine.state` | Shared SQLite tables and read/write projections for scheduler state. |
 | `engine.scheduler` | Scheduler snapshot/restore helpers for running work, retry queues, and Codex thread mappings. |
 
 `issue-runner` now consumes the shared scheduler, lifecycle, work-item, and
-storage primitives directly. `change-delivery` consumes shared storage,
-audit, and SQLite primitives, and exposes lanes through the shared work-item
-adapter while its richer lane/action state remains workflow-specific until the
-next extraction.
+SQLite state primitives directly, then writes `memory/workflow-scheduler.json`
+as a generated operator snapshot. `change-delivery` keeps its lane/action
+tables for workflow-specific policy, but shares the engine runtime-session and
+token accounting tables used by watch, status, and doctor surfaces.
 
 ## Boundary
 

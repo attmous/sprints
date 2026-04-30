@@ -180,30 +180,34 @@ def test_codex_app_server_status_includes_ready_probe(tmp_path, monkeypatch):
 
 
 def test_codex_app_server_doctor_reports_managed_health_and_threads(tmp_path, monkeypatch):
+    from engine.state import save_engine_scheduler_state
+    from workflows.shared.paths import runtime_paths
+
     tools = load_tools()
     systemd_dir = tmp_path / "systemd"
     monkeypatch.setenv("DAEDALUS_SYSTEMD_USER_DIR", str(systemd_dir))
     workflow_root = tmp_path / "attmous-daedalus-issue-runner"
     workflow_root.mkdir()
     (workflow_root / "memory").mkdir()
-    (workflow_root / "memory" / "workflow-scheduler.json").write_text(
-        json.dumps(
-            {
-                "codex_threads": {
-                    "ISSUE-1": {
-                        "issue_id": "ISSUE-1",
-                        "identifier": "DAE-1",
-                        "session_name": "issue-1",
-                        "runtime_kind": "codex-app-server",
-                        "thread_id": "thread-1",
-                        "turn_id": "turn-1",
-                        "updated_at": "2026-04-30T00:00:00Z",
-                    }
-                },
-                "codex_totals": {"total_tokens": 42, "turn_count": 1},
+    save_engine_scheduler_state(
+        runtime_paths(workflow_root)["db_path"],
+        workflow="issue-runner",
+        running_entries={},
+        retry_entries={},
+        codex_threads={
+            "ISSUE-1": {
+                "issue_id": "ISSUE-1",
+                "identifier": "DAE-1",
+                "session_name": "issue-1",
+                "runtime_kind": "codex-app-server",
+                "thread_id": "thread-1",
+                "turn_id": "turn-1",
+                "updated_at": "2026-04-30T00:00:00Z",
             }
-        ),
-        encoding="utf-8",
+        },
+        codex_totals={"total_tokens": 42, "turn_count": 1},
+        now_iso="2026-04-30T00:00:00Z",
+        now_epoch=1777507200.0,
     )
     token_file = tmp_path / "codex.token"
     token_file.write_text("secret", encoding="utf-8")

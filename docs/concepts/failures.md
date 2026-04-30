@@ -2,7 +2,7 @@
 
 Daedalus models failures as **first-class runtime state**, not as log lines to grep later. When an active `change-delivery` action fails, the system persists enough context to decide — automatically or with operator guidance — what happens next.
 
-This page documents the `change-delivery` SQLite action/failure model. `issue-runner` stores retry/backoff state in `memory/workflow-scheduler.json`; see [issue-runner](../workflows/issue-runner.md) for that scheduler model.
+This page documents the `change-delivery` SQLite action/failure model. Shared engine retry/backoff state now lives in SQLite for both workflows; `memory/workflow-scheduler.json` is a generated scheduler snapshot.
 
 ---
 

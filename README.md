@@ -86,9 +86,9 @@ Inside Hermes Agent:
 /workflow change-delivery tick              # run one change-delivery workflow tick
 ```
 
-The operator surfaces read the persisted state for you. You should not need to
-inspect SQLite, scheduler JSON, JSONL logs, or systemd journals by hand during
-normal operation.
+The operator surfaces read persisted state for you. You should not need to
+inspect SQLite, generated scheduler snapshots, JSONL logs, or systemd journals
+by hand during normal operation.
 
 ## Configure The Workflow
 

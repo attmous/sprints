@@ -70,8 +70,9 @@ agents:
 
 When `codex-app-server` is selected, Daedalus stores
 `lane:<issue-number> -> thread_id` plus token/rate-limit totals in
-`memory/workflow-scheduler.json` and resumes that thread on later ticks. During
-supervised active service runs, Daedalus also records the active `turn_id`.
+`runtime/state/daedalus/daedalus.db`, writes `memory/workflow-scheduler.json`
+as a generated operator snapshot, and resumes that thread on later ticks.
+During supervised active service runs, Daedalus also records the active `turn_id`.
 If the active lane disappears, changes, the lease is lost, or the service is
 interrupted, the runtime requests `turn/interrupt` and marks the scheduler
 thread entry as `canceling`. Operators can see those entries in `/daedalus

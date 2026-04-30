@@ -173,3 +173,68 @@ def test_engine_sqlite_connection_sets_runtime_pragmas(tmp_path):
         assert reopened.execute("SELECT 1").fetchone()[0] == 1
     finally:
         reopened.close()
+
+
+def test_engine_state_persists_scheduler_snapshot_in_sqlite(tmp_path):
+    from engine.state import load_engine_scheduler_state, read_engine_scheduler_state, save_engine_scheduler_state
+
+    db_path = tmp_path / "runtime" / "state" / "daedalus.db"
+    save_engine_scheduler_state(
+        db_path,
+        workflow="issue-runner",
+        running_entries={
+            "ISSUE-1": {
+                "issue_id": "ISSUE-1",
+                "identifier": "DAE-1",
+                "state": "open",
+                "worker_id": "worker-1",
+                "attempt": 2,
+                "started_at_epoch": 100.0,
+                "heartbeat_at_epoch": 110.0,
+            }
+        },
+        retry_entries={
+            "ISSUE-2": {
+                "issue_id": "ISSUE-2",
+                "identifier": "DAE-2",
+                "attempt": 1,
+                "due_at_epoch": 130.0,
+                "error": "temporary failure",
+            }
+        },
+        codex_threads={
+            "ISSUE-1": {
+                "issue_id": "ISSUE-1",
+                "identifier": "DAE-1",
+                "session_name": "issue-1",
+                "runtime_kind": "codex-app-server",
+                "thread_id": "thread-1",
+                "turn_id": "turn-1",
+                "updated_at": "2026-04-30T00:00:00Z",
+            }
+        },
+        codex_totals={"input_tokens": 3, "output_tokens": 4, "total_tokens": 7, "turn_count": 1},
+        now_iso="2026-04-30T00:00:00Z",
+        now_epoch=120.0,
+    )
+
+    loaded = load_engine_scheduler_state(
+        db_path,
+        workflow="issue-runner",
+        now_iso="2026-04-30T00:00:10Z",
+        now_epoch=125.0,
+    )
+    readonly = read_engine_scheduler_state(
+        db_path,
+        workflow="issue-runner",
+        now_iso="2026-04-30T00:00:10Z",
+        now_epoch=125.0,
+    )
+
+    assert loaded["running"][0]["issue_id"] == "ISSUE-1"
+    assert loaded["running"][0]["running_for_ms"] == 25000
+    assert loaded["retry_queue"][0]["issue_id"] == "ISSUE-2"
+    assert loaded["retry_queue"][0]["due_in_ms"] == 5000
+    assert loaded["codex_threads"]["ISSUE-1"]["thread_id"] == "thread-1"
+    assert loaded["codex_totals"]["total_tokens"] == 7
+    assert readonly == loaded

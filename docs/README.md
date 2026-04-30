@@ -17,7 +17,7 @@ Entry point for everything that won't fit on the [project landing page](../READM
 
 - Generic docs describe the plugin engine: contracts, state stores, runtimes, trackers, service supervision, and observability.
 - Workflow docs describe lifecycle policy. `issue-runner` is the generic tracker-driven path; `change-delivery` is the opinionated GitHub-backed issue-to-merge path.
-- Operator docs describe installed deployments. SQL examples usually apply to `change-delivery`; `issue-runner` uses persisted status, scheduler, and audit files instead.
+- Operator docs describe installed deployments. SQL examples often focus on `change-delivery`, but shared engine execution state is SQLite-backed for both workflows.
 
 ## Concepts
 

@@ -39,8 +39,8 @@
 │                                      │  │  Workflow State Machine              │
 │  Leases (heartbeat · TTL · recovery) │  │  Handoffs (explicit, durable)        │
 │                                      │  │                                      │
-│  Durable State ─► SQLite / JSON       │  │  Semantic Actions                    │
-│                 scheduler files      │  │    select_issue                      │
+│  Durable State ─► SQLite source       │  │  Semantic Actions                    │
+│                 JSON projections     │  │    select_issue                      │
 │                                      │  │    render_prompt                     │
 │  JSONL ───► turn_started ·           │  │    publish_ready_pr                  │
 │             turn_completed · stall   │  │                                      │
@@ -156,14 +156,14 @@ This prevents:
 
 | Layer | Storage | Purpose |
 |---|---|---|
-| **Runtime DB** | `runtime/state/daedalus/daedalus.db` | `change-delivery` leases, lanes, actions, reviews, failures |
-| **Scheduler JSON** | `memory/workflow-scheduler.json` | `issue-runner` workers/retries and Codex thread mappings for both workflows |
+| **Runtime DB** | `runtime/state/daedalus/daedalus.db` | Engine work items, running work, retries, runtime sessions, token totals, plus `change-delivery` lanes/actions/reviews/failures |
+| **Scheduler JSON** | `memory/workflow-scheduler.json` | Generated operator snapshot of scheduler state for file-oriented tooling |
 | **Runtime JSONL** | `runtime/memory/daedalus-events.jsonl` | Daedalus orchestration events |
 | **Workflow JSONL** | `memory/workflow-audit.jsonl` | workflow-specific audit trail |
 | **Lane files** | `.lane-state.json` | `change-delivery` lane-local handoff artifacts |
 | **Lane memos** | `.lane-memo.md` | human-readable handoff notes |
 
-Never reconstruct current state by replaying events. For `change-delivery`, current lane state is in SQLite. For `issue-runner`, current worker state is in the persisted scheduler/status files.
+Never reconstruct current state by replaying events. Current engine execution state is in SQLite; status and scheduler JSON files are projections for operators and file-oriented tools.
 
 ### 4. Bad Edits Don't Crash the Loop
 

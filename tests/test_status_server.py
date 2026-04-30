@@ -108,7 +108,9 @@ def _make_events_log(events_path: Path, entries: list[dict]) -> None:
 
 
 def _make_issue_runner_root(root: Path) -> None:
+    from engine.state import save_engine_scheduler_state
     from workflows.contract import render_workflow_markdown
+    from workflows.shared.paths import runtime_paths
 
     root.mkdir(parents=True, exist_ok=True)
     (root / "memory").mkdir()
@@ -153,40 +155,37 @@ def _make_issue_runner_root(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    (root / "memory" / "workflow-scheduler.json").write_text(
-        json.dumps(
-            {
-                "workflow": "issue-runner",
-                "updatedAt": "2026-04-30T12:00:20Z",
-                "running": [
-                    {
-                        "issue_id": "123",
-                        "identifier": "#123",
-                        "attempt": 2,
-                        "state": "open",
-                        "started_at_epoch": 1714478400.0,
-                        "running_for_ms": 15000,
-                    }
-                ],
-                "retry_queue": [
-                    {
-                        "issue_id": "124",
-                        "identifier": "#124",
-                        "attempt": 1,
-                        "error": "tool call rejected",
-                        "due_at_epoch": 1714478410.0,
-                        "due_in_ms": 5000,
-                    }
-                ],
-                "codex_totals": {
-                    "input_tokens": 11,
-                    "output_tokens": 7,
-                    "total_tokens": 18,
-                    "rate_limits": {"requests_remaining": 88},
-                },
+    save_engine_scheduler_state(
+        runtime_paths(root)["db_path"],
+        workflow="issue-runner",
+        running_entries={
+            "123": {
+                "issue_id": "123",
+                "identifier": "#123",
+                "attempt": 2,
+                "state": "open",
+                "started_at_epoch": 1714478400.0,
+                "heartbeat_at_epoch": 1714478415.0,
             }
-        ),
-        encoding="utf-8",
+        },
+        retry_entries={
+            "124": {
+                "issue_id": "124",
+                "identifier": "#124",
+                "attempt": 1,
+                "error": "tool call rejected",
+                "due_at_epoch": 1714478410.0,
+            }
+        },
+        codex_totals={
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "total_tokens": 18,
+            "rate_limits": {"requests_remaining": 88},
+        },
+        codex_threads={},
+        now_iso="2026-04-30T12:00:20Z",
+        now_epoch=1714478415.0,
     )
     _make_events_log(
         root / "memory" / "workflow-audit.jsonl",
@@ -198,7 +197,9 @@ def _make_issue_runner_root(root: Path) -> None:
 
 
 def _make_change_delivery_root(root: Path) -> None:
+    from engine.state import save_engine_scheduler_state
     from workflows.contract import render_workflow_markdown
+    from workflows.shared.paths import runtime_paths
 
     root.mkdir(parents=True, exist_ok=True)
     (root / "memory").mkdir()
@@ -231,35 +232,34 @@ def _make_change_delivery_root(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    (root / "memory" / "workflow-scheduler.json").write_text(
-        json.dumps(
-            {
-                "workflow": "change-delivery",
-                "updatedAt": "2026-04-30T12:00:20Z",
-                "codex_threads": {
-                    "lane:42": {
-                        "issue_id": "lane:42",
-                        "issue_number": 42,
-                        "identifier": "#42",
-                        "runtime_name": "coder-runtime",
-                        "runtime_kind": "codex-app-server",
-                        "thread_id": "thread-42",
-                        "turn_id": "turn-42",
-                        "status": "canceling",
-                        "cancel_requested": True,
-                        "cancel_reason": "operator-interrupt",
-                        "updated_at": "2026-04-30T12:00:20Z",
-                    }
-                },
-                "codex_totals": {
-                    "input_tokens": 11,
-                    "output_tokens": 7,
-                    "total_tokens": 18,
-                    "rate_limits": {"requests_remaining": 88},
-                },
+    save_engine_scheduler_state(
+        runtime_paths(root)["db_path"],
+        workflow="change-delivery",
+        running_entries={},
+        retry_entries={},
+        codex_threads={
+            "lane:42": {
+                "issue_id": "lane:42",
+                "issue_number": 42,
+                "identifier": "#42",
+                "runtime_name": "coder-runtime",
+                "runtime_kind": "codex-app-server",
+                "thread_id": "thread-42",
+                "turn_id": "turn-42",
+                "status": "canceling",
+                "cancel_requested": True,
+                "cancel_reason": "operator-interrupt",
+                "updated_at": "2026-04-30T12:00:20Z",
             }
-        ),
-        encoding="utf-8",
+        },
+        codex_totals={
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "total_tokens": 18,
+            "rate_limits": {"requests_remaining": 88},
+        },
+        now_iso="2026-04-30T12:00:20Z",
+        now_epoch=1714478420.0,
     )
 
 

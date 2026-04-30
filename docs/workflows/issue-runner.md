@@ -85,14 +85,14 @@ before returning. `run` is the service path: it dispatches eligible workers,
 returns to the polling loop, reconciles completed workers on later iterations,
 and requests cancellation when a running issue enters a terminal tracker state.
 
-Scheduler state is persisted under `storage.scheduler` (default:
-`memory/workflow-scheduler.json`) so continuation retries, failure backoff,
-running-worker recovery, aggregate Codex token totals, and Codex
-`issue_id -> thread_id` mappings survive loop restarts. When a mapped thread
-exists, the Codex app-server adapter resumes it with `thread/resume` before
-starting the next turn. `status` also includes runtime diagnostics when the
-selected runtime exposes them, including Codex app-server transport mode and
-warm-client state.
+Scheduler state is persisted in `runtime/state/daedalus/daedalus.db` so
+continuation retries, failure backoff, running-worker recovery, aggregate Codex
+token totals, and Codex `issue_id -> thread_id` mappings survive loop restarts.
+Daedalus also writes `storage.scheduler` (default:
+`memory/workflow-scheduler.json`) as a generated operator snapshot. When a
+mapped thread exists, the Codex app-server adapter resumes it with
+`thread/resume` before starting the next turn. `status` also includes runtime
+diagnostics when the selected runtime exposes them.
 
 ## Operator path
 
@@ -142,9 +142,8 @@ For direct workflow operations:
 resolution when `tracker.kind: github`.
 
 If `server.port` is set in the repo-owned contract, `serve` exposes the same
-localhost JSON + HTML status surface used by `change-delivery`, but backed by
-the `issue-runner` scheduler/status/audit files instead of the lane SQLite
-tables.
+localhost JSON + HTML status surface used by `change-delivery`, backed by
+shared engine SQLite state plus the `issue-runner` status/audit projections.
 
 ## Current limitation
 

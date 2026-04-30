@@ -178,7 +178,9 @@ def test_build_snapshot_combines_all_sources(tmp_path):
 
 
 def test_build_snapshot_includes_issue_runner_workflow_status(tmp_path):
+    from engine.state import save_engine_scheduler_state
     from workflows.contract import render_workflow_markdown
+    from workflows.shared.paths import runtime_paths
 
     watch = _module()
     root = _make_workflow_root(tmp_path)
@@ -207,14 +209,15 @@ def test_build_snapshot_includes_issue_runner_workflow_status(tmp_path):
     (root / "memory" / "workflow-status.json").write_text(
         json.dumps({"workflow": "issue-runner", "health": "healthy", "lastRun": {"updatedAt": "2026-04-30T12:00:15Z"}})
     )
-    (root / "memory" / "workflow-scheduler.json").write_text(
-        json.dumps(
-            {
-                "running": [{"issue_id": "123", "identifier": "#123", "state": "open"}],
-                "retry_queue": [],
-                "codex_totals": {"total_tokens": 18},
-            }
-        )
+    save_engine_scheduler_state(
+        runtime_paths(root)["db_path"],
+        workflow="issue-runner",
+        running_entries={"123": {"issue_id": "123", "identifier": "#123", "state": "open"}},
+        retry_entries={},
+        codex_totals={"total_tokens": 18},
+        codex_threads={},
+        now_iso="2026-04-30T12:00:20Z",
+        now_epoch=1714478420.0,
     )
 
     snap = watch.build_snapshot(root)

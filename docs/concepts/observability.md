@@ -43,7 +43,7 @@ The watch frame is assembled from three sources:
 
 1. **`active_lanes`** — workflow-aware projection of active work
    `change-delivery`: `SELECT * FROM lanes WHERE lane_status NOT IN ('merged', 'closed', 'archived')`
-   `issue-runner`: persisted scheduler `running` + `retry_queue`
+   `issue-runner`: shared engine `running` + `retry_queue`
 2. **`alert_state`** — parsed from `daedalus/alerts.py` output
 3. **`recent_events`** — tail of the workflow audit/event log (last 20, reverse-chunked seek)
 
@@ -72,7 +72,7 @@ See [http-status.md](http-status.md) for full endpoint documentation. Summary:
 ### Security
 
 - **Localhost only** (`127.0.0.1`). No auth — port access is the auth.
-- **Read-only state** (`mode=ro` SQLite URI for `change-delivery`, persisted JSON/JSONL state for `issue-runner`).
+- **Read-only state** (SQLite source state plus JSON/JSONL projections).
 - **Refresh is rate-limited by OS** (subprocess fork).
 
 ---

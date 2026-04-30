@@ -136,7 +136,7 @@ systemctl --user restart \
 | `~/.hermes/workflows/<profile>/runtime/memory/daedalus-events.jsonl` | Daedalus runtime event history |
 | `~/.hermes/workflows/<profile>/memory/workflow-status.json` | Workflow status projection |
 | `~/.hermes/workflows/<profile>/memory/workflow-health.json` | Workflow health projection |
-| `~/.hermes/workflows/<profile>/memory/workflow-scheduler.json` | Scheduler state, Codex thread mappings, token/rate-limit totals |
+| `~/.hermes/workflows/<profile>/memory/workflow-scheduler.json` | Generated scheduler snapshot; SQLite remains the source of truth |
 | `/tmp/issue-<N>/.lane-state.json` | Lane-local handoff state |
 | `/tmp/issue-<N>/.lane-memo.md` | Lane-local handoff notes |
 | `~/.config/systemd/user/daedalus-active@<profile>.service` | Service unit file |

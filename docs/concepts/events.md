@@ -11,8 +11,9 @@ These event streams are consumed by:
 
 State is workflow-specific. **History is in events.** Never reconstruct current state by replaying events.
 
-- `change-delivery` current state is in SQLite: lanes, actions, reviews, failures, and leases.
-- `issue-runner` current state is in persisted JSON: status, health, scheduler, running workers, retry queue, and Codex thread mappings.
+- Shared engine execution state is in SQLite: work items, running workers, retry queue, runtime sessions, and token totals.
+- `change-delivery` adds workflow-specific SQLite state: lanes, actions, reviews, failures, and leases.
+- JSON status/health/scheduler files are projections for operators and file-oriented tools.
 - Runtime events and workflow audit events are for debugging, alerting, tests, and post-hoc archaeology.
 
 ## Anatomy of an event

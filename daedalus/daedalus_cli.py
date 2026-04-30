@@ -9,6 +9,7 @@ import re
 import shlex
 import sqlite3
 import subprocess
+import time
 from contextlib import redirect_stderr
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from urllib.parse import urlparse
 
 import yaml
 
+from engine.state import read_engine_scheduler_state
 from workflows.contract import (
     WorkflowContractError,
     find_repo_workflow_contract_path,
@@ -34,6 +36,7 @@ from workflows.shared.paths import (
     project_key_for_workflow_root,
     repo_local_workflow_pointer_path,
     resolve_default_workflow_root as resolve_workflow_root_default,
+    runtime_paths,
     workflow_cli_argv,
 )
 from workflows.change_delivery.status import build_status as build_workflow_status
@@ -1016,43 +1019,43 @@ def _codex_app_server_endpoint_is_loopback(endpoint: str) -> bool:
         return False
 
 
-def _codex_app_server_scheduler_path(workflow_root: Path) -> Path:
-    configured_path: str | None = None
+def _load_codex_scheduler_snapshot(workflow_root: Path) -> dict[str, Any]:
+    db_path = runtime_paths(workflow_root)["db_path"]
+    workflow_names: list[str] = []
     try:
         contract = load_workflow_contract(workflow_root)
-        storage = contract.config.get("storage") if isinstance(contract.config, dict) else None
-        if isinstance(storage, dict):
-            configured_path = storage.get("scheduler") or storage.get("scheduler-path")
+        workflow_name = str(contract.config.get("workflow") or "").strip()
+        if workflow_name:
+            workflow_names.append(workflow_name)
     except Exception:
-        configured_path = None
-    raw_path = str(configured_path or "memory/workflow-scheduler.json")
-    path = Path(raw_path)
-    return path if path.is_absolute() else workflow_root / path
+        pass
+    if not workflow_names:
+        workflow_names = ["issue-runner", "change-delivery"]
 
+    scheduler: dict[str, Any] | None = None
+    for workflow_name in workflow_names:
+        scheduler = read_engine_scheduler_state(
+            db_path,
+            workflow=workflow_name,
+            now_iso=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            now_epoch=time.time(),
+        )
+        if scheduler is None:
+            continue
+        raw_threads = scheduler.get("codex_threads") or scheduler.get("codexThreads") or {}
+        totals = scheduler.get("codex_totals") or scheduler.get("codexTotals") or {}
+        if raw_threads or totals or workflow_name == workflow_names[-1]:
+            break
 
-def _load_codex_scheduler_snapshot(workflow_root: Path) -> dict[str, Any]:
-    scheduler_path = _codex_app_server_scheduler_path(workflow_root)
-    if not scheduler_path.exists():
+    if scheduler is None:
         return {
             "ok": True,
-            "path": str(scheduler_path),
+            "path": str(db_path),
             "exists": False,
             "threads": [],
             "totals": {},
             "invalid_thread_count": 0,
             "error": None,
-        }
-    try:
-        scheduler = json.loads(scheduler_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return {
-            "ok": False,
-            "path": str(scheduler_path),
-            "exists": True,
-            "threads": [],
-            "totals": {},
-            "invalid_thread_count": 0,
-            "error": str(exc),
         }
     raw_threads = scheduler.get("codex_threads") or scheduler.get("codexThreads") or {}
     threads: list[dict[str, Any]] = []
@@ -1085,7 +1088,7 @@ def _load_codex_scheduler_snapshot(workflow_root: Path) -> dict[str, Any]:
     totals = scheduler.get("codex_totals") or scheduler.get("codexTotals") or {}
     return {
         "ok": invalid_thread_count == 0,
-        "path": str(scheduler_path),
+        "path": str(db_path),
         "exists": True,
         "threads": threads,
         "totals": totals if isinstance(totals, dict) else {},
@@ -1288,7 +1291,7 @@ def codex_app_server_doctor(
                 "scheduler-thread-map",
                 "fail",
                 f"{scheduler.get('path')}: {scheduler.get('error')}",
-                remedy="repair or remove the scheduler JSON state file",
+                remedy="repair the shared engine SQLite state",
             )
         )
     elif not scheduler.get("exists"):

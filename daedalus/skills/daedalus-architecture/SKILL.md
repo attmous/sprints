@@ -18,7 +18,8 @@ Current Daedalus shape:
 - plugin code is the source of truth under `~/.hermes/plugins/daedalus`
 - workflow instance data lives under `~/.hermes/workflows/<owner>-<repo>-<workflow-type>`
 - shared runtimes live under `daedalus/runtimes/`; shared trackers live under `daedalus/trackers/`
-- `change-delivery` uses SQLite lane/action state; `issue-runner` uses persisted status/scheduler/audit JSON/JSONL state
+- shared engine execution state lives in SQLite; workflow JSON/JSONL files are projections and audit trails
+- `change-delivery` adds lane/action/review/failure tables on top of the shared engine tables
 
 ## Core decision model
 
@@ -408,7 +409,7 @@ Useful early file layout proven in practice:
 - phase bootstrap tests under `tests/test_daedalus_phase1_skeleton.py`
 - canonical DB under `runtime/state/daedalus/daedalus.db` for current workflow roots
 - append-only runtime event log under `runtime/memory/daedalus-events.jsonl`
-- workflow-owned scheduler/audit files under `memory/` unless a workflow explicitly configures different storage paths
+- workflow-owned status/scheduler/audit projections under `memory/` unless a workflow explicitly configures different storage paths
 
 Practical lessons learned:
 - do not trust a huge timed-out tarball just because the file exists; validate with `gzip -t` and checksum or it is garbage

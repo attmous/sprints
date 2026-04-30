@@ -8,8 +8,8 @@ JSONL events log on disk per request.
 Shape conforms to Symphony §13.7 (spec §6.4):
 
 - ``state_view`` returns a snapshot of running + retrying work plus a
-  ``codex_totals`` block. `change-delivery` keeps the legacy lane-backed model;
-  `issue-runner` projects from scheduler/status JSON files.
+  ``codex_totals`` block. `change-delivery` keeps the lane-backed domain
+  model; engine execution state is projected from shared SQLite tables.
 - ``issue_view`` returns the per-lane shape, or ``None`` if the
   identifier is unknown.
 
@@ -20,11 +20,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from engine.state import read_engine_scheduler_state
 from workflows.contract import WorkflowContractError, load_workflow_contract
+from workflows.shared.paths import runtime_paths
 
 # Lane statuses the spec considers "active" (running). Anything else
 # (merged / closed / archived) is omitted from the running list. The
@@ -197,6 +200,18 @@ def _workflow_name(workflow_root: Path | None) -> str | None:
         return None
 
 
+def _engine_scheduler(workflow_root: Path | None, workflow: str) -> dict[str, Any]:
+    if workflow_root is None:
+        return {}
+    payload = read_engine_scheduler_state(
+        runtime_paths(Path(workflow_root))["db_path"],
+        workflow=workflow,
+        now_iso=_now_iso(),
+        now_epoch=time.time(),
+    )
+    return payload or {}
+
+
 def _epoch_to_iso(value: Any) -> str | None:
     try:
         epoch = float(value)
@@ -290,10 +305,9 @@ def _issue_runner_retry_entry(row: dict[str, Any]) -> dict[str, Any]:
 
 def _issue_runner_state_view(workflow_root: Path, events_log_path: Path) -> dict[str, Any]:
     status_path = _resolve_issue_runner_storage_path(workflow_root, "status", "memory/workflow-status.json")
-    scheduler_path = _resolve_issue_runner_storage_path(workflow_root, "scheduler", "memory/workflow-scheduler.json")
     audit_log_path = _resolve_issue_runner_storage_path(workflow_root, "audit-log", "memory/workflow-audit.jsonl")
     status_payload = _load_optional_json(status_path) or {}
-    scheduler_payload = _load_optional_json(scheduler_path) or {}
+    scheduler_payload = _engine_scheduler(workflow_root, "issue-runner")
     running_rows = [
         _issue_runner_running_entry(row)
         for row in (scheduler_payload.get("running") or [])
@@ -389,7 +403,7 @@ def state_view(db_path: Path, events_log_path: Path, workflow_root: Path | None 
     lanes = _query_active_lanes(db_path)
     events = _read_events_tail(events_log_path, _RECENT_EVENTS_LIMIT)
     running = [_lane_to_running_entry(lane, events) for lane in lanes]
-    scheduler = _load_optional_json(_storage_path(workflow_root, "scheduler", "memory/workflow-scheduler.json")) or {}
+    scheduler = _engine_scheduler(workflow_root, "change-delivery")
     codex_totals = dict(scheduler.get("codex_totals") or scheduler.get("codexTotals") or {})
     rate_limits = codex_totals.pop("rate_limits", None)
     codex_turns = _codex_turn_entries(scheduler)

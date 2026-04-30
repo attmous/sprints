@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from engine.state import init_engine_state
 from engine.sqlite import connect_daedalus_db
 from workflows.shared.paths import (
     plugin_entrypoint_path,
@@ -532,6 +533,7 @@ def init_daedalus_db(*, workflow_root: Path, project_key: str) -> dict[str, Any]
             CREATE INDEX IF NOT EXISTS idx_state_projections_lane_type ON state_projections(lane_id, projection_type);
             """
         )
+        init_engine_state(conn)
         now_iso = _now_iso()
         runtime_row = conn.execute(
             "SELECT schema_version FROM daedalus_runtime WHERE runtime_id='daedalus'"

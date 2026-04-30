@@ -29,10 +29,9 @@ python3 -m workflows.issue_runner serve --workflow-root <root>
 ```
 
 The server is `http.server.ThreadingHTTPServer`, stdlib-only, and reads the
-workflow state read-only. `change-delivery` serves from SQLite + JSONL events;
-`issue-runner` serves from its persisted status, scheduler, and audit files.
-It never writes workflow state itself — `POST /api/v1/refresh` shells out a
-tick subprocess instead.
+workflow state read-only. Both workflows serve engine execution state from
+SQLite plus JSONL/status projections. It never writes workflow state itself —
+`POST /api/v1/refresh` shells out a tick subprocess instead.
 
 ## Endpoints
 
@@ -60,10 +59,10 @@ Conforms to Symphony §13.7 / Daedalus spec §6.4:
 ```
 
 Both bundled workflows report aggregate Codex token totals and latest
-rate-limit data from scheduler state when their active runtime is
+rate-limit data from shared engine state when their active runtime is
 `codex-app-server`. `change-delivery` still derives running lane rows from its
-SQLite lane model; `issue-runner` derives running and retrying rows directly
-from its scheduler file. `change-delivery` also includes `codex_turns` so
+SQLite lane model; `issue-runner` derives running and retrying rows from the
+shared engine tables. `change-delivery` also includes `codex_turns` so
 operators can inspect active or canceling Codex `thread_id` / `turn_id` pairs.
 
 ### `GET /api/v1/<identifier>`
@@ -79,13 +78,12 @@ Shells out the workflow's CLI entry point (resolved via `workflow_cli_argv()` so
 ## Security posture
 
 - **Localhost only.** The server binds `127.0.0.1`. There is no auth — getting access to the port is the auth.
-- **Read-only state.** `change-delivery` uses `mode=ro` SQLite URIs; `issue-runner` reads persisted JSON/JSONL state files. The server itself never becomes a state writer.
+- **Read-only state.** The server reads SQLite and JSON/JSONL projections; it never becomes a state writer.
 - **Refresh is rate-limited at the OS level** by virtue of being a subprocess fork — no separate counter.
 
 ## Performance notes
 
-- `change-delivery` requests open a fresh sqlite connection (cheap, avoids cross-thread state hazards).
-- `issue-runner` requests read the current status/scheduler snapshots from disk, so reads remain bounded and restart-safe.
+- Requests open fresh SQLite connections (cheap, avoids cross-thread state hazards) and read bounded JSON/JSONL projections.
 - The events tail uses an 8 KiB reverse-chunked seek so cost is bounded by `limit` regardless of total log size — the previous `readlines()` implementation was O(file size) and got expensive on long-lived logs.
 
 ## Where this lives in code

@@ -23,6 +23,13 @@ from .scheduler import (
     running_snapshot,
 )
 from .sqlite import connect_daedalus_db
+from .state import (
+    engine_state_tables_exist,
+    init_engine_state,
+    load_engine_scheduler_state,
+    read_engine_scheduler_state,
+    save_engine_scheduler_state,
+)
 from .storage import append_jsonl, load_optional_json, write_json_atomic, write_text_atomic
 from .work_items import (
     RetryEntry,
@@ -45,9 +52,13 @@ __all__ = [
     "clear_work_entries",
     "codex_threads_snapshot",
     "connect_daedalus_db",
+    "engine_state_tables_exist",
+    "init_engine_state",
+    "load_engine_scheduler_state",
     "load_optional_json",
     "mark_running_work",
     "make_audit_fn",
+    "read_engine_scheduler_state",
     "recover_running_as_retry",
     "restore_scheduler_state",
     "retry_delay",
@@ -55,6 +66,7 @@ __all__ = [
     "retry_queue_snapshot",
     "running_snapshot",
     "schedule_retry_entry",
+    "save_engine_scheduler_state",
     "work_item_from_change_delivery_lane",
     "work_item_from_issue",
     "write_json_atomic",

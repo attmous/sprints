@@ -121,6 +121,7 @@ def test_read_alert_state_when_present(tmp_path):
 
 
 def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
+    from engine.state import save_engine_scheduler_state
     from workflows.contract import render_workflow_markdown
 
     sources = _module()
@@ -150,14 +151,15 @@ def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
     (root / "memory" / "workflow-status.json").write_text(
         json.dumps({"workflow": "issue-runner", "health": "healthy", "lastRun": {"updatedAt": "2026-04-30T12:00:15Z"}})
     )
-    (root / "memory" / "workflow-scheduler.json").write_text(
-        json.dumps(
-            {
-                "running": [{"issue_id": "123", "identifier": "#123", "state": "open"}],
-                "retry_queue": [{"issue_id": "124", "identifier": "#124", "error": "x"}],
-                "codex_totals": {"total_tokens": 18, "rate_limits": {"requests_remaining": 88}},
-            }
-        )
+    save_engine_scheduler_state(
+        root / "runtime" / "state" / "daedalus" / "daedalus.db",
+        workflow="issue-runner",
+        running_entries={"123": {"issue_id": "123", "identifier": "#123", "state": "open"}},
+        retry_entries={"124": {"issue_id": "124", "identifier": "#124", "error": "x", "due_at_epoch": 1714478410.0}},
+        codex_totals={"total_tokens": 18, "rate_limits": {"requests_remaining": 88}},
+        codex_threads={},
+        now_iso="2026-04-30T12:00:20Z",
+        now_epoch=1714478400.0,
     )
     (root / "memory" / "workflow-audit.jsonl").write_text(
         json.dumps({"at": "2026-04-30T12:00:20Z", "event": "issue_runner.tick.completed", "issue_id": "123"}) + "\n"
@@ -178,6 +180,7 @@ def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
 
 
 def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
+    from engine.state import save_engine_scheduler_state
     from workflows.contract import render_workflow_markdown
 
     sources = _module()
@@ -200,26 +203,26 @@ def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
         encoding="utf-8",
     )
     (root / "memory").mkdir(exist_ok=True)
-    (root / "memory" / "workflow-scheduler.json").write_text(
-        json.dumps(
-            {
-                "workflow": "change-delivery",
-                "updatedAt": "2026-04-30T12:00:20Z",
-                "codex_threads": {
-                    "lane:42": {
-                        "issue_id": "lane:42",
-                        "issue_number": 42,
-                        "identifier": "#42",
-                        "thread_id": "thread-42",
-                        "turn_id": "turn-42",
-                        "status": "canceling",
-                        "cancel_requested": True,
-                        "cancel_reason": "operator-interrupt",
-                    }
-                },
-                "codex_totals": {"total_tokens": 18},
+    save_engine_scheduler_state(
+        root / "runtime" / "state" / "daedalus" / "daedalus.db",
+        workflow="change-delivery",
+        running_entries={},
+        retry_entries={},
+        codex_totals={"total_tokens": 18},
+        codex_threads={
+            "lane:42": {
+                "issue_id": "lane:42",
+                "issue_number": 42,
+                "identifier": "#42",
+                "thread_id": "thread-42",
+                "turn_id": "turn-42",
+                "status": "canceling",
+                "cancel_requested": True,
+                "cancel_reason": "operator-interrupt",
             }
-        )
+        },
+        now_iso="2026-04-30T12:00:20Z",
+        now_epoch=1714478420.0,
     )
 
     workflow_status = sources.workflow_status(root)
