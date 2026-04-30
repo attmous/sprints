@@ -221,8 +221,8 @@ This is the bundled generic tracker-driven workflow.
 |---|---|---|
 || `/workflow issue-runner status` | Selected issue + last run summary |
 || `/workflow issue-runner doctor` | Validate tracker, workspace, and runtime references |
-|| `/workflow issue-runner tick` | Run one issue-runner dispatch tick |
-|| `/workflow issue-runner run` | Run the long-lived issue-runner polling loop |
+|| `/workflow issue-runner tick` | Run one synchronous issue-runner dispatch tick |
+|| `/workflow issue-runner run` | Run the supervised long-lived issue-runner polling loop |
 || `/workflow issue-runner serve` | Run the optional localhost HTTP status server |
 
 ### Webhook commands

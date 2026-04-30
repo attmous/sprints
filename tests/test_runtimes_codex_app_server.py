@@ -4,6 +4,7 @@ import json
 import socket
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -139,6 +140,46 @@ def _write_fake_quiet_turn_app_server(path: Path, requests_path: Path) -> None:
                 "        emit({'method': 'item/agentMessage/delta', 'params': {**item, 'delta': 'quiet ok'}})",
                 "        completed_turn = {'id': 'turn-quiet', 'status': 'completed', 'items': []}",
                 "        emit({'method': 'turn/completed', 'params': {'threadId': 'thread-quiet', 'turn': completed_turn}})",
+                "        break",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_fake_cancellable_app_server(path: Path, requests_path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import sys",
+                f"requests_path = {str(requests_path)!r}",
+                "",
+                "def emit(payload):",
+                "    print(json.dumps(payload), flush=True)",
+                "",
+                "def record(payload):",
+                "    with open(requests_path, 'a', encoding='utf-8') as fh:",
+                "        fh.write(json.dumps(payload) + '\\n')",
+                "",
+                "for line in sys.stdin:",
+                "    payload = json.loads(line)",
+                "    record(payload)",
+                "    method = payload.get('method')",
+                "    request_id = payload.get('id')",
+                "    if method == 'initialize':",
+                "        emit({'id': request_id, 'result': {'userAgent': 'fake-codex'}})",
+                "    elif method == 'initialized':",
+                "        continue",
+                "    elif method == 'thread/start':",
+                "        emit({'id': request_id, 'result': {'thread': {'id': 'thread-cancel'}}})",
+                "    elif method == 'turn/start':",
+                "        turn = {'id': 'turn-cancel', 'status': 'running', 'items': []}",
+                "        emit({'id': request_id, 'result': {'turn': turn}})",
+                "        emit({'method': 'turn/started', 'params': {'threadId': 'thread-cancel', 'turn': turn}})",
+                "    elif method == 'turn/interrupt':",
+                "        emit({'id': request_id, 'result': {}})",
                 "        break",
             ]
         )
@@ -465,6 +506,66 @@ def test_codex_app_server_runtime_allows_quiet_period_longer_than_read_timeout(t
     assert result.output == "quiet ok\n"
     assert result.thread_id == "thread-quiet"
     assert result.turn_id == "turn-quiet"
+
+
+def test_codex_app_server_runtime_cancellation_interrupts_active_turn(tmp_path):
+    from runtimes.codex_app_server import CodexAppServerError, CodexAppServerRuntime
+
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+    server = tmp_path / "fake_cancellable_app_server.py"
+    requests_path = tmp_path / "requests.jsonl"
+    _write_fake_cancellable_app_server(server, requests_path)
+
+    runtime = CodexAppServerRuntime(
+        {
+            "command": [sys.executable, str(server)],
+            "approval_policy": "never",
+            "turn_timeout_ms": 5000,
+            "read_timeout_ms": 100,
+            "stall_timeout_ms": 5000,
+        },
+        run=None,
+    )
+    cancel_event = threading.Event()
+    runtime.set_cancel_event(cancel_event)
+    errors: list[Exception] = []
+
+    def run_turn():
+        try:
+            runtime.run_prompt_result(
+                worktree=worktree,
+                session_name="ISSUE-CANCEL",
+                prompt="Work until canceled",
+                model="gpt-5.5",
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run_turn)
+    thread.start()
+    try:
+        for _ in range(30):
+            if requests_path.exists():
+                methods = [json.loads(line).get("method") for line in requests_path.read_text(encoding="utf-8").splitlines()]
+                if "turn/start" in methods:
+                    break
+            time.sleep(0.02)
+        else:
+            raise AssertionError("turn/start was not sent")
+
+        cancel_event.set()
+        thread.join(timeout=3)
+    finally:
+        cancel_event.set()
+
+    assert not thread.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], CodexAppServerError)
+    assert "turn canceled" in str(errors[0])
+    requests = [json.loads(line) for line in requests_path.read_text(encoding="utf-8").splitlines()]
+    interrupt = next(item for item in requests if item.get("method") == "turn/interrupt")
+    assert interrupt["params"] == {"threadId": "thread-cancel", "turnId": "turn-cancel"}
 
 
 def test_codex_app_server_runtime_rejects_non_protocol_approval_policy(tmp_path):

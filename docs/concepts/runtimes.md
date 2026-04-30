@@ -151,6 +151,9 @@ It maps `thread/tokenUsage/updated` into Daedalus token totals and
 non-interactive approval requests so an unattended service does not hang.
 `issue-runner` persists `issue_id -> thread_id` in scheduler state and resumes
 the existing Codex thread on later ticks instead of starting a fresh thread.
+In the supervised `issue-runner run` loop, terminal tracker transitions request
+cooperative cancellation; the Codex adapter sends `turn/interrupt` for the
+active turn before surfacing the cancellation result to the scheduler.
 
 ## Adding a new runtime
 

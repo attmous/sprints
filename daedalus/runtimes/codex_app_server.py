@@ -436,6 +436,7 @@ class CodexAppServerRuntime:
         self._last_activity: float | None = None
         self._last_result: PromptRunResult | None = None
         self._resume_thread_ids: dict[str, str] = {}
+        self._cancel_event: threading.Event | None = None
 
     def _record_activity(self) -> None:
         self._last_activity = time.monotonic()
@@ -445,6 +446,9 @@ class CodexAppServerRuntime:
 
     def last_result(self) -> PromptRunResult | None:
         return self._last_result
+
+    def set_cancel_event(self, event: threading.Event | None) -> None:
+        self._cancel_event = event
 
     def ensure_session(
         self,
@@ -748,6 +752,15 @@ class CodexAppServerRuntime:
         stall_timeout = self._stall_timeout_ms / 1000 if self._stall_timeout_ms > 0 else None
         while True:
             now = time.monotonic()
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                self._interrupt_turn(client=client, state=state)
+                result = self._result_from_state(state)
+                raise CodexAppServerError(
+                    "codex-app-server turn canceled",
+                    result=result,
+                    stderr=client.stderr_text,
+                    returncode=client.returncode,
+                )
             if now >= deadline:
                 self._interrupt_turn(client=client, state=state)
                 result = self._result_from_state(state)

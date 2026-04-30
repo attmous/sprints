@@ -17,10 +17,10 @@ The short version: Daedalus is already **Symphony-aligned** in architecture, but
 | `WORKFLOW.md` loader | Partial | Supported as a repo-owned public contract. Front matter maps to the selected workflow schema; `issue-runner` is the closer generic reference surface, while `change-delivery` still carries richer GitHub-specific semantics. |
 | Typed config + hot reload | Implemented | Bundled workflows load repo-owned `WORKFLOW.md`; `issue-runner` now keeps last-known-good config on invalid reloads. |
 | Issue tracker client boundary | Partial | `issue-runner` has shared `local-json`, `github`, and Linear clients. The Linear query shape follows the Symphony baseline, but still needs real-service smoke validation. |
-| Workspace manager | Partial | Generic workspace root, lifecycle hooks, terminal cleanup, sanitized workspace keys, root-containment checks, managed long-running `issue-runner`, and persisted scheduler state now exist. |
-| Bounded concurrency | Partial | `issue-runner` now dispatches bounded batches and persists running-worker recovery, but the broader engine is still not uniformly scheduler-driven. |
-| Retry/backoff policy | Partial | `issue-runner` now uses Symphony-style 1s continuation retries and 10s-based exponential failure backoff. The remaining gap is true async worker cancellation/reconciliation. |
-| Coding-agent protocol | Partial | `issue-runner` now ships a protocol-valid `codex-app-server` JSON-RPC adapter with managed stdio, external WebSocket mode, a managed app-server user unit, and persisted thread resume. The remaining gap is in-flight worker cancellation/reconciliation. |
+| Workspace manager | Partial | Generic workspace root, lifecycle hooks, terminal cleanup, sanitized workspace keys, root-containment checks, managed long-running `issue-runner`, supervised worker dispatch/reconciliation, and persisted scheduler state now exist. |
+| Bounded concurrency | Partial | `issue-runner` dispatches bounded async workers in the service loop and persists running-worker recovery, but the broader engine is still not uniformly scheduler-driven. |
+| Retry/backoff policy | Partial | `issue-runner` uses Symphony-style 1s continuation retries and 10s-based exponential failure backoff, including supervised worker completion and terminal-state retry suppression. |
+| Coding-agent protocol | Partial | `issue-runner` ships a protocol-valid `codex-app-server` JSON-RPC adapter with managed stdio, external WebSocket mode, a managed app-server user unit, persisted thread resume, and cooperative turn interruption. |
 | Observability surface | Partial | Events, status, watch, and HTTP surfaces exist; `issue-runner` records per-run token/rate-limit metrics and exposes `codex_totals` plus Codex thread mappings. |
 | Trust/safety posture | Implemented | See [security.md](security.md). |
 | Terminal workspace cleanup | Partial | Terminal lane states exist; full Symphony-style cleanup semantics still need explicit policy. |
@@ -32,12 +32,12 @@ Daedalus currently differs from the Symphony draft in three material ways:
 1. The supported managed workflow is GitHub-backed `change-delivery`; `issue-runner` is the generic reference workflow and has a Linear adapter, but the broader product story is still not Linear-first.
 2. Runtime adapters are still mixed: `issue-runner` has a protocol-level Codex app-server path, while the rest of Daedalus remains CLI/session-oriented.
 3. `WORKFLOW.md` still maps into the current Daedalus schema rather than a tracker-agnostic Symphony config model.
-4. `issue-runner` still executes worker turns synchronously inside a tick, so in-flight cancellation on tracker state changes is not fully Symphony-shaped yet.
+4. `issue-runner` has async supervision in the long-running `run` path, but manual `tick` remains synchronous and command-style runtimes still have limited cancellation semantics.
 
 ## Recommended Next Gaps
 
-1. Move `issue-runner` from synchronous tick execution to true async worker supervision so reconciliation can stop active runs.
-2. Keep Codex app-server threads and loaded sessions alive across ticks instead of starting/resuming one connection per run.
+1. Keep Codex app-server sessions warm across worker turns instead of opening a connection per run.
+2. Add stronger cancellation semantics for command-style runtimes, including subprocess group termination where safe.
 3. Add real Linear integration smoke tests and publish a stricter conformance checklist.
 
 Until those land, Daedalus should be described as **Symphony-inspired and partially compatible**, not as a strict implementation of the current spec.

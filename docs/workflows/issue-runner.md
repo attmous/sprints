@@ -15,7 +15,7 @@ For each eligible tracker issue:
 5. render the Markdown workflow body as the issue prompt template
 6. invoke the configured runtime/agent
 7. persist output and audit state
-8. persist scheduler state for continuation retries, failure backoff, running-worker recovery, and token totals
+8. persist scheduler state for running workers, continuation retries, failure backoff, recovery, and token totals
 
 ## Use it when
 
@@ -46,6 +46,11 @@ Supported tracker kinds today:
 
 `issue-runner` composes the shared `trackers/` clients with workflow-specific
 eligibility, ordering, retry, and workspace policy.
+
+`tick` is the manual/debug path: it selects a batch and runs it synchronously
+before returning. `run` is the service path: it dispatches eligible workers,
+returns to the polling loop, reconciles completed workers on later iterations,
+and requests cancellation when a running issue enters a terminal tracker state.
 
 Scheduler state is persisted under `storage.scheduler` (default:
 `memory/workflow-scheduler.json`) so continuation retries, failure backoff,
@@ -107,8 +112,8 @@ tables.
 
 - The Linear adapter follows the Symphony baseline query shape, but still needs real Linear integration smoke coverage before claiming production-grade Linear support.
 - Managed service mode is `active` only. `shadow` remains specific to `change-delivery`.
-- The bundled Codex app-server adapter supports managed stdio and external WebSocket transports, including durable thread resume across ticks; full in-flight cancellation remains future work.
-- Worker execution is still synchronous inside each tick; full in-flight cancellation on tracker state changes is the next scheduler hardening step.
+- The bundled Codex app-server adapter supports managed stdio and external WebSocket transports, durable thread resume across ticks, and cooperative in-flight cancellation in the supervised `run` loop.
+- Cancellation is cooperative. Codex app-server turns are interrupted when Daedalus requests cancellation; command-style runtimes may only observe cancellation before they start or after they exit.
 
 ## Related docs
 

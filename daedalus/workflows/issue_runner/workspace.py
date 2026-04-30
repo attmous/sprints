@@ -5,8 +5,9 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -286,6 +287,9 @@ class IssueRunnerWorkspace:
     codex_threads: dict[str, dict[str, Any]]
     running_issue_id: str | None = None
     codex_totals: dict[str, Any] | None = None
+    _supervisor_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
+    _supervisor_futures: dict[str, concurrent.futures.Future] = field(default_factory=dict, init=False, repr=False)
+    _supervisor_cancel_events: dict[str, threading.Event] = field(default_factory=dict, init=False, repr=False)
 
     def runtime(self, name: str) -> Runtime:
         return self.runtimes[name]
@@ -437,10 +441,21 @@ class IssueRunnerWorkspace:
                 continue
             entry = {
                 "issue_id": issue_id,
+                "worker_id": item.get("worker_id") or item.get("workerId") or f"worker:{issue_id}:recovered",
                 "identifier": item.get("identifier"),
                 "attempt": int(item.get("attempt") or 0),
                 "state": item.get("state"),
+                "worker_status": item.get("worker_status") or item.get("workerStatus") or "recovered",
                 "started_at_epoch": float(item.get("started_at_epoch") or item.get("startedAtEpoch") or _now_epoch()),
+                "heartbeat_at_epoch": float(
+                    item.get("heartbeat_at_epoch")
+                    or item.get("heartbeatAtEpoch")
+                    or item.get("started_at_epoch")
+                    or item.get("startedAtEpoch")
+                    or _now_epoch()
+                ),
+                "cancel_requested": bool(item.get("cancel_requested") or item.get("cancelRequested") or False),
+                "cancel_reason": item.get("cancel_reason") or item.get("cancelReason"),
             }
             running_entries[issue_id] = entry
             recovered_running.append(entry)
@@ -471,14 +486,23 @@ class IssueRunnerWorkspace:
         running = []
         for issue_id, entry in self.running_entries.items():
             started_at_epoch = float(entry.get("started_at_epoch") or now_epoch)
+            heartbeat_at_epoch = float(entry.get("heartbeat_at_epoch") or started_at_epoch)
             running.append(
                 {
                     "issue_id": issue_id,
+                    "worker_id": entry.get("worker_id"),
                     "identifier": entry.get("identifier"),
                     "attempt": int(entry.get("attempt") or 0),
                     "state": entry.get("state"),
+                    "worker_status": entry.get("worker_status") or "running",
                     "started_at_epoch": started_at_epoch,
+                    "heartbeat_at_epoch": heartbeat_at_epoch,
                     "running_for_ms": max(int((now_epoch - started_at_epoch) * 1000), 0),
+                    "heartbeat_age_ms": max(int((now_epoch - heartbeat_at_epoch) * 1000), 0),
+                    "cancel_requested": bool(entry.get("cancel_requested") or False),
+                    "cancel_reason": entry.get("cancel_reason"),
+                    "thread_id": entry.get("thread_id"),
+                    "turn_id": entry.get("turn_id"),
                 }
             )
         running.sort(key=lambda item: (item["state"] or "", item["identifier"] or item["issue_id"]))
@@ -734,17 +758,24 @@ class IssueRunnerWorkspace:
 
     def _mark_running(self, selections: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> None:
         now_epoch = _now_epoch()
-        self.running_entries = {
-            str(issue.get("id") or ""): {
-                "issue_id": str(issue.get("id") or ""),
+        entries = dict(self.running_entries)
+        for issue, retry_entry in selections:
+            issue_id = str(issue.get("id") or "").strip()
+            if not issue_id:
+                continue
+            entries[issue_id] = {
+                "issue_id": issue_id,
+                "worker_id": f"worker:{issue_id}:{int(now_epoch * 1000)}",
                 "identifier": issue.get("identifier"),
                 "attempt": self._issue_attempt(issue=issue, retry_entry=retry_entry),
                 "state": issue.get("state"),
+                "worker_status": "running",
                 "started_at_epoch": now_epoch,
+                "heartbeat_at_epoch": now_epoch,
+                "cancel_requested": False,
+                "cancel_reason": None,
             }
-            for issue, retry_entry in selections
-            if str(issue.get("id") or "").strip()
-        }
+        self.running_entries = entries
         self.running_issue_id = next(iter(self.running_entries), None)
         self._persist_scheduler_state()
 
@@ -763,11 +794,37 @@ class IssueRunnerWorkspace:
             return self._metrics_payload(result)
         return {}
 
+    def _cancel_result(
+        self,
+        *,
+        issue: dict[str, Any],
+        attempt: int,
+        reason: str,
+        workspace: Path | None = None,
+        output_path: Path | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "canceled": True,
+            "suppressRetry": reason == "terminal-state",
+            "issue": issue,
+            "attempt": attempt,
+            "workspace": str(workspace) if workspace is not None else None,
+            "createdWorkspace": False,
+            "hookResults": [],
+            "outputPath": str(output_path) if output_path is not None else None,
+            "error": f"worker canceled: {reason}",
+            "metrics": {},
+            "runtime": None,
+            "runtimeKind": None,
+        }
+
     def _execute_issue(
         self,
         *,
         issue: dict[str, Any],
         retry_entry: dict[str, Any] | None,
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         hook_results: list[dict[str, Any]] = []
         runtime: Runtime | None = None
@@ -780,6 +837,12 @@ class IssueRunnerWorkspace:
         attempt = self._issue_attempt(issue=issue, retry_entry=retry_entry)
 
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                return self._cancel_result(
+                    issue=issue,
+                    attempt=attempt,
+                    reason="requested-before-start",
+                )
             issue_workspace = _safe_issue_workspace_path(self.issue_workspace_root, issue)
             issue_workspace.mkdir(parents=True, exist_ok=True)
             _assert_workspace_inside_root(self.issue_workspace_root, issue_workspace)
@@ -797,6 +860,14 @@ class IssueRunnerWorkspace:
             prompt_path.write_text(prompt, encoding="utf-8")
             output_path = daemon_dir / "last-output.txt"
             env = self._hook_env(issue=issue, issue_workspace=issue_workspace, prompt_path=prompt_path, output_path=output_path)
+            if cancel_event is not None and cancel_event.is_set():
+                return self._cancel_result(
+                    issue=issue,
+                    attempt=attempt,
+                    reason="requested-before-run",
+                    workspace=issue_workspace,
+                    output_path=output_path,
+                )
             if created_workspace:
                 hook_results.append(self._run_hook("after_create", issue_workspace, env))
                 created_marker.write_text(_now_iso() + "\n", encoding="utf-8")
@@ -807,6 +878,9 @@ class IssueRunnerWorkspace:
             runtime_profiles = _runtime_profiles_from_config(self.config)
             runtime_cfg = runtime_profiles.get(runtime_name) or {}
             runtime = _build_runtimes_from_config(self.config, run=self._run, run_json=self._run_json)[runtime_name]
+            set_cancel_event = getattr(runtime, "set_cancel_event", None)
+            if callable(set_cancel_event) and cancel_event is not None:
+                set_cancel_event(cancel_event)
             session_name = issue_session_name(issue)
             model = str(agent_cfg.get("model") or "")
             resume_thread_id = None
@@ -875,6 +949,375 @@ class IssueRunnerWorkspace:
                 "runtimeKind": runtime_cfg.get("kind") if runtime is not None else None,
             }
 
+    def _apply_issue_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        applied: list[dict[str, Any]] = []
+        for result in results:
+            issue = result.get("issue") or {}
+            issue_id = str(issue.get("id") or "")
+            metrics = result.get("metrics") or {}
+            if metrics:
+                recorded_metrics = self._record_metrics(
+                    PromptRunResult(
+                        output="",
+                        session_id=metrics.get("session_id"),
+                        thread_id=metrics.get("thread_id"),
+                        turn_id=metrics.get("turn_id"),
+                        last_event=metrics.get("last_event"),
+                        last_message=metrics.get("last_message"),
+                        turn_count=int(metrics.get("turn_count") or 0),
+                        tokens=metrics.get("tokens"),
+                        rate_limits=metrics.get("rate_limits"),
+                    )
+                )
+                if result.get("runtimeKind") == "codex-app-server":
+                    self._record_codex_thread(
+                        issue=issue,
+                        session_name=issue_session_name(issue),
+                        metrics=recorded_metrics,
+                    )
+                result["metrics"] = recorded_metrics
+
+            if result.get("ok"):
+                self._clear_retry(issue_id)
+                if result.get("suppressRetry"):
+                    result["retry"] = None
+                else:
+                    retry = self._schedule_retry(
+                        issue=issue,
+                        error="continuation",
+                        current_attempt=result.get("attempt"),
+                        delay_type="continuation",
+                    )
+                    result["retry"] = retry
+                self._emit_event(
+                    "issue_runner.tick.completed",
+                    {
+                        "issue_id": issue.get("id"),
+                        "attempt": result.get("attempt"),
+                        "workspace": result.get("workspace"),
+                        "output_path": result.get("outputPath"),
+                        "continuation_retry_attempt": (result.get("retry") or {}).get("retry_attempt"),
+                        "continuation_retry_delay_ms": (result.get("retry") or {}).get("delay_ms"),
+                    },
+                )
+            else:
+                if result.get("suppressRetry"):
+                    result["retry"] = None
+                    self._emit_event(
+                        "issue_runner.tick.canceled",
+                        {
+                            "issue_id": issue.get("id"),
+                            "attempt": result.get("attempt"),
+                            "workspace": result.get("workspace"),
+                            "error": result.get("error"),
+                            "retry_suppressed": True,
+                        },
+                    )
+                else:
+                    retry = self._schedule_retry(
+                        issue=issue,
+                        error=str(result.get("error") or "issue execution failed"),
+                        current_attempt=result.get("attempt"),
+                    )
+                    result["retry"] = retry
+                    self._emit_event(
+                        "issue_runner.tick.failed",
+                        {
+                            "issue_id": issue.get("id"),
+                            "attempt": result.get("attempt"),
+                            "workspace": result.get("workspace"),
+                            "error": result.get("error"),
+                            "retry_attempt": retry.get("retry_attempt"),
+                            "retry_delay_ms": retry.get("delay_ms"),
+                        },
+                    )
+            applied.append(result)
+        return applied
+
+    def _status_from_results(
+        self,
+        *,
+        base_status: dict[str, Any],
+        results: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        results.sort(key=lambda item: str(((item.get("issue") or {}).get("identifier")) or ((item.get("issue") or {}).get("id")) or ""))
+        applied = self._apply_issue_results(results)
+        tick_metrics = [result.get("metrics") or {} for result in applied if result.get("metrics")]
+        first = applied[0] if applied else {}
+        base_status.update(
+            {
+                "ok": all(result.get("ok") or result.get("suppressRetry") for result in applied),
+                "attempt": first.get("attempt"),
+                "outputPath": first.get("outputPath"),
+                "workspace": first.get("workspace"),
+                "createdWorkspace": first.get("createdWorkspace"),
+                "hookResults": first.get("hookResults"),
+                "results": applied,
+                "metrics": self._aggregate_metrics(tick_metrics),
+            }
+        )
+        failed = next((result for result in applied if not result.get("ok") and not result.get("suppressRetry")), None)
+        if failed:
+            base_status["error"] = failed.get("error")
+            base_status["retry"] = failed.get("retry")
+        return base_status
+
+    def _supervisor_max_workers(self) -> int:
+        scheduler = _scheduler_state_from_config(self.config)
+        return max(int(scheduler["max_concurrent_agents"]), 1)
+
+    def _ensure_supervisor_executor(self) -> concurrent.futures.ThreadPoolExecutor:
+        if self._supervisor_executor is None:
+            self._supervisor_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=self._supervisor_max_workers(),
+                thread_name_prefix="daedalus-issue-runner",
+            )
+        return self._supervisor_executor
+
+    def _request_supervised_cancel(self, issue_id: str, *, reason: str) -> bool:
+        if not issue_id or issue_id not in self.running_entries:
+            return False
+        entry = self.running_entries[issue_id]
+        if entry.get("cancel_requested"):
+            return False
+        entry["cancel_requested"] = True
+        entry["cancel_reason"] = reason
+        entry["worker_status"] = "canceling"
+        entry["heartbeat_at_epoch"] = _now_epoch()
+        event = self._supervisor_cancel_events.get(issue_id)
+        if event is not None:
+            event.set()
+        future = self._supervisor_futures.get(issue_id)
+        if future is not None:
+            future.cancel()
+        self._emit_event(
+            "issue_runner.worker.cancel_requested",
+            {
+                "issue_id": issue_id,
+                "identifier": entry.get("identifier"),
+                "reason": reason,
+                "worker_id": entry.get("worker_id"),
+            },
+        )
+        self._persist_scheduler_state()
+        return True
+
+    def _request_terminal_cancellations(self, terminal_issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        requested = []
+        for issue in terminal_issues:
+            issue_id = str(issue.get("id") or "").strip()
+            if not issue_id or issue_id not in self.running_entries:
+                continue
+            if self._request_supervised_cancel(issue_id, reason="terminal-state"):
+                requested.append(
+                    {
+                        "issue_id": issue_id,
+                        "identifier": issue.get("identifier"),
+                        "reason": "terminal-state",
+                    }
+                )
+        return requested
+
+    def _reconcile_supervised_workers(self) -> list[dict[str, Any]]:
+        completed: list[dict[str, Any]] = []
+        for issue_id, future in list(self._supervisor_futures.items()):
+            if not future.done():
+                entry = self.running_entries.get(issue_id)
+                if entry is not None:
+                    entry["heartbeat_at_epoch"] = _now_epoch()
+                continue
+            self._supervisor_futures.pop(issue_id, None)
+            self._supervisor_cancel_events.pop(issue_id, None)
+            entry = self.running_entries.get(issue_id) or {}
+            if future.cancelled():
+                result = self._cancel_result(
+                    issue={
+                        "id": issue_id,
+                        "identifier": entry.get("identifier"),
+                        "state": entry.get("state"),
+                    },
+                    attempt=int(entry.get("attempt") or 0),
+                    reason=str(entry.get("cancel_reason") or "canceled"),
+                )
+            else:
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = {
+                        "ok": False,
+                        "issue": {
+                            "id": issue_id,
+                            "identifier": entry.get("identifier"),
+                            "state": entry.get("state"),
+                        },
+                        "attempt": int(entry.get("attempt") or 0),
+                        "workspace": None,
+                        "createdWorkspace": False,
+                        "hookResults": [],
+                        "outputPath": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "metrics": {},
+                        "runtime": None,
+                        "runtimeKind": None,
+                    }
+            if entry.get("cancel_requested"):
+                result["cancelRequested"] = True
+                result["cancelReason"] = entry.get("cancel_reason")
+                if entry.get("cancel_reason") == "terminal-state":
+                    result["suppressRetry"] = True
+            metrics = result.get("metrics") or {}
+            if metrics.get("thread_id"):
+                entry["thread_id"] = metrics.get("thread_id")
+            if metrics.get("turn_id"):
+                entry["turn_id"] = metrics.get("turn_id")
+            entry["worker_status"] = "completed" if result.get("ok") else ("canceled" if result.get("canceled") else "failed")
+            entry["heartbeat_at_epoch"] = _now_epoch()
+            self._clear_running([issue_id])
+            completed.append(result)
+            self._emit_event(
+                "issue_runner.worker.completed",
+                {
+                    "issue_id": issue_id,
+                    "identifier": (result.get("issue") or {}).get("identifier") or entry.get("identifier"),
+                    "worker_id": entry.get("worker_id"),
+                    "ok": result.get("ok"),
+                    "canceled": result.get("canceled"),
+                    "error": result.get("error"),
+                },
+            )
+        if completed:
+            self._persist_scheduler_state()
+        return completed
+
+    def _dispatch_supervised_workers(
+        self,
+        selections: list[tuple[dict[str, Any], dict[str, Any] | None]],
+    ) -> list[dict[str, Any]]:
+        if not selections:
+            return []
+        executor = self._ensure_supervisor_executor()
+        self._mark_running(selections)
+        dispatched: list[dict[str, Any]] = []
+        for issue, retry_entry in selections:
+            issue_id = str(issue.get("id") or "").strip()
+            if not issue_id:
+                continue
+            cancel_event = threading.Event()
+            self._supervisor_cancel_events[issue_id] = cancel_event
+            future = executor.submit(
+                self._execute_issue,
+                issue=issue,
+                retry_entry=retry_entry,
+                cancel_event=cancel_event,
+            )
+            self._supervisor_futures[issue_id] = future
+            entry = self.running_entries.get(issue_id) or {}
+            resume_thread_id = self._codex_thread_for_issue(issue)
+            if resume_thread_id:
+                entry["thread_id"] = resume_thread_id
+            dispatched.append(dict(entry))
+            self._emit_event(
+                "issue_runner.worker.dispatched",
+                {
+                    "issue_id": issue_id,
+                    "identifier": issue.get("identifier"),
+                    "worker_id": entry.get("worker_id"),
+                    "attempt": entry.get("attempt"),
+                    "state": issue.get("state"),
+                },
+            )
+        self._persist_scheduler_state()
+        return dispatched
+
+    def supervise_once(self) -> dict[str, Any]:
+        status = {
+            "ok": True,
+            "workflow": "issue-runner",
+            "mode": "supervised",
+            "updatedAt": _now_iso(),
+            "selectedIssue": None,
+            "selectedIssues": [],
+            "attempt": None,
+            "outputPath": None,
+            "metrics": {},
+            "results": [],
+            "completedResults": [],
+            "dispatchedWorkers": [],
+            "cancellationRequests": [],
+        }
+        try:
+            issues = self.tracker_client.list_all()
+            terminal_issues = self.tracker_client.list_terminal()
+        except Exception as exc:
+            status["ok"] = False
+            status["error"] = f"{type(exc).__name__}: {exc}"
+            self._write_status(status, health="error")
+            self._emit_event(
+                "issue_runner.tick.failed",
+                {
+                    "error": status["error"],
+                    "reason": "tracker-load-failed",
+                },
+            )
+            return status
+
+        status["cancellationRequests"] = self._request_terminal_cancellations(terminal_issues)
+        completed = self._reconcile_supervised_workers()
+        if completed:
+            status = self._status_from_results(base_status=status, results=completed)
+            status["completedResults"] = status.get("results") or []
+        cleanup = self._cleanup_terminal_workspaces(terminal_issues)
+        status["cleanup"] = cleanup
+
+        issues_by_id = {str(issue.get("id")): issue for issue in issues if str(issue.get("id") or "").strip()}
+        selections = self._select_issue_batch(issues=issues, issues_by_id=issues_by_id)
+        refreshed_selections: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+        for selected, retry_entry in selections:
+            issue_id = str(selected.get("id") or "").strip()
+            if issue_id:
+                selected = self.tracker_client.refresh([issue_id]).get(issue_id, selected)
+            refreshed_selections.append((selected, retry_entry))
+        selections = refreshed_selections
+        status["selectedIssues"] = [issue for issue, _retry_entry in selections]
+        status["selectedIssue"] = selections[0][0] if selections else None
+        dispatched = self._dispatch_supervised_workers(selections)
+        status["dispatchedWorkers"] = dispatched
+        if not completed and not dispatched:
+            status["message"] = "no dispatchable issues"
+            self._emit_event("issue_runner.tick.noop", {"reason": "no-dispatchable-issues"})
+
+        if completed and not all(result.get("ok") or result.get("suppressRetry") for result in completed):
+            status["ok"] = False
+        self._write_status(status, health="healthy" if status["ok"] else "error")
+        self._persist_scheduler_state()
+        return status
+
+    def _reconcile_before_loop_exit(self, last_result: dict[str, Any] | None) -> dict[str, Any] | None:
+        completed = self._reconcile_supervised_workers()
+        if not completed:
+            self._persist_scheduler_state()
+            return last_result
+        status = {
+            "ok": True,
+            "workflow": "issue-runner",
+            "mode": "supervised-exit-reconcile",
+            "updatedAt": _now_iso(),
+            "selectedIssue": None,
+            "selectedIssues": [],
+            "attempt": None,
+            "outputPath": None,
+            "metrics": {},
+            "results": [],
+            "completedResults": [],
+            "dispatchedWorkers": [],
+            "cancellationRequests": [],
+        }
+        status = self._status_from_results(base_status=status, results=completed)
+        status["completedResults"] = status.get("results") or []
+        self._write_status(status, health="healthy" if status["ok"] else "error")
+        self._persist_scheduler_state()
+        return status
+
     def tick(self) -> dict[str, Any]:
         status = {
             "ok": False,
@@ -923,7 +1366,6 @@ class IssueRunnerWorkspace:
 
         self._mark_running(selections)
         results: list[dict[str, Any]] = []
-        tick_metrics: list[dict[str, Any]] = []
         try:
             if len(selections) == 1:
                 issue, retry_entry = selections[0]
@@ -937,88 +1379,7 @@ class IssueRunnerWorkspace:
                     for future in concurrent.futures.as_completed(future_map):
                         results.append(future.result())
 
-            results.sort(key=lambda item: str(((item.get("issue") or {}).get("identifier")) or ((item.get("issue") or {}).get("id")) or ""))
-            for result in results:
-                issue = result.get("issue") or {}
-                issue_id = str(issue.get("id") or "")
-                metrics = result.get("metrics") or {}
-                if metrics:
-                    recorded_metrics = self._record_metrics(
-                        PromptRunResult(
-                            output="",
-                            session_id=metrics.get("session_id"),
-                            thread_id=metrics.get("thread_id"),
-                            turn_id=metrics.get("turn_id"),
-                            last_event=metrics.get("last_event"),
-                            last_message=metrics.get("last_message"),
-                            turn_count=int(metrics.get("turn_count") or 0),
-                            tokens=metrics.get("tokens"),
-                            rate_limits=metrics.get("rate_limits"),
-                        )
-                    )
-                    if result.get("runtimeKind") == "codex-app-server":
-                        self._record_codex_thread(
-                            issue=issue,
-                            session_name=issue_session_name(issue),
-                            metrics=recorded_metrics,
-                        )
-                    tick_metrics.append(recorded_metrics)
-                if result.get("ok"):
-                    self._clear_retry(issue_id)
-                    retry = self._schedule_retry(
-                        issue=issue,
-                        error="continuation",
-                        current_attempt=result.get("attempt"),
-                        delay_type="continuation",
-                    )
-                    result["retry"] = retry
-                    self._emit_event(
-                        "issue_runner.tick.completed",
-                        {
-                            "issue_id": issue.get("id"),
-                            "attempt": result.get("attempt"),
-                            "workspace": result.get("workspace"),
-                            "output_path": result.get("outputPath"),
-                            "continuation_retry_attempt": retry.get("retry_attempt"),
-                            "continuation_retry_delay_ms": retry.get("delay_ms"),
-                        },
-                    )
-                else:
-                    retry = self._schedule_retry(
-                        issue=issue,
-                        error=str(result.get("error") or "issue execution failed"),
-                        current_attempt=result.get("attempt"),
-                    )
-                    result["retry"] = retry
-                    self._emit_event(
-                        "issue_runner.tick.failed",
-                        {
-                            "issue_id": issue.get("id"),
-                            "attempt": result.get("attempt"),
-                            "workspace": result.get("workspace"),
-                            "error": result.get("error"),
-                            "retry_attempt": retry.get("retry_attempt"),
-                            "retry_delay_ms": retry.get("delay_ms"),
-                        },
-                    )
-
-            first = results[0]
-            status.update(
-                {
-                    "ok": all(result.get("ok") for result in results),
-                    "attempt": first.get("attempt"),
-                    "outputPath": first.get("outputPath"),
-                    "workspace": first.get("workspace"),
-                    "createdWorkspace": first.get("createdWorkspace"),
-                    "hookResults": first.get("hookResults"),
-                    "results": results,
-                    "metrics": self._aggregate_metrics(tick_metrics),
-                }
-            )
-            failed = next((result for result in results if not result.get("ok")), None)
-            if failed:
-                status["error"] = failed.get("error")
-                status["retry"] = failed.get("retry")
+            status = self._status_from_results(base_status=status, results=results)
             self._write_status(status, health="healthy" if status["ok"] else "error")
             return status
         finally:
@@ -1041,6 +1402,18 @@ class IssueRunnerWorkspace:
             if state not in terminal_states:
                 continue
             issue_id = str(issue.get("id") or "")
+            if issue_id in self.running_entries:
+                self._request_supervised_cancel(issue_id, reason="terminal-state")
+                cleaned.append(
+                    {
+                        "issue_id": issue.get("id"),
+                        "identifier": issue.get("identifier"),
+                        "workspace": None,
+                        "deferred": True,
+                        "reason": "worker-running",
+                    }
+                )
+                continue
             self._clear_retry(issue_id)
             self._clear_codex_thread(issue_id)
             issue_workspace = _safe_issue_workspace_path(self.issue_workspace_root, issue)
@@ -1075,16 +1448,20 @@ class IssueRunnerWorkspace:
         return cleaned
 
     def _write_status(self, tick_result: dict[str, Any], *, health: str) -> None:
+        results = tick_result.get("results") or tick_result.get("completedResults") or []
+        result_issues = [result.get("issue") for result in results if result.get("issue")]
+        selected_issue = result_issues[0] if result_issues else tick_result.get("selectedIssue")
+        selected_issues = result_issues or tick_result.get("selectedIssues") or ([selected_issue] if selected_issue else [])
         payload = {
             "workflow": "issue-runner",
             "health": health,
             "lastRun": {
                 "ok": tick_result.get("ok"),
-                "issue": tick_result.get("selectedIssue"),
-                "issues": tick_result.get("selectedIssues") or ([tick_result.get("selectedIssue")] if tick_result.get("selectedIssue") else []),
+                "issue": selected_issue,
+                "issues": selected_issues,
                 "attempt": tick_result.get("attempt"),
                 "outputPath": tick_result.get("outputPath"),
-                "results": tick_result.get("results") or [],
+                "results": results,
                 "updatedAt": tick_result.get("updatedAt") or _now_iso(),
             },
             "metrics": tick_result.get("metrics") or {},
@@ -1262,17 +1639,19 @@ class IssueRunnerWorkspace:
         try:
             while True:
                 self.reload_contract()
-                last_result = self.tick()
+                last_result = self.supervise_once()
                 iterations += 1
                 if max_iterations is not None and iterations >= max_iterations:
                     break
                 sleep_fn(self._poll_interval_seconds(interval_seconds))
         except KeyboardInterrupt:
+            last_result = self._reconcile_before_loop_exit(last_result)
             return {
                 "loop_status": "interrupted",
                 "iterations": iterations,
                 "last_result": last_result,
             }
+        last_result = self._reconcile_before_loop_exit(last_result)
         return {
             "loop_status": "completed",
             "iterations": iterations,

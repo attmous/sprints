@@ -1,6 +1,8 @@
 import json
 import shlex
 import sys
+import threading
+import time
 from pathlib import Path
 
 from workflows.contract import render_workflow_markdown
@@ -121,6 +123,33 @@ def _write_fake_codex_app_server(path: Path, *, requests_path: Path, fail: bool 
         "        raise SystemExit(1)",
     ]
     path.write_text("\n".join(script) + "\n", encoding="utf-8")
+
+
+def _write_issue_runner_contract(
+    *,
+    workflow_root: Path,
+    cfg: dict,
+    issues: list[dict],
+    prompt_template: str = "Issue: {{ issue.identifier }}",
+) -> Path:
+    (workflow_root / "config").mkdir(parents=True, exist_ok=True)
+    issues_path = workflow_root / "config" / "issues.json"
+    issues_path.write_text(json.dumps({"issues": issues}), encoding="utf-8")
+    (workflow_root / "WORKFLOW.md").write_text(
+        render_workflow_markdown(config=cfg, prompt_template=prompt_template),
+        encoding="utf-8",
+    )
+    return issues_path
+
+
+def _wait_for_supervised_futures(workspace, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        futures = list(workspace._supervisor_futures.values())
+        if futures and all(future.done() for future in futures):
+            return
+        time.sleep(0.01)
+    raise AssertionError("supervised futures did not finish")
 
 
 def test_issue_runner_tick_runs_selected_issue_and_writes_artifacts(tmp_path):
@@ -603,6 +632,301 @@ def test_issue_runner_tick_dispatches_batch_up_to_max_concurrent_agents(tmp_path
     identifiers = {item["issue"]["identifier"] for item in result["results"]}
     assert identifiers == {"ISSUE-1", "ISSUE-2"}
     assert workspace.build_status()["scheduler"]["running"] == []
+
+
+def test_issue_runner_supervise_once_dispatches_and_reconciles_worker(tmp_path):
+    from workflows.issue_runner.workspace import load_workspace_from_config
+
+    cfg = _config(tmp_path)
+    workflow_root = tmp_path / "attmous-daedalus-issue-runner"
+    workflow_root.mkdir()
+    _write_issue_runner_contract(
+        workflow_root=workflow_root,
+        cfg=cfg,
+        issues=[
+            {
+                "id": "ISSUE-1",
+                "identifier": "ISSUE-1",
+                "title": "Async issue",
+                "description": "Run under supervisor.",
+                "priority": 1,
+                "state": "todo",
+                "labels": [],
+                "blocked_by": [],
+            }
+        ],
+    )
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_run(command, *, cwd=None, timeout=None, env=None):
+        if command[:2] == ["bash", "-lc"]:
+            class HookResult:
+                stdout = ""
+                stderr = ""
+                returncode = 0
+
+            return HookResult()
+
+        started.set()
+        assert release.wait(timeout=2)
+
+        class Result:
+            stdout = "agent finished under supervision\n"
+            stderr = ""
+            returncode = 0
+
+        return Result()
+
+    workspace = load_workspace_from_config(
+        workspace_root=workflow_root,
+        run=fake_run,
+        run_json=lambda *args, **kwargs: {},
+    )
+
+    dispatched = workspace.supervise_once()
+
+    assert dispatched["ok"] is True
+    assert dispatched["mode"] == "supervised"
+    assert dispatched["dispatchedWorkers"][0]["issue_id"] == "ISSUE-1"
+    assert started.wait(timeout=2)
+    running = workspace.build_status()["scheduler"]["running"]
+    assert running[0]["issue_id"] == "ISSUE-1"
+    assert running[0]["worker_status"] == "running"
+
+    release.set()
+    completed = None
+    for _ in range(20):
+        candidate = workspace.supervise_once()
+        if candidate.get("completedResults"):
+            completed = candidate
+            break
+        time.sleep(0.01)
+
+    assert completed is not None
+    assert completed["completedResults"][0]["ok"] is True
+    assert workspace.build_status()["scheduler"]["running"] == []
+    assert workspace.build_status()["scheduler"]["retry_queue"][0]["error"] == "continuation"
+    assert Path(completed["completedResults"][0]["outputPath"]).read_text(encoding="utf-8") == "agent finished under supervision\n"
+
+
+def test_issue_runner_run_loop_reconciles_completed_worker_before_bounded_exit(tmp_path):
+    from workflows.issue_runner.workspace import load_workspace_from_config
+
+    cfg = _config(tmp_path)
+    workflow_root = tmp_path / "attmous-daedalus-issue-runner"
+    workflow_root.mkdir()
+    _write_issue_runner_contract(
+        workflow_root=workflow_root,
+        cfg=cfg,
+        issues=[
+            {
+                "id": "ISSUE-1",
+                "identifier": "ISSUE-1",
+                "title": "Fast issue",
+                "description": "Finish before bounded loop exits.",
+                "priority": 1,
+                "state": "todo",
+                "labels": [],
+                "blocked_by": [],
+            }
+        ],
+    )
+
+    finished = threading.Event()
+
+    def fake_run(command, *, cwd=None, timeout=None, env=None):
+        if command[:2] == ["bash", "-lc"]:
+            class HookResult:
+                stdout = ""
+                stderr = ""
+                returncode = 0
+
+            return HookResult()
+
+        class Result:
+            stdout = "agent finished fast\n"
+            stderr = ""
+            returncode = 0
+
+        finished.set()
+        return Result()
+
+    workspace = load_workspace_from_config(
+        workspace_root=workflow_root,
+        run=fake_run,
+        run_json=lambda *args, **kwargs: {},
+    )
+    original_supervise_once = workspace.supervise_once
+
+    def supervise_and_wait():
+        result = original_supervise_once()
+        assert finished.wait(timeout=2)
+        _wait_for_supervised_futures(workspace)
+        return result
+
+    workspace.supervise_once = supervise_and_wait
+
+    result = workspace.run_loop(interval_seconds=1, max_iterations=1, sleep_fn=lambda _seconds: None)
+
+    assert result["loop_status"] == "completed"
+    assert result["last_result"]["mode"] == "supervised-exit-reconcile"
+    assert result["last_result"]["completedResults"][0]["ok"] is True
+    status = workspace.build_status()
+    assert status["scheduler"]["running"] == []
+    assert status["scheduler"]["retry_queue"][0]["error"] == "continuation"
+    scheduler = json.loads((workflow_root / "memory" / "workflow-scheduler.json").read_text(encoding="utf-8"))
+    assert scheduler["running"] == []
+
+
+def test_issue_runner_run_loop_reconciles_completed_worker_before_interrupt_exit(tmp_path):
+    from workflows.issue_runner.workspace import load_workspace_from_config
+
+    cfg = _config(tmp_path)
+    workflow_root = tmp_path / "attmous-daedalus-issue-runner"
+    workflow_root.mkdir()
+    _write_issue_runner_contract(
+        workflow_root=workflow_root,
+        cfg=cfg,
+        issues=[
+            {
+                "id": "ISSUE-1",
+                "identifier": "ISSUE-1",
+                "title": "Interrupted issue",
+                "description": "Finish before operator interrupt.",
+                "priority": 1,
+                "state": "todo",
+                "labels": [],
+                "blocked_by": [],
+            }
+        ],
+    )
+
+    finished = threading.Event()
+
+    def fake_run(command, *, cwd=None, timeout=None, env=None):
+        if command[:2] == ["bash", "-lc"]:
+            class HookResult:
+                stdout = ""
+                stderr = ""
+                returncode = 0
+
+            return HookResult()
+
+        class Result:
+            stdout = "agent finished before interrupt\n"
+            stderr = ""
+            returncode = 0
+
+        finished.set()
+        return Result()
+
+    workspace = load_workspace_from_config(
+        workspace_root=workflow_root,
+        run=fake_run,
+        run_json=lambda *args, **kwargs: {},
+    )
+
+    def interrupt_after_worker_finishes(_seconds):
+        assert finished.wait(timeout=2)
+        _wait_for_supervised_futures(workspace)
+        raise KeyboardInterrupt
+
+    result = workspace.run_loop(interval_seconds=1, max_iterations=None, sleep_fn=interrupt_after_worker_finishes)
+
+    assert result["loop_status"] == "interrupted"
+    assert result["last_result"]["mode"] == "supervised-exit-reconcile"
+    assert result["last_result"]["completedResults"][0]["ok"] is True
+    assert workspace.build_status()["scheduler"]["running"] == []
+
+
+def test_issue_runner_supervised_terminal_issue_requests_cancel_and_defers_cleanup(tmp_path):
+    from workflows.issue_runner.workspace import load_workspace_from_config
+
+    cfg = _config(tmp_path)
+    workflow_root = tmp_path / "attmous-daedalus-issue-runner"
+    workflow_root.mkdir()
+    active_issue = {
+        "id": "ISSUE-1",
+        "identifier": "ISSUE-1",
+        "title": "Cancelable issue",
+        "description": "This issue changes state while running.",
+        "priority": 1,
+        "state": "todo",
+        "labels": [],
+        "blocked_by": [],
+    }
+    issues_path = _write_issue_runner_contract(
+        workflow_root=workflow_root,
+        cfg=cfg,
+        issues=[active_issue],
+    )
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_run(command, *, cwd=None, timeout=None, env=None):
+        if command[:2] == ["bash", "-lc"]:
+            class HookResult:
+                stdout = ""
+                stderr = ""
+                returncode = 0
+
+            return HookResult()
+
+        started.set()
+        assert release.wait(timeout=2)
+
+        class Result:
+            stdout = "agent finished after cancel request\n"
+            stderr = ""
+            returncode = 0
+
+        return Result()
+
+    workspace = load_workspace_from_config(
+        workspace_root=workflow_root,
+        run=fake_run,
+        run_json=lambda *args, **kwargs: {},
+    )
+
+    first = workspace.supervise_once()
+    assert first["dispatchedWorkers"][0]["issue_id"] == "ISSUE-1"
+    assert started.wait(timeout=2)
+
+    terminal_issue = dict(active_issue)
+    terminal_issue["state"] = "done"
+    issues_path.write_text(json.dumps({"issues": [terminal_issue]}), encoding="utf-8")
+
+    canceled = workspace.supervise_once()
+
+    assert canceled["cancellationRequests"] == [
+        {"issue_id": "ISSUE-1", "identifier": "ISSUE-1", "reason": "terminal-state"}
+    ]
+    assert canceled["cleanup"][0]["deferred"] is True
+    running = workspace.build_status()["scheduler"]["running"]
+    assert running[0]["cancel_requested"] is True
+    assert running[0]["cancel_reason"] == "terminal-state"
+
+    release.set()
+    completed = None
+    for _ in range(20):
+        candidate = workspace.supervise_once()
+        if candidate.get("completedResults"):
+            completed = candidate
+            break
+        time.sleep(0.01)
+
+    assert completed is not None
+    result = completed["completedResults"][0]
+    assert result["ok"] is True
+    assert result["suppressRetry"] is True
+    assert result["retry"] is None
+    status = workspace.build_status()
+    assert status["scheduler"]["running"] == []
+    assert status["scheduler"]["retry_queue"] == []
+    assert not (workflow_root / "workspace" / "issues" / "ISSUE-1").exists()
 
 
 def test_issue_runner_codex_failure_preserves_partial_metrics(tmp_path):
