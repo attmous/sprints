@@ -71,6 +71,31 @@ def test_render_frame_handles_stale_source():
     assert "stale" in out.lower()
 
 
+def test_render_frame_includes_issue_runner_workflow_status():
+    watch = _module()
+    out = watch.render_frame_to_string({
+        "active_lanes": [
+            {"lane_id": "123", "state": "open", "issue_identifier": "#123"}
+        ],
+        "workflow_status": {
+            "workflow": "issue-runner",
+            "health": "healthy",
+            "running_count": 1,
+            "retry_count": 1,
+            "total_tokens": 18,
+            "rate_limits": {"requests_remaining": 88},
+            "selected_issue": "#123",
+            "updated_at": "2026-04-30T12:00:15Z",
+        },
+        "alert_state": {},
+        "recent_events": [],
+    })
+    assert "Workflow status" in out
+    assert "issue-runner" in out
+    assert "tokens=18" in out
+    assert "selected=#123" in out
+
+
 import json
 import sqlite3
 
@@ -120,3 +145,48 @@ def test_build_snapshot_combines_all_sources(tmp_path):
     assert any(e.get("source") == "daedalus" for e in snap["recent_events"])
     assert any(e.get("source") == "workflow" for e in snap["recent_events"])
     assert snap["alert_state"]["active"] is True
+
+
+def test_build_snapshot_includes_issue_runner_workflow_status(tmp_path):
+    from workflows.contract import render_workflow_markdown
+
+    watch = _module()
+    root = _make_workflow_root(tmp_path)
+    (root / "WORKFLOW.md").write_text(
+        render_workflow_markdown(
+            config={
+                "workflow": "issue-runner",
+                "schema-version": 1,
+                "instance": {"name": "attmous-daedalus-issue-runner", "engine-owner": "hermes"},
+                "repository": {"local-path": "/tmp/repo", "github-slug": "attmous/daedalus"},
+                "tracker": {"kind": "github"},
+                "workspace": {"root": "workspace/issues"},
+                "agent": {"name": "runner", "model": "gpt-5.4", "runtime": "default"},
+                "storage": {
+                    "status": "memory/workflow-status.json",
+                    "health": "memory/workflow-health.json",
+                    "audit-log": "memory/workflow-audit.jsonl",
+                    "scheduler": "memory/workflow-scheduler.json",
+                },
+            },
+            prompt_template="Issue: {{ issue.identifier }}",
+        ),
+        encoding="utf-8",
+    )
+    (root / "memory").mkdir(exist_ok=True)
+    (root / "memory" / "workflow-status.json").write_text(
+        json.dumps({"workflow": "issue-runner", "health": "healthy", "lastRun": {"updatedAt": "2026-04-30T12:00:15Z"}})
+    )
+    (root / "memory" / "workflow-scheduler.json").write_text(
+        json.dumps(
+            {
+                "running": [{"issue_id": "123", "identifier": "#123", "state": "open"}],
+                "retry_queue": [],
+                "codex_totals": {"total_tokens": 18},
+            }
+        )
+    )
+
+    snap = watch.build_snapshot(root)
+    assert snap["workflow_status"]["workflow"] == "issue-runner"
+    assert snap["workflow_status"]["total_tokens"] == 18

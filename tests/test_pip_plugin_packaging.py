@@ -79,8 +79,12 @@ def test_wheel_contains_runtime_loaded_plugin_payload(tmp_path):
         names = set(zf.namelist())
 
     expected = {
+        "daedalus/agents/__init__.py",
+        "daedalus/agents/codex_app_server.py",
         "daedalus/plugin.yaml",
         "daedalus/skills/operator/SKILL.md",
+        "daedalus/trackers/__init__.py",
+        "daedalus/trackers/linear.py",
         "daedalus/workflows/change_delivery/schema.yaml",
         "daedalus/workflows/change_delivery/workflow.template.md",
         "daedalus/workflows/change_delivery/prompts/coder.md",
@@ -103,6 +107,8 @@ def test_wheel_extracts_to_working_plugin_package(tmp_path):
     plugin_dir = site_packages / "daedalus"
     plugin = _load_module("daedalus_packaged_plugin_test", plugin_dir / "__init__.py")
     tools = _load_module("daedalus_packaged_tools_test", plugin_dir / "tools.py")
+    assert (plugin_dir / "agents" / "__init__.py").exists()
+    assert (plugin_dir / "trackers" / "__init__.py").exists()
 
     calls = {
         "commands": [],
@@ -128,8 +134,18 @@ def test_wheel_extracts_to_working_plugin_package(tmp_path):
     assert any(name == "operator" and path.exists() for name, path, _desc in calls["skills"])
 
     workflow_root = tmp_path / "attmous-daedalus-change-delivery"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:attmous/daedalus.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     out = tools.execute_raw_args(
-        f"scaffold-workflow --workflow-root {workflow_root} --github-slug attmous/daedalus"
+        f"scaffold-workflow --workflow-root {workflow_root} --repo-path {repo} --github-slug attmous/daedalus"
     )
     assert "daedalus error:" not in out, out
-    assert (workflow_root / "WORKFLOW.md").exists()
+    assert (repo / "WORKFLOW.md").exists()

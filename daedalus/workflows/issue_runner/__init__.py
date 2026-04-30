@@ -6,7 +6,7 @@ from pathlib import Path
 NAME = "issue-runner"
 SUPPORTED_SCHEMA_VERSIONS = (1,)
 CONFIG_SCHEMA_PATH = Path(__file__).parent / "schema.yaml"
-PREFLIGHT_GATED_COMMANDS = frozenset({"tick"})
+PREFLIGHT_GATED_COMMANDS = frozenset({"tick", "run"})
 
 from workflows.issue_runner.cli import main as cli_main
 from workflows.issue_runner.preflight import run_preflight
@@ -21,4 +21,3 @@ __all__ = [
     "cli_main",
     "run_preflight",
 ]
-

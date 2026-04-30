@@ -84,3 +84,52 @@ def test_format_status_no_raw_python_bools_leak():
     out = fmt.format_status(minimal, use_color=False)
     assert " True" not in out
     assert " False" not in out
+
+
+def test_format_status_issue_runner_renders_scheduler_and_tokens():
+    fmt = _fmt()
+    result = {
+        "workflow": "issue-runner",
+        "workflowRoot": "/tmp/attmous-daedalus-issue-runner",
+        "health": "healthy",
+        "tracker": {
+            "kind": "github",
+            "path": "/tmp/repo",
+            "issueCount": 12,
+            "eligibleCount": 3,
+        },
+        "scheduler": {
+            "max_concurrent_agents": 2,
+            "running": [{"issue_id": "123"}],
+            "retry_queue": [{"issue_id": "124"}],
+            "codex_totals": {
+                "input_tokens": 11,
+                "output_tokens": 7,
+                "total_tokens": 18,
+                "rate_limits": {"requests_remaining": 99},
+            },
+        },
+        "selectedIssue": {
+            "identifier": "#123",
+            "title": "Important issue",
+            "state": "open",
+        },
+        "lastRun": {
+            "ok": True,
+            "attempt": 2,
+            "updatedAt": "2026-04-30T12:00:00Z",
+        },
+        "metrics": {
+            "tokens": {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+            "rate_limits": {"requests_remaining": 99},
+        },
+    }
+    out = fmt.format_status(result, use_color=False, now_iso="2026-04-30T12:00:15Z")
+    assert "Issue runner" in out
+    assert "github" in out
+    assert "running" in out and "1" in out
+    assert "retry" in out and "1" in out
+    assert "#123" in out
+    assert "Important issue" in out
+    assert "18" in out
+    assert "requests_remaining" in out

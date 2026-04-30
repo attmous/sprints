@@ -15,11 +15,15 @@ import yaml
 
 from workflows.contract import (
     WorkflowContractError,
+    find_repo_workflow_contract_path,
     load_workflow_contract,
     load_workflow_contract_file,
     render_workflow_markdown,
+    workflow_contract_pointer_path,
+    workflow_named_markdown_path,
     workflow_yaml_path as legacy_workflow_config_path,
     workflow_markdown_path,
+    write_workflow_contract_pointer,
 )
 from workflows.shared.paths import (
     derive_workflow_instance_name,
@@ -233,7 +237,6 @@ def _render_template_unit(*, mode: str) -> str:
     if mode not in DAEDALUS_TEMPLATE_UNIT_FILENAMES:
         raise DaedalusCommandError(f"unknown service mode: {mode}")
     description = f"Daedalus {mode} orchestrator (workspace=%i)"
-    runtime_command = f"run-{mode}"
     # PATH is captured at unit-render time and embedded so the runtime can
     # find user-installed CLIs (gh, codex, claude, etc.) under ~/.local/bin.
     # systemd's default user PATH is minimal (/usr/bin:/bin) and would
@@ -254,10 +257,10 @@ def _render_template_unit(*, mode: str) -> str:
             # pyyaml/jsonschema deps the installer's _check_runtime_deps verified
             # against. /usr/bin/env python3 with a non-empty PATH may resolve
             # to homebrew python or a node-managed python that lacks pyyaml.
-            f"ExecStart=/usr/bin/python3 %h/.hermes/plugins/daedalus/runtime.py "
-            f"{runtime_command} --workflow-root %h/.hermes/workflows/%i "
+            f"ExecStart=/usr/bin/python3 %h/.hermes/plugins/daedalus/tools.py "
+            f"service-loop --workflow-root %h/.hermes/workflows/%i "
             f"--project-key %i --instance-id daedalus-{mode}-%i "
-            f"--interval-seconds 30 --json"
+            f"--interval-seconds 30 --service-mode {mode} --json"
         ),
         "Restart=always",
         "RestartSec=5",
@@ -298,6 +301,7 @@ def install_supervised_service(
         raise DaedalusCommandError(
             f"Daedalus plugin runtime not found at {plugin_runtime_path}; install the plugin into ~/.hermes/plugins/daedalus before installing the service"
         )
+    workflow_name = _assert_service_mode_supported(workflow_root=workflow_root, service_mode=service_mode)
     workspace = workflow_root.name
     resolved_service_name = _resolve_service_name(
         service_name=service_name, service_mode=service_mode, workspace=workspace
@@ -318,6 +322,7 @@ def install_supervised_service(
     reload_result = _run_systemctl("daemon-reload")
     return {
         "installed": reload_result.get("ok", False),
+        "workflow": workflow_name,
         "service_mode": service_mode,
         "service_name": resolved_service_name,
         "instance_id": resolved_instance_id,
@@ -375,6 +380,88 @@ def _validate_workflow_contract_preflight(workflow_root: Path) -> dict[str, Any]
     }
 
 
+def _workflow_name_for_root(workflow_root: Path) -> str:
+    contract = load_workflow_contract(workflow_root)
+    workflow_name = str(contract.config.get("workflow") or "").strip()
+    if not workflow_name:
+        raise DaedalusCommandError(f"{contract.source_path} is missing top-level `workflow:` field")
+    return workflow_name
+
+
+def _assert_service_mode_supported(*, workflow_root: Path, service_mode: str) -> str:
+    workflow_name = _workflow_name_for_root(workflow_root)
+    if workflow_name == "issue-runner" and service_mode != "active":
+        raise DaedalusCommandError(
+            "issue-runner supports only active supervised mode; use --service-mode active"
+        )
+    return workflow_name
+
+
+def _load_issue_runner_workspace(workflow_root: Path):
+    try:
+        from workflows.issue_runner.workspace import load_workspace_from_config
+    except ImportError:
+        path = PLUGIN_DIR / "workflows" / "issue_runner" / "workspace.py"
+        spec = importlib.util.spec_from_file_location("daedalus_issue_runner_workspace_for_tools", path)
+        if spec is None or spec.loader is None:
+            raise DaedalusCommandError(f"unable to load issue-runner workspace module from {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        load_workspace_from_config = module.load_workspace_from_config
+    return load_workspace_from_config(workspace_root=workflow_root)
+
+
+def _build_issue_runner_status(workflow_root: Path) -> dict[str, Any]:
+    return _load_issue_runner_workspace(workflow_root).build_status()
+
+
+def _build_issue_runner_doctor(workflow_root: Path) -> dict[str, Any]:
+    return _load_issue_runner_workspace(workflow_root).doctor()
+
+
+def service_loop(
+    *,
+    workflow_root: Path,
+    project_key: str | None,
+    instance_id: str | None,
+    interval_seconds: int,
+    max_iterations: int | None,
+    service_mode: str,
+) -> dict[str, Any]:
+    workflow_name = _assert_service_mode_supported(workflow_root=workflow_root, service_mode=service_mode)
+    if workflow_name == "change-delivery":
+        daedalus = _load_daedalus_module(workflow_root)
+        resolved_project_key = project_key or daedalus._project_key_for(workflow_root)
+        resolved_instance_id = instance_id or _instance_id_for(service_mode=service_mode, workspace=workflow_root.name)
+        if service_mode == "shadow":
+            return daedalus.run_shadow_loop(
+                workflow_root=workflow_root,
+                project_key=resolved_project_key,
+                instance_id=resolved_instance_id,
+                interval_seconds=interval_seconds,
+                max_iterations=max_iterations,
+            )
+        return daedalus.run_active_loop(
+            workflow_root=workflow_root,
+            project_key=resolved_project_key,
+            instance_id=resolved_instance_id,
+            interval_seconds=interval_seconds,
+            max_iterations=max_iterations,
+        )
+    if workflow_name == "issue-runner":
+        workspace = _load_issue_runner_workspace(workflow_root)
+        payload = workspace.run_loop(
+            interval_seconds=interval_seconds,
+            max_iterations=max_iterations,
+        )
+        return {
+            "workflow": workflow_name,
+            "service_mode": service_mode,
+            **payload,
+        }
+    raise DaedalusCommandError(f"unsupported workflow for service-loop: {workflow_name}")
+
+
 def service_up(
     *,
     workflow_root: Path,
@@ -384,9 +471,18 @@ def service_up(
     service_name: str | None = None,
     service_mode: str = "active",
 ) -> dict[str, Any]:
-    daedalus = _load_daedalus_module(workflow_root)
-    init_result = daedalus.init_daedalus_db(workflow_root=workflow_root, project_key=project_key)
     preflight_result = _validate_workflow_contract_preflight(workflow_root)
+    workflow_name = preflight_result.get("workflow")
+    if workflow_name == "change-delivery":
+        daedalus = _load_daedalus_module(workflow_root)
+        init_result = daedalus.init_daedalus_db(workflow_root=workflow_root, project_key=project_key)
+    else:
+        init_result = {
+            "ok": True,
+            "workflow": workflow_name,
+            "skipped": True,
+            "reason": "workflow-managed runtime does not require daedalus.db bootstrap",
+        }
 
     install_result = install_supervised_service(
         workflow_root=workflow_root,
@@ -485,6 +581,7 @@ def service_control(
     extra_args: list[str] | None = None,
 ) -> dict[str, Any]:
     extra_args = extra_args or []
+    workflow_name = _assert_service_mode_supported(workflow_root=workflow_root, service_mode=service_mode)
     workspace = workflow_root.name
     resolved_service_name = _resolve_service_name(
         service_name=service_name, service_mode=service_mode, workspace=workspace
@@ -492,6 +589,7 @@ def service_control(
     result = _run_systemctl(action, *extra_args, resolved_service_name)
     return {
         "action": action,
+        "workflow": workflow_name,
         "service_mode": service_mode,
         "service_name": resolved_service_name,
         **result,
@@ -504,6 +602,7 @@ def service_status(
     service_name: str | None = None,
     service_mode: str = "shadow",
 ) -> dict[str, Any]:
+    workflow_name = _assert_service_mode_supported(workflow_root=workflow_root, service_mode=service_mode)
     workspace = workflow_root.name
     resolved_service_name = _resolve_service_name(
         service_name=service_name, service_mode=service_mode, workspace=workspace
@@ -523,6 +622,7 @@ def service_status(
                 key, value = line.split("=", 1)
                 props[key] = value
     return {
+        "workflow": workflow_name,
         "service_mode": service_mode,
         "service_name": resolved_service_name,
         "active": active.get("stdout") or ("active" if active.get("ok") else "unknown"),
@@ -593,6 +693,7 @@ def service_logs(
     service_mode: str = "shadow",
     lines: int = 50,
 ) -> dict[str, Any]:
+    workflow_name = _assert_service_mode_supported(workflow_root=workflow_root, service_mode=service_mode)
     workspace = workflow_root.name
     resolved_service_name = _resolve_service_name(
         service_name=service_name, service_mode=service_mode, workspace=workspace
@@ -604,6 +705,7 @@ def service_logs(
         check=False,
     )
     return {
+        "workflow": workflow_name,
         "service_mode": service_mode,
         "service_name": resolved_service_name,
         "ok": completed.returncode == 0,
@@ -1197,6 +1299,154 @@ def _github_slug_from_remote_url(remote_url: str) -> str:
     return f"{owner}/{repo}"
 
 
+def _repo_workflow_contract_candidates(repo_root: Path) -> list[Path]:
+    return sorted(
+        path.resolve()
+        for path in repo_root.glob("WORKFLOW*.md")
+        if path.is_file()
+    )
+
+
+def _single_repo_contract_path(repo_root: Path) -> Path:
+    default_path = repo_root / "WORKFLOW.md"
+    if default_path.exists():
+        return default_path
+    candidates = _repo_workflow_contract_candidates(repo_root)
+    if len(candidates) == 1:
+        return candidates[0]
+    raise DaedalusCommandError(
+        "unable to infer a single workflow contract path; "
+        "use explicit workflow naming and bootstrap one workflow at a time"
+    )
+
+
+def _prepare_repo_contract_paths(
+    *,
+    repo_root: Path,
+    workflow_name: str,
+    force: bool,
+) -> tuple[Path, list[tuple[Path, Path]]]:
+    repo_root = repo_root.resolve()
+    default_path = repo_root / "WORKFLOW.md"
+    named_path = workflow_named_markdown_path(repo_root, workflow_name)
+
+    if named_path.exists():
+        return named_path, []
+
+    if default_path.exists():
+        existing_contract = load_workflow_contract_file(default_path)
+        existing_workflow = str(existing_contract.config.get("workflow") or "").strip()
+        if existing_workflow == workflow_name:
+            return default_path, []
+        if not existing_workflow:
+            raise DaedalusCommandError(
+                f"{default_path} exists but does not declare a workflow name"
+            )
+        migrated_path = workflow_named_markdown_path(repo_root, existing_workflow)
+        if migrated_path.exists() and not force:
+            raise DaedalusCommandError(
+                f"cannot promote {default_path.name} into multi-workflow form because "
+                f"{migrated_path.name} already exists (pass --force to overwrite)"
+            )
+        return named_path, [(default_path, migrated_path)]
+
+    existing = find_repo_workflow_contract_path(repo_root, workflow_name=workflow_name)
+    if existing is not None:
+        return existing, []
+
+    if _repo_workflow_contract_candidates(repo_root):
+        return named_path, []
+    return default_path, []
+
+
+def _git_branch_exists(branch_name: str, *, cwd: Path) -> bool:
+    completed = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def _current_git_branch(cwd: Path) -> str | None:
+    completed = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    branch = completed.stdout.strip()
+    return branch or None
+
+
+def _ensure_bootstrap_branch(*, repo_root: Path, workflow_name: str) -> str:
+    branch_name = f"daedalus/bootstrap-{workflow_name}"
+    current_branch = _current_git_branch(repo_root)
+    if current_branch == branch_name:
+        return branch_name
+    if _git_branch_exists(branch_name, cwd=repo_root):
+        _git_stdout("checkout", branch_name, cwd=repo_root)
+        return branch_name
+    _git_stdout("checkout", "-b", branch_name, cwd=repo_root)
+    return branch_name
+
+
+def _commit_bootstrap_contract(
+    *,
+    repo_root: Path,
+    workflow_name: str,
+    paths: list[Path],
+) -> dict[str, Any]:
+    branch_name = _ensure_bootstrap_branch(repo_root=repo_root, workflow_name=workflow_name)
+    relpaths = [str(path.resolve().relative_to(repo_root.resolve())) for path in paths]
+    subprocess.run(
+        ["git", "add", "--", *relpaths],
+        cwd=str(repo_root),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--", *relpaths],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    committed = False
+    commit_sha = None
+    if status.stdout.strip():
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Daedalus",
+                "-c",
+                "user.email=daedalus@local",
+                "commit",
+                "-m",
+                f"Add {workflow_name} workflow contract",
+            ],
+            cwd=str(repo_root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        committed = True
+        commit_sha = _git_stdout("rev-parse", "HEAD", cwd=repo_root)
+    return {
+        "branch": branch_name,
+        "committed": committed,
+        "commit_sha": commit_sha,
+        "paths": [str(path) for path in paths],
+    }
+
+
 def bootstrap_workflow_root(
     *,
     repo_path: Path | None,
@@ -1240,10 +1490,12 @@ def bootstrap_workflow_root(
     pointer_path = repo_local_workflow_pointer_path(repo_root)
     pointer_path.parent.mkdir(parents=True, exist_ok=True)
     pointer_path.write_text(str(resolved_workflow_root) + "\n", encoding="utf-8")
-    if workflow_name == "change-delivery":
-        next_command = "hermes daedalus service-up"
-    else:
-        next_command = f"python3 {PLUGIN_DIR / 'workflows' / '__main__.py'} --workflow-root {resolved_workflow_root} tick"
+    next_command = "hermes daedalus service-up"
+    commit_result = _commit_bootstrap_contract(
+        repo_root=repo_root,
+        workflow_name=workflow_name,
+        paths=[Path(result["contract_path"]), *[Path(path) for path in result.get("renamed_contract_paths") or []]],
+    )
 
     result.update(
         {
@@ -1253,6 +1505,9 @@ def bootstrap_workflow_root(
             "repo_pointer_path": str(pointer_path),
             "next_edit_path": result["contract_path"],
             "next_command": next_command,
+            "git_branch": commit_result["branch"],
+            "git_committed": commit_result["committed"],
+            "git_commit_sha": commit_result["commit_sha"],
         }
     )
     return result
@@ -1269,7 +1524,12 @@ def scaffold_workflow_root(
     force: bool,
 ) -> dict[str, Any]:
     root = workflow_root.expanduser().resolve()
-    contract_path = workflow_markdown_path(root)
+    repo_root = _discover_git_repo_root(repo_path)
+    contract_path, rename_pairs = _prepare_repo_contract_paths(
+        repo_root=repo_root,
+        workflow_name=workflow_name,
+        force=force,
+    )
     legacy_config_path = legacy_workflow_config_path(root)
     existing_contract_path = contract_path if contract_path.exists() else legacy_config_path
     if existing_contract_path.exists() and not force:
@@ -1304,10 +1564,7 @@ def scaffold_workflow_root(
             f"and workflow={workflow_name!r}"
         )
 
-    resolved_repo_path = repo_path.expanduser() if repo_path is not None else (root / "workspace" / "repo")
-    if not resolved_repo_path.is_absolute():
-        resolved_repo_path = root / resolved_repo_path
-    resolved_repo_path = resolved_repo_path.resolve()
+    resolved_repo_path = repo_root
 
     config["workflow"] = workflow_name
     instance_cfg = config.setdefault("instance", {})
@@ -1330,16 +1587,23 @@ def scaffold_workflow_root(
         root / "runtime" / "memory",
         root / "runtime" / "state" / "daedalus",
         root / "workspace",
-        resolved_repo_path,
-        root / "config",
     ]
     for path in created_dirs:
         path.mkdir(parents=True, exist_ok=True)
+
+    renamed_contract_paths: list[str] = []
+    for source_path, target_path in rename_pairs:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists() and force:
+            target_path.unlink()
+        source_path.replace(target_path)
+        renamed_contract_paths.append(str(target_path))
 
     contract_path.write_text(
         render_workflow_markdown(config=config, prompt_template=workflow_policy),
         encoding="utf-8",
     )
+    write_workflow_contract_pointer(root, contract_path)
     if workflow_name == "issue-runner":
         issues_template = PLUGIN_DIR / "workflows" / "issue_runner" / "issues.template.json"
         issues_path = root / "config" / "issues.json"
@@ -1358,6 +1622,8 @@ def scaffold_workflow_root(
         "github_slug": resolved_github_slug,
         "active_lane_label": active_lane_label,
         "force": force,
+        "workflow_contract_pointer_path": str(workflow_contract_pointer_path(root)),
+        "renamed_contract_paths": renamed_contract_paths,
     }
 
 
@@ -1401,6 +1667,7 @@ def cmd_bootstrap_workflow(args, parser) -> str:
         f"contract: {result['contract_path']}",
         f"repo-path: {result['repo_path']}",
         f"github-slug: {result['github_slug']}",
+        f"git branch: {result['git_branch']}",
         f"repo pointer: {result['repo_pointer_path']}",
         f"edit next: {result['next_edit_path']}",
         f"then run: {result['next_command']}",
@@ -1651,6 +1918,19 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     service_up_cmd.add_argument("--json", action="store_true")
     service_up_cmd.set_defaults(func=run_cli_command)
 
+    service_loop_cmd = sub.add_parser(
+        "service-loop",
+        help="Run the managed long-lived workflow loop used by the supervised systemd service.",
+    )
+    service_loop_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    service_loop_cmd.add_argument("--project-key")
+    service_loop_cmd.add_argument("--instance-id")
+    service_loop_cmd.add_argument("--interval-seconds", type=int, default=30)
+    service_loop_cmd.add_argument("--max-iterations", type=int)
+    service_loop_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="active")
+    service_loop_cmd.add_argument("--json", action="store_true")
+    service_loop_cmd.set_defaults(func=run_cli_command)
+
     service_uninstall_cmd = sub.add_parser("service-uninstall", help="Remove the supervised Daedalus systemd user service.")
     service_uninstall_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
     service_uninstall_cmd.add_argument("--service-mode", choices=sorted(SERVICE_PROFILES), default="shadow")
@@ -1842,7 +2122,7 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
 
     scaffold_cmd = sub.add_parser(
         "scaffold-workflow",
-        help="Create a new workflow root and starter WORKFLOW.md.",
+        help="Create a new workflow root and repo-owned workflow contract.",
     )
     scaffold_cmd.add_argument(
         "--workflow-root",
@@ -1861,11 +2141,11 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
 
     bootstrap_cmd = sub.add_parser(
         "bootstrap",
-        help="Infer repo settings from the current git checkout and scaffold a starter WORKFLOW.md.",
+        help="Infer repo settings from the current git checkout and scaffold a repo-owned workflow contract.",
     )
     bootstrap_cmd.add_argument("--repo-path", type=Path, help="Git checkout to inspect (defaults to current working directory).")
     bootstrap_cmd.add_argument("--workflow-root", type=Path, help="Optional explicit workflow root override.")
-    bootstrap_cmd.add_argument("--workflow", default="change-delivery", choices=["change-delivery"])
+    bootstrap_cmd.add_argument("--workflow", default="change-delivery", choices=["change-delivery", "issue-runner"])
     bootstrap_cmd.add_argument("--github-slug", help="Override the inferred GitHub slug from git origin.")
     bootstrap_cmd.add_argument("--active-lane-label", default="active-lane")
     bootstrap_cmd.add_argument("--engine-owner", default="hermes", choices=["hermes", "openclaw"])
@@ -1961,7 +2241,7 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
     if workflow_root is not None and daedalus is not None and getattr(args, "daedalus_command", None):
         _record_operator_command_event(workflow_root=workflow_root, args=args, daedalus=daedalus)
     command = getattr(args, "daedalus_command", None)
-    project_key_commands = {"init", "start", "service-install", "service-up", "run-shadow", "run-active"}
+    project_key_commands = {"init", "start", "service-install", "service-up", "service-loop", "run-shadow", "run-active"}
     resolved_project_key = (
         _resolved_project_key(
             daedalus=daedalus,
@@ -1983,6 +2263,9 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             mode=args.mode,
         )
     if args.daedalus_command == "status":
+        workflow_name = _workflow_name_for_root(workflow_root)
+        if workflow_name == "issue-runner":
+            return _build_issue_runner_status(workflow_root)
         return daedalus.get_runtime_status(workflow_root=workflow_root)
     if args.daedalus_command == "shadow-report":
         return build_shadow_report(
@@ -1990,6 +2273,9 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             recent_actions_limit=args.recent_actions_limit,
         )
     if args.daedalus_command == "doctor":
+        workflow_name = _workflow_name_for_root(workflow_root)
+        if workflow_name == "issue-runner":
+            return _build_issue_runner_doctor(workflow_root)
         return build_doctor_report(
             workflow_root=workflow_root,
             recent_actions_limit=args.recent_actions_limit,
@@ -2010,6 +2296,15 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             instance_id=args.instance_id,
             interval_seconds=args.interval_seconds,
             service_name=args.service_name,
+            service_mode=args.service_mode,
+        )
+    if args.daedalus_command == "service-loop":
+        return service_loop(
+            workflow_root=workflow_root,
+            project_key=resolved_project_key,
+            instance_id=args.instance_id,
+            interval_seconds=args.interval_seconds,
+            max_iterations=args.max_iterations,
             service_mode=args.service_mode,
         )
     if args.daedalus_command == "service-uninstall":
@@ -2197,6 +2492,13 @@ def render_result(
             f"workflow={preflight.get('workflow')} "
             f"enabled={status.get('enabled')} active={status.get('active')} "
             f"service={status.get('service_name')}"
+        )
+    if command == "service-loop":
+        last_result = result.get("last_result") or {}
+        return (
+            f"service-loop workflow={result.get('workflow')} mode={result.get('service_mode')} "
+            f"loop={result.get('loop_status')} iterations={result.get('iterations')} "
+            f"last_ok={last_result.get('ok')}"
         )
     if command == "service-uninstall":
         return f"service uninstalled mode={result.get('service_mode')} unit={result.get('unit_path')} ok={result.get('uninstalled')}"

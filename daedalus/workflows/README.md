@@ -7,7 +7,9 @@ specific lifecycle. Today we bundle two workflow surfaces:
 - `change_delivery/` — the opinionated managed SDLC workflow (`Issue → Code → Review → Merge`)
 - `issue_runner/` — the generic tracker-driven reference workflow
 
-Shared infrastructure lives under `shared/`.
+Shared workflow mechanics live under `shared/`. Shared execution backends live
+under top-level `agents/`, and shared tracker integrations live under
+top-level `trackers/`.
 
 Workflows are loaded by name through `workflows.<slug>`. The dispatcher
 in `__init__.py` enforces a small contract: every workflow package must
@@ -28,7 +30,7 @@ workflows/
 ├── __init__.py              # workflow loader + dispatcher contract
 ├── __main__.py              # `python -m workflows <name> ...` entrypoint
 ├── README.md                # this file
-├── shared/                  # reusable paths, snapshots, runtimes, stall helpers
+├── shared/                  # reusable paths, snapshots, stall helpers
 └── change_delivery/         # the bundled Issue → Code → Review → Merge workflow
     ├── __init__.py          # workflow contract attrs (NAME, schema, etc.)
     ├── __main__.py          # `python -m workflows.change_delivery ...`
@@ -48,7 +50,7 @@ workflows/
     ├── sessions.py          # per-turn agent invocation bookkeeping
     ├── prompts.py           # prompt loading + parameter binding
     ├── prompts/             # prompt templates (coder, reviewer, repair)
-    ├── runtimes/            # adapters: claude_cli, acpx_codex, hermes_agent
+    ├── runtimes/            # workflow-local compatibility re-exports over shared agents/
     ├── reviewers/           # external reviewer plug points
     ├── webhooks/            # incoming webhooks (slack, http_json)
     ├── server/              # optional HTTP status surface (Symphony §13.7)
@@ -64,18 +66,19 @@ workflows/
 └── issue_runner/            # generic tracker-driven issue execution workflow
     ├── __init__.py          # workflow contract attrs (NAME, schema, etc.)
     ├── __main__.py          # `python -m workflows.issue_runner ...`
-    ├── cli.py               # status, doctor, tick
+    ├── cli.py               # status, doctor, tick, run
     ├── preflight.py         # config validity checks for dispatch-gated commands
     ├── schema.yaml          # JSON Schema for the workflow's config
-    ├── tracker.py           # local-json tracker loading + issue selection
+    ├── tracker.py           # issue selection rules over shared trackers/
     ├── workspace.py         # runtime wiring, hooks, prompt rendering, storage
     └── workflow.template.md # scaffoldable WORKFLOW.md baseline
 ```
 
 ## How a workflow runs
 
-1. Daedalus's tick loop loads `WORKFLOW.md` from the workflow root
-   (or legacy `config/workflow.yaml` when migrating older instances).
+1. Daedalus loads the repo-owned `WORKFLOW.md` / `WORKFLOW-<workflow>.md`
+   contract referenced by the workflow root pointer (or legacy
+   `config/workflow.yaml` when migrating older instances).
 2. The dispatcher imports the workflow package referenced by
    `workflow:` in the config (e.g. `change-delivery`).
 3. `make_workspace(workflow_root, config)` returns the workspace

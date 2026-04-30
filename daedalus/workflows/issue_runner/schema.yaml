@@ -8,7 +8,6 @@ required:
   - repository
   - tracker
   - workspace
-  - runtimes
   - agent
   - storage
 properties:
@@ -22,8 +21,7 @@ properties:
     type: object
     required: [name, engine-owner]
     properties:
-      name:
-        type: string
+      name: {type: string}
       engine-owner:
         type: string
         enum: [hermes, openclaw]
@@ -37,12 +35,27 @@ properties:
 
   tracker:
     type: object
-    required: [kind, path]
+    required: [kind]
     properties:
       kind:
         type: string
-        enum: [local-json]
+        enum: [local-json, linear, github]
       path: {type: string}
+      endpoint: {type: string}
+      api_key: {type: string}
+      project_slug: {type: string}
+      active_states:
+        type: array
+        items: {type: string}
+      terminal_states:
+        type: array
+        items: {type: string}
+      required_labels:
+        type: array
+        items: {type: string}
+      exclude_labels:
+        type: array
+        items: {type: string}
       active-states:
         type: array
         items: {type: string}
@@ -59,6 +72,9 @@ properties:
   polling:
     type: object
     properties:
+      interval_ms:
+        type: integer
+        minimum: 1
       interval-seconds:
         type: integer
         minimum: 1
@@ -72,6 +88,13 @@ properties:
   hooks:
     type: object
     properties:
+      after_create: {type: string}
+      before_run: {type: string}
+      after_run: {type: string}
+      before_remove: {type: string}
+      timeout_ms:
+        type: integer
+        minimum: 1
       after-create: {type: string}
       before-run: {type: string}
       after-run: {type: string}
@@ -80,18 +103,9 @@ properties:
         type: integer
         minimum: 1
 
-  runtimes:
-    type: object
-    minProperties: 1
-    additionalProperties:
-      oneOf:
-        - $ref: "#/definitions/acpx-codex-runtime"
-        - $ref: "#/definitions/claude-cli-runtime"
-        - $ref: "#/definitions/hermes-agent-runtime"
-
   agent:
     type: object
-    required: [name, model, runtime]
+    required: [name, model]
     properties:
       name: {type: string}
       model: {type: string}
@@ -100,42 +114,63 @@ properties:
         type: array
         minItems: 1
         items: {type: string}
+      max_concurrent_agents:
+        type: integer
+        minimum: 1
+      max_turns:
+        type: integer
+        minimum: 1
+      max_retry_backoff_ms:
+        type: integer
+        minimum: 0
+      max_concurrent_agents_by_state:
+        type: object
+        additionalProperties:
+          type: integer
+          minimum: 1
       max-concurrent-issues:
         type: integer
         minimum: 1
 
-  retry:
+  codex:
     type: object
     properties:
-      continuation-delay-seconds:
-        type: integer
-        minimum: 0
-      initial-backoff-seconds:
-        type: integer
-        minimum: 0
-      max-backoff-seconds:
-        type: integer
-        minimum: 0
-      max-attempts:
+      command: {type: string}
+      approval_policy: {type: string}
+      thread_sandbox: {type: string}
+      turn_sandbox_policy: {type: string}
+      turn_timeout_ms:
         type: integer
         minimum: 1
-
-  stall:
-    type: object
-    properties:
-      timeout_ms:
+      read_timeout_ms:
+        type: integer
+        minimum: 1
+      stall_timeout_ms:
         type: integer
         minimum: 0
 
-  server:
+  daedalus:
     type: object
     properties:
-      port:
-        type: integer
-        minimum: 0
-        maximum: 65535
-      bind:
-        type: string
+      runtimes:
+        type: object
+        minProperties: 1
+        additionalProperties:
+          oneOf:
+            - $ref: "#/definitions/acpx-codex-runtime"
+            - $ref: "#/definitions/claude-cli-runtime"
+            - $ref: "#/definitions/codex-app-server-runtime"
+            - $ref: "#/definitions/hermes-agent-runtime"
+
+  runtimes:
+    type: object
+    minProperties: 1
+    additionalProperties:
+      oneOf:
+        - $ref: "#/definitions/acpx-codex-runtime"
+        - $ref: "#/definitions/claude-cli-runtime"
+        - $ref: "#/definitions/codex-app-server-runtime"
+        - $ref: "#/definitions/hermes-agent-runtime"
 
   storage:
     type: object
@@ -144,6 +179,7 @@ properties:
       status: {type: string}
       health: {type: string}
       audit-log: {type: string}
+      scheduler: {type: string}
 
   workflow-policy:
     type: string
@@ -174,6 +210,30 @@ definitions:
         type: array
         minItems: 1
         items: {type: string}
+  codex-app-server-runtime:
+    type: object
+    required: [kind]
+    properties:
+      kind:
+        const: codex-app-server
+      command:
+        oneOf:
+          - type: string
+          - type: array
+            minItems: 1
+            items: {type: string}
+      approval_policy: {type: string}
+      thread_sandbox: {type: string}
+      turn_sandbox_policy: {type: string}
+      turn_timeout_ms:
+        type: integer
+        minimum: 1
+      read_timeout_ms:
+        type: integer
+        minimum: 1
+      stall_timeout_ms:
+        type: integer
+        minimum: 0
   hermes-agent-runtime:
     type: object
     required: [kind]
@@ -184,4 +244,3 @@ definitions:
         type: array
         minItems: 1
         items: {type: string}
-

@@ -22,8 +22,9 @@ def test_render_template_unit_active_mode():
     assert "Description=Daedalus active orchestrator" in rendered
     # Must contain %i placeholder for instance name
     assert "%i" in rendered
-    assert "run-active" in rendered
-    assert "/.hermes/plugins/daedalus/runtime.py" in rendered
+    assert "service-loop" in rendered
+    assert "--service-mode active" in rendered
+    assert "/.hermes/plugins/daedalus/tools.py" in rendered
 
 
 def test_render_template_unit_shadow_mode():
@@ -31,7 +32,8 @@ def test_render_template_unit_shadow_mode():
     rendered = tools._render_template_unit(mode="shadow")
     assert "Description=Daedalus shadow orchestrator" in rendered
     assert "%i" in rendered
-    assert "run-shadow" in rendered
+    assert "service-loop" in rendered
+    assert "--service-mode shadow" in rendered
 
 
 def test_template_unit_filename():

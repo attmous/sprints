@@ -9,6 +9,7 @@ from workflows.contract import (
     find_workflow_contract_path,
     load_workflow_contract,
     load_workflow_contract_file,
+    write_workflow_contract_pointer,
 )
 
 
@@ -108,3 +109,29 @@ def test_find_workflow_contract_path_prefers_markdown_when_both_exist(tmp_path):
     markdown_path.write_text(_workflow_markdown(_native_config()), encoding="utf-8")
 
     assert find_workflow_contract_path(root) == markdown_path
+
+
+def test_load_workflow_contract_follows_workflow_root_pointer_to_repo_contract(tmp_path):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    contract_path = repo_root / "WORKFLOW.md"
+    contract_path.write_text(_workflow_markdown(_native_config(), body="Repo-owned contract."), encoding="utf-8")
+
+    workflow_root = tmp_path / "workflow-root"
+    write_workflow_contract_pointer(workflow_root, contract_path)
+
+    contract = load_workflow_contract(workflow_root)
+
+    assert contract.source_path == contract_path.resolve()
+    assert contract.config["workflow"] == "change-delivery"
+
+
+def test_find_workflow_contract_path_resolves_named_repo_contract_when_single(tmp_path):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    contract_path = repo_root / "WORKFLOW-issue-runner.md"
+    cfg = _native_config()
+    cfg["workflow"] = "issue-runner"
+    contract_path.write_text(_workflow_markdown(cfg, body="Issue runner contract."), encoding="utf-8")
+
+    assert find_workflow_contract_path(repo_root) == contract_path.resolve()

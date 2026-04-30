@@ -374,8 +374,8 @@ Look for `config_reload_failed` in the event tail or doctor output.
 
 ### Force a config re-read
 ```bash
-# Touch the file; the next tick will pick it up.
-touch ~/.hermes/workflows/<owner>-<repo>-<workflow-type>/WORKFLOW.md
+# Touch the repo-owned contract file; the next tick will pick it up.
+touch /path/to/repo/WORKFLOW.md
 ```
 
 ### Show effective config (merged layers)

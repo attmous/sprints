@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,21 +24,29 @@ def _tools():
     return load_module("daedalus_tools_scaffold_workflow_test", "tools.py")
 
 
+def _init_git_repo(path: Path, *, remote_url: str = "git@github.com:attmous/daedalus.git") -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "remote", "add", "origin", remote_url], cwd=path, check=True, capture_output=True, text=True)
+
+
 def test_scaffold_workflow_writes_config_and_layout(tmp_path):
     tools = _tools()
     root = tmp_path / "attmous-daedalus-change-delivery"
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
 
     result = tools.scaffold_workflow_root(
         workflow_root=root,
         workflow_name="change-delivery",
-        repo_path=None,
+        repo_path=repo,
         github_slug="attmous/daedalus",
         active_lane_label="ready-for-daedalus",
         engine_owner="hermes",
         force=False,
     )
 
-    contract_path = root / "WORKFLOW.md"
+    contract_path = repo / "WORKFLOW.md"
     cfg = load_workflow_contract_file(contract_path).config
 
     assert result["contract_path"] == str(contract_path)
@@ -46,27 +55,29 @@ def test_scaffold_workflow_writes_config_and_layout(tmp_path):
     assert cfg["repository"]["github-slug"] == "attmous/daedalus"
     assert cfg["repository"]["active-lane-label"] == "ready-for-daedalus"
     assert cfg["triggers"]["lane-selector"]["label"] == "ready-for-daedalus"
-    assert cfg["repository"]["local-path"] == str(root / "workspace" / "repo")
+    assert cfg["repository"]["local-path"] == str(repo.resolve())
     assert cfg[WORKFLOW_POLICY_KEY]
     assert (root / "memory").is_dir()
     assert (root / "state" / "sessions").is_dir()
     assert (root / "runtime" / "state" / "daedalus").is_dir()
     assert (root / "runtime" / "memory").is_dir()
     assert (root / "runtime" / "logs").is_dir()
+    assert (root / "config" / "workflow-contract-path").exists()
 
 
 def test_scaffold_workflow_refuses_to_overwrite_without_force(tmp_path):
     tools = _tools()
     root = tmp_path / "attmous-daedalus-change-delivery"
-    contract_path = root / "WORKFLOW.md"
-    contract_path.parent.mkdir(parents=True)
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    contract_path = repo / "WORKFLOW.md"
     contract_path.write_text("---\nworkflow: change-delivery\nschema-version: 1\n---\n", encoding="utf-8")
 
     try:
         tools.scaffold_workflow_root(
             workflow_root=root,
             workflow_name="change-delivery",
-            repo_path=None,
+            repo_path=repo,
             github_slug="attmous/daedalus",
             active_lane_label="active-lane",
             engine_owner="hermes",
@@ -81,30 +92,34 @@ def test_scaffold_workflow_refuses_to_overwrite_without_force(tmp_path):
 def test_scaffold_workflow_force_replaces_existing_config(tmp_path):
     tools = _tools()
     root = tmp_path / "attmous-daedalus-change-delivery"
-    contract_path = root / "WORKFLOW.md"
-    contract_path.parent.mkdir(parents=True)
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    contract_path = repo / "WORKFLOW.md"
     contract_path.write_text("---\nworkflow: old\nschema-version: 1\n---\n", encoding="utf-8")
 
-    tools.scaffold_workflow_root(
+    result = tools.scaffold_workflow_root(
         workflow_root=root,
         workflow_name="change-delivery",
-        repo_path=root / "workspace" / "checkout",
+        repo_path=repo,
         github_slug="attmous/daedalus",
         active_lane_label="active-lane",
         engine_owner="openclaw",
         force=True,
     )
 
-    cfg = load_workflow_contract_file(contract_path).config
+    cfg = load_workflow_contract_file(Path(result["contract_path"])).config
     assert cfg["workflow"] == "change-delivery"
     assert cfg["instance"]["name"] == "attmous-daedalus-change-delivery"
     assert cfg["instance"]["engine-owner"] == "openclaw"
-    assert cfg["repository"]["local-path"] == str(root / "workspace" / "checkout")
+    assert cfg["repository"]["local-path"] == str(repo.resolve())
+    assert (repo / "WORKFLOW-old.md").exists()
 
 
 def test_scaffold_workflow_force_retires_legacy_yaml_when_present(tmp_path):
     tools = _tools()
     root = tmp_path / "attmous-daedalus-change-delivery"
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
     legacy_path = root / "config" / "workflow.yaml"
     legacy_path.parent.mkdir(parents=True)
     legacy_path.write_text("workflow: change-delivery\nschema-version: 1\n", encoding="utf-8")
@@ -112,26 +127,28 @@ def test_scaffold_workflow_force_retires_legacy_yaml_when_present(tmp_path):
     tools.scaffold_workflow_root(
         workflow_root=root,
         workflow_name="change-delivery",
-        repo_path=None,
+        repo_path=repo,
         github_slug="attmous/daedalus",
         active_lane_label="active-lane",
         engine_owner="hermes",
         force=True,
     )
 
-    assert (root / "WORKFLOW.md").exists()
+    assert (repo / "WORKFLOW.md").exists()
     assert not legacy_path.exists()
 
 
 def test_scaffold_workflow_requires_owner_repo_workflow_root_name(tmp_path):
     tools = _tools()
     root = tmp_path / "daedalus"
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
 
     with pytest.raises(tools.DaedalusCommandError) as exc:
         tools.scaffold_workflow_root(
             workflow_root=root,
             workflow_name="change-delivery",
-            repo_path=None,
+            repo_path=repo,
             github_slug="attmous/daedalus",
             active_lane_label="active-lane",
             engine_owner="hermes",
@@ -144,18 +161,20 @@ def test_scaffold_workflow_requires_owner_repo_workflow_root_name(tmp_path):
 def test_scaffold_issue_runner_seeds_sample_tracker_file(tmp_path):
     tools = _tools()
     root = tmp_path / "attmous-daedalus-issue-runner"
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
 
     result = tools.scaffold_workflow_root(
         workflow_root=root,
         workflow_name="issue-runner",
-        repo_path=None,
+        repo_path=repo,
         github_slug="attmous/daedalus",
         active_lane_label="ignored-for-issue-runner",
         engine_owner="hermes",
         force=False,
     )
 
-    cfg = load_workflow_contract_file(root / "WORKFLOW.md").config
+    cfg = load_workflow_contract_file(repo / "WORKFLOW.md").config
     issues_path = root / "config" / "issues.json"
 
     assert result["workflow"] == "issue-runner"

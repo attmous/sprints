@@ -19,7 +19,7 @@ What each abstraction *means* — read these before reading code.
 |---|---|
 | [Lanes](concepts/lanes.md) | The unit of work. State machine, lifecycle, terminal states. |
 | [Leases & heartbeats](concepts/leases.md) | How a single owner stays responsible for a lane. |
-| [Runtimes](concepts/runtimes.md) | The `claude-cli` / `acpx-codex` / `hermes-agent` adapters. |
+| [Runtimes](concepts/runtimes.md) | The shared execution backends: `claude-cli`, `acpx-codex`, `hermes-agent`, `codex-app-server`. |
 | [Events](concepts/events.md) | The append-only history. Symphony §10.4 taxonomy + `daedalus.*` namespace. |
 | [Stalls](concepts/stalls.md) | `last_activity_ts()` + `stall.timeout_ms` (Symphony §8.5). |
 | [Hot-reload & preflight](concepts/hot-reload.md) | Workflow-contract reload (`WORKFLOW.md` first, legacy `workflow.yaml` still loadable) + per-tick preflight (Symphony §6.2 + §6.3). |
@@ -31,7 +31,7 @@ Day-2 commands and observability.
 
 - [Cheat sheet](operator/cheat-sheet.md) — quickest path to a useful answer
 - [Slash commands](operator/slash-commands.md) — every `/daedalus` and `/workflow` form
-- [HTTP status surface](operator/http-status.md) — `daedalus serve`, JSON + HTML endpoints
+- [HTTP status surface](operator/http-status.md) — workflow-scoped JSON + HTML endpoints
 
 ## Workflow docs
 

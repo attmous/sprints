@@ -997,12 +997,9 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         return ns._load_adapter_status_module().build_status(ns.WORKSPACE)
 
     def _pick_next_lane_issue():
-        items = ns._run_json(
-            ["gh", "issue", "list", "--state", "open", "--limit", "100", "--json", "number,title,url,labels,createdAt"],
-            cwd=ns.REPO_PATH,
-        )
-        return ns._load_adapter_github_module().pick_next_lane_issue(
-            items,
+        return ns._load_adapter_github_module().pick_next_lane_issue_from_repo(
+            ns.REPO_PATH,
+            run_json=ns._run_json,
             active_lane_label=ns.ACTIVE_LANE_LABEL,
             lane_selection_cfg=ns.LANE_SELECTION_CFG,
         )

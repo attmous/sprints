@@ -59,7 +59,7 @@ Daedalus warned Icarus, then flew home. Edits take effect on the next tick. A ba
 - **Stall detection.** Wedged agents get terminated automatically and the lane retries. No zombie workers.
 - **Symphony-aligned event vocabulary** — events follow the [openai/symphony](https://github.com/openai/symphony) taxonomy, so observability tools work across systems.
 - **Operator commands** — `/daedalus status`, `/daedalus doctor`, `/workflow change-delivery status`, `/workflow change-delivery tick`, `/workflow issue-runner status`.
-- **Live status dashboard** — ships separately as a Hermes-Agent watch plugin.
+- **Live operator surfaces** — `/daedalus watch` plus an optional workflow-scoped HTTP status server.
 
 ## Supported path
 
@@ -69,6 +69,7 @@ Daedalus is ready to publish on one explicit path:
 - **Install path:** `hermes plugins install attmous/daedalus --enable`
 - **Plugin home after install:** `~/.hermes/plugins/daedalus`
 - **Workflow root:** `~/.hermes/workflows/<owner>-<repo>-<workflow-type>`
+- **Workflow contract:** repo-owned `WORKFLOW.md` or `WORKFLOW-<workflow>.md`
 - **Host Python:** `python3` with `yaml` and `jsonschema` available
 - **24/7 supervision:** `systemd --user`
 - **Runtime adapters:** whatever `WORKFLOW.md` names must exist on the host (`acpx-codex`, `claude-cli`, `hermes-agent`, ...).
@@ -84,10 +85,10 @@ cd /path/to/your/repo
 hermes daedalus bootstrap
 ```
 
-Edit the generated workflow contract:
+Edit the generated workflow contract in your repo:
 
 ```bash
-$EDITOR ~/.hermes/workflows/your-org-your-repo-change-delivery/WORKFLOW.md
+$EDITOR /path/to/your/repo/WORKFLOW.md
 ```
 
 Then bring it up:
@@ -103,10 +104,12 @@ cd /path/to/your/repo
 hermes
 ```
 
-`bootstrap` infers the repo root and GitHub slug, creates
-`~/.hermes/workflows/<owner>-<repo>-<workflow-type>/WORKFLOW.md`, and wires the
-repo checkout to that workflow root. The YAML front matter is the machine
-config; the Markdown body is the shared workflow policy.
+`bootstrap` infers the repo root and GitHub slug, creates the workflow state
+root under `~/.hermes/workflows/<owner>-<repo>-<workflow-type>/`, writes the
+repo-owned workflow contract (`WORKFLOW.md` for the first workflow in a repo,
+`WORKFLOW-<workflow>.md` once there are multiple workflows), creates a dedicated
+bootstrap branch, and commits that contract file. The YAML front matter is the
+machine config; the Markdown body is the workflow policy/prompt contract.
 
 Inside Hermes:
 

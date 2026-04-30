@@ -107,6 +107,96 @@ def _make_events_log(events_path: Path, entries: list[dict]) -> None:
     )
 
 
+def _make_issue_runner_root(root: Path) -> None:
+    from workflows.contract import render_workflow_markdown
+
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "memory").mkdir()
+    (root / "config").mkdir()
+    (root / "workspace").mkdir()
+    (root / "WORKFLOW.md").write_text(
+        render_workflow_markdown(
+            config={
+                "workflow": "issue-runner",
+                "schema-version": 1,
+                "instance": {"name": "attmous-daedalus-issue-runner", "engine-owner": "hermes"},
+                "repository": {"local-path": "/tmp/repo", "github-slug": "attmous/daedalus"},
+                "tracker": {"kind": "github", "active_states": ["open"], "terminal_states": ["closed"]},
+                "workspace": {"root": "workspace/issues"},
+                "agent": {"name": "runner", "model": "gpt-5.4", "runtime": "default"},
+                "storage": {
+                    "status": "memory/workflow-status.json",
+                    "health": "memory/workflow-health.json",
+                    "audit-log": "memory/workflow-audit.jsonl",
+                    "scheduler": "memory/workflow-scheduler.json",
+                },
+            },
+            prompt_template="Issue: {{ issue.identifier }}",
+        ),
+        encoding="utf-8",
+    )
+    (root / "memory" / "workflow-status.json").write_text(
+        json.dumps(
+            {
+                "workflow": "issue-runner",
+                "health": "healthy",
+                "lastRun": {
+                    "ok": True,
+                    "issue": {"id": "123", "identifier": "#123"},
+                    "updatedAt": "2026-04-30T12:00:15Z",
+                },
+                "metrics": {
+                    "tokens": {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+                    "rate_limits": {"requests_remaining": 99},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "memory" / "workflow-scheduler.json").write_text(
+        json.dumps(
+            {
+                "workflow": "issue-runner",
+                "updatedAt": "2026-04-30T12:00:20Z",
+                "running": [
+                    {
+                        "issue_id": "123",
+                        "identifier": "#123",
+                        "attempt": 2,
+                        "state": "open",
+                        "started_at_epoch": 1714478400.0,
+                        "running_for_ms": 15000,
+                    }
+                ],
+                "retry_queue": [
+                    {
+                        "issue_id": "124",
+                        "identifier": "#124",
+                        "attempt": 1,
+                        "error": "tool call rejected",
+                        "due_at_epoch": 1714478410.0,
+                        "due_in_ms": 5000,
+                    }
+                ],
+                "codex_totals": {
+                    "input_tokens": 11,
+                    "output_tokens": 7,
+                    "total_tokens": 18,
+                    "rate_limits": {"requests_remaining": 88},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    _make_events_log(
+        root / "memory" / "workflow-audit.jsonl",
+        [
+            {"at": "2026-04-30T12:00:20Z", "event": "issue_runner.tick.completed", "issue_id": "123", "identifier": "#123"},
+            {"at": "2026-04-30T12:00:10Z", "event": "issue_runner.retry.scheduled", "issue_id": "124", "identifier": "#124"},
+        ],
+    )
+
+
 # --------------------------------------------------------------------- views
 
 
@@ -177,6 +267,38 @@ def test_issue_view_resolves_by_issue_number_and_lane_id(tmp_path: Path) -> None
         assert view["issue_identifier"] == "#42"
         assert isinstance(view["recent_events"], list)
         assert view["recent_events"] and view["recent_events"][0]["kind"] == "turn_completed"
+
+
+def test_issue_runner_state_view_reads_scheduler_and_audit_files(tmp_path: Path) -> None:
+    from workflows.change_delivery.server.views import state_view
+
+    root = tmp_path / "issue_runner_root"
+    _make_issue_runner_root(root)
+
+    view = state_view(tmp_path / "unused.db", tmp_path / "unused-events.jsonl", workflow_root=root)
+    assert view["counts"] == {"running": 1, "retrying": 1}
+    assert view["running"][0]["issue_identifier"] == "#123"
+    assert view["retrying"][0]["issue_identifier"] == "#124"
+    assert view["totals"]["total_tokens"] == 18
+    assert view["rate_limits"] == {"requests_remaining": 88}
+    assert view["recent_events"][0]["event"] == "issue_runner.tick.completed"
+
+
+def test_issue_runner_issue_view_resolves_running_and_retry_entries(tmp_path: Path) -> None:
+    from workflows.change_delivery.server.views import issue_view
+
+    root = tmp_path / "issue_runner_root"
+    _make_issue_runner_root(root)
+
+    running = issue_view(tmp_path / "unused.db", tmp_path / "unused-events.jsonl", "#123", workflow_root=root)
+    retrying = issue_view(tmp_path / "unused.db", tmp_path / "unused-events.jsonl", "124", workflow_root=root)
+
+    assert running is not None
+    assert running["issue_identifier"] == "#123"
+    assert running["recent_events"][0]["event"] == "issue_runner.tick.completed"
+    assert retrying is not None
+    assert retrying["issue_identifier"] == "#124"
+    assert retrying["last_event"] == "retry_queued"
 
 
 # ------------------------------------------------------------------- refresh

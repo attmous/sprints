@@ -79,12 +79,12 @@ def _make_handler_class(
         def do_GET(self) -> None:  # noqa: N802 (stdlib name)
             path = urllib.parse.urlsplit(self.path).path
             if path == "/" or path == "":
-                state = state_view(db_path, events_log_path)
+                state = state_view(db_path, events_log_path, workflow_root=workflow_root)
                 html_body = render_dashboard(state).encode("utf-8")
                 self._respond(200, "text/html; charset=utf-8", html_body)
                 return
             if path == "/api/v1/state":
-                self._respond_json(200, state_view(db_path, events_log_path))
+                self._respond_json(200, state_view(db_path, events_log_path, workflow_root=workflow_root))
                 return
             if path.startswith("/api/v1/"):
                 ident = urllib.parse.unquote(path[len("/api/v1/"):])
@@ -95,7 +95,7 @@ def _make_handler_class(
                         {"error": {"code": "method_not_allowed", "message": "POST required"}},
                     )
                     return
-                view = issue_view(db_path, events_log_path, ident)
+                view = issue_view(db_path, events_log_path, ident, workflow_root=workflow_root)
                 if view is None:
                     self._respond_json(
                         404,

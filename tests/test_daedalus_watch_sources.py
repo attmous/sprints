@@ -115,3 +115,58 @@ def test_read_alert_state_when_present(tmp_path):
     alert_path.write_text(json.dumps({"fingerprint": "abc", "active": True}))
     state = sources.alert_state(root)
     assert state["active"] is True
+
+
+def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
+    from workflows.contract import render_workflow_markdown
+
+    sources = _module()
+    root = _make_workflow_root(tmp_path)
+    (root / "WORKFLOW.md").write_text(
+        render_workflow_markdown(
+            config={
+                "workflow": "issue-runner",
+                "schema-version": 1,
+                "instance": {"name": "attmous-daedalus-issue-runner", "engine-owner": "hermes"},
+                "repository": {"local-path": "/tmp/repo", "github-slug": "attmous/daedalus"},
+                "tracker": {"kind": "github"},
+                "workspace": {"root": "workspace/issues"},
+                "agent": {"name": "runner", "model": "gpt-5.4", "runtime": "default"},
+                "storage": {
+                    "status": "memory/workflow-status.json",
+                    "health": "memory/workflow-health.json",
+                    "audit-log": "memory/workflow-audit.jsonl",
+                    "scheduler": "memory/workflow-scheduler.json",
+                },
+            },
+            prompt_template="Issue: {{ issue.identifier }}",
+        ),
+        encoding="utf-8",
+    )
+    (root / "memory").mkdir(exist_ok=True)
+    (root / "memory" / "workflow-status.json").write_text(
+        json.dumps({"workflow": "issue-runner", "health": "healthy", "lastRun": {"updatedAt": "2026-04-30T12:00:15Z"}})
+    )
+    (root / "memory" / "workflow-scheduler.json").write_text(
+        json.dumps(
+            {
+                "running": [{"issue_id": "123", "identifier": "#123", "state": "open"}],
+                "retry_queue": [{"issue_id": "124", "identifier": "#124", "error": "x"}],
+                "codex_totals": {"total_tokens": 18, "rate_limits": {"requests_remaining": 88}},
+            }
+        )
+    )
+    (root / "memory" / "workflow-audit.jsonl").write_text(
+        json.dumps({"at": "2026-04-30T12:00:20Z", "event": "issue_runner.tick.completed", "issue_id": "123"}) + "\n"
+    )
+
+    lanes = sources.active_lanes(root)
+    audit = sources.recent_workflow_audit(root, limit=5)
+    workflow_status = sources.workflow_status(root)
+
+    assert [lane["issue_identifier"] for lane in lanes] == ["#123", "#124"]
+    assert audit[0]["event"] == "issue_runner.tick.completed"
+    assert workflow_status["workflow"] == "issue-runner"
+    assert workflow_status["running_count"] == 1
+    assert workflow_status["retry_count"] == 1
+    assert workflow_status["total_tokens"] == 18

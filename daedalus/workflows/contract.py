@@ -20,6 +20,8 @@ import yaml
 
 DEFAULT_WORKFLOW_CONFIG_FILENAME = "config/workflow.yaml"
 DEFAULT_WORKFLOW_MARKDOWN_FILENAME = "WORKFLOW.md"
+WORKFLOW_MARKDOWN_PREFIX = "WORKFLOW-"
+WORKFLOW_CONTRACT_POINTER_RELATIVE_PATH = Path("config") / "workflow-contract-path"
 WORKFLOW_POLICY_KEY = "workflow-policy"
 
 
@@ -45,16 +47,128 @@ def workflow_markdown_path(workflow_root: Path) -> Path:
     return workflow_root.resolve() / DEFAULT_WORKFLOW_MARKDOWN_FILENAME
 
 
-def find_workflow_contract_path(workflow_root: Path) -> Path | None:
+def workflow_named_markdown_filename(workflow_name: str) -> str:
+    return f"{WORKFLOW_MARKDOWN_PREFIX}{workflow_name}.md"
+
+
+def workflow_named_markdown_path(repo_root: Path, workflow_name: str) -> Path:
+    return repo_root.resolve() / workflow_named_markdown_filename(workflow_name)
+
+
+def workflow_contract_pointer_path(workflow_root: Path) -> Path:
+    return workflow_root.resolve() / WORKFLOW_CONTRACT_POINTER_RELATIVE_PATH
+
+
+def read_workflow_contract_pointer(workflow_root: Path) -> Path | None:
+    pointer_path = workflow_contract_pointer_path(workflow_root)
+    if not pointer_path.exists():
+        return None
+    try:
+        raw = pointer_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    target = Path(raw).expanduser()
+    if not target.is_absolute():
+        target = (pointer_path.parent / target).resolve()
+    else:
+        target = target.resolve()
+    return target
+
+
+def write_workflow_contract_pointer(workflow_root: Path, contract_path: Path) -> Path:
+    pointer_path = workflow_contract_pointer_path(workflow_root)
+    pointer_path.parent.mkdir(parents=True, exist_ok=True)
+    pointer_path.write_text(str(contract_path.resolve()) + "\n", encoding="utf-8")
+    return pointer_path
+
+
+def _repo_workflow_candidates(repo_root: Path) -> list[Path]:
+    root = repo_root.resolve()
+    candidates: list[Path] = []
+    default_path = workflow_markdown_path(root)
+    if default_path.exists():
+        candidates.append(default_path)
+    named_paths = sorted(
+        path
+        for path in root.glob(f"{WORKFLOW_MARKDOWN_PREFIX}*.md")
+        if path.is_file()
+    )
+    candidates.extend(path.resolve() for path in named_paths)
+    return candidates
+
+
+def _workflow_name_for_contract_path(path: Path) -> str | None:
+    try:
+        contract = load_workflow_contract_file(path)
+    except (WorkflowContractError, OSError, UnicodeDecodeError):
+        return None
+    value = contract.config.get("workflow")
+    return str(value).strip() if value else None
+
+
+def find_repo_workflow_contract_path(
+    repo_root: Path,
+    *,
+    workflow_name: str | None = None,
+) -> Path | None:
+    """Return a repo-owned workflow contract path when one can be resolved.
+
+    Resolution rules:
+    - prefer the explicitly named ``WORKFLOW-<workflow>.md`` file
+    - otherwise allow a single ``WORKFLOW.md`` or single named workflow file
+    - if ``WORKFLOW.md`` exists, allow it only when it declares the requested
+      workflow name (or when no specific workflow name is required)
+    """
+    root = repo_root.resolve()
+    if workflow_name:
+        named_path = workflow_named_markdown_path(root, workflow_name)
+        if named_path.exists():
+            return named_path
+
+    default_path = workflow_markdown_path(root)
+    candidates = _repo_workflow_candidates(root)
+
+    if workflow_name and default_path.exists():
+        if _workflow_name_for_contract_path(default_path) == workflow_name:
+            return default_path
+
+    if default_path.exists() and not workflow_name:
+        return default_path
+
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def find_workflow_contract_path(
+    workflow_root: Path,
+    *,
+    workflow_name: str | None = None,
+) -> Path | None:
     """Return the preferred contract path for a workflow root, if any.
 
-    ``WORKFLOW.md`` is the native public contract and wins when both forms are
-    present. ``config/workflow.yaml`` remains loadable for legacy instances.
+    Resolution order:
+    1. explicit workflow-root pointer to a repo-owned contract
+    2. direct repo-owned contract files under the given path
+    3. legacy in-root ``WORKFLOW.md``
+    4. legacy ``config/workflow.yaml``
     """
-    markdown_path = workflow_markdown_path(workflow_root)
+    root = workflow_root.resolve()
+    pointer_target = read_workflow_contract_pointer(root)
+    if pointer_target is not None and pointer_target.exists():
+        return pointer_target
+
+    repo_owned = find_repo_workflow_contract_path(root, workflow_name=workflow_name)
+    if repo_owned is not None:
+        return repo_owned
+
+    markdown_path = workflow_markdown_path(root)
     if markdown_path.exists():
         return markdown_path
-    yaml_path = workflow_yaml_path(workflow_root)
+
+    yaml_path = workflow_yaml_path(root)
     if yaml_path.exists():
         return yaml_path
     return None

@@ -20,7 +20,7 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
     t = Table(title="Active lanes", expand=True)
     t.add_column("Lane")
     t.add_column("State")
-    t.add_column("GH Issue")
+    t.add_column("Identifier")
     if not lanes:
         t.add_row("(no active lanes)", "", "")
         return t
@@ -31,7 +31,7 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
         t.add_row(
             str(lane.get("lane_id") or ""),
             str(lane.get("state") or ""),
-            str(lane.get("github_issue_number") or ""),
+            str(lane.get("issue_identifier") or lane.get("github_issue_number") or ""),
         )
     return t
 
@@ -64,11 +64,33 @@ def _events_table(events: list[dict[str, Any]]) -> Table:
     return t
 
 
+def _workflow_status_panel(workflow_status: Mapping[str, Any]) -> Panel | None:
+    if not workflow_status:
+        return None
+    lines = [
+        f"workflow={workflow_status.get('workflow') or '?'}",
+        f"health={workflow_status.get('health') or '?'}",
+        f"running={workflow_status.get('running_count') or 0}",
+        f"retry={workflow_status.get('retry_count') or 0}",
+        f"tokens={workflow_status.get('total_tokens') or 0}",
+    ]
+    if workflow_status.get("selected_issue"):
+        lines.append(f"selected={workflow_status.get('selected_issue')}")
+    if workflow_status.get("rate_limits"):
+        lines.append(f"rate_limits={workflow_status.get('rate_limits')}")
+    if workflow_status.get("updated_at"):
+        lines.append(f"updated_at={workflow_status.get('updated_at')}")
+    return Panel("\n".join(_esc(str(line)) for line in lines), title="Workflow status")
+
+
 def render_frame_to_string(snapshot: Mapping[str, Any]) -> str:
     """Render one TUI frame as a plain string (suitable for tests + no-TTY)."""
     console = Console(record=True, width=120, force_terminal=False)
     console.print(Panel("Daedalus active lanes", style="bold"))
     console.print(_lanes_table(snapshot.get("active_lanes") or []))
+    workflow_status_panel = _workflow_status_panel(snapshot.get("workflow_status") or {})
+    if workflow_status_panel is not None:
+        console.print(workflow_status_panel)
     alerts_panel = _alerts_panel(snapshot.get("alert_state") or {})
     if alerts_panel is not None:
         console.print(alerts_panel)
@@ -100,6 +122,7 @@ def build_snapshot(workflow_root) -> dict[str, Any]:
 
     return {
         "active_lanes": _watch_sources.active_lanes(workflow_root),
+        "workflow_status": _watch_sources.workflow_status(workflow_root),
         "alert_state": _watch_sources.alert_state(workflow_root),
         "recent_events": merged[:50],
     }

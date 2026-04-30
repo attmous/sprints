@@ -18,6 +18,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from workflows.contract import WorkflowContractError, load_workflow_contract
+
 # Sibling-import boilerplate.
 try:
     from workflows.shared.paths import runtime_paths
@@ -54,6 +56,36 @@ def _read_jsonl_tail(path: Path, limit: int) -> list[dict[str, Any]]:
     return parsed
 
 
+def _load_optional_json(path: Path | None) -> dict[str, Any] | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _workflow_name(workflow_root: Path) -> str | None:
+    try:
+        return str(load_workflow_contract(Path(workflow_root)).config.get("workflow") or "").strip() or None
+    except (FileNotFoundError, WorkflowContractError, OSError):
+        return None
+
+
+def _resolve_issue_runner_storage_path(workflow_root: Path, key: str, default: str) -> Path | None:
+    try:
+        contract = load_workflow_contract(Path(workflow_root))
+    except (FileNotFoundError, WorkflowContractError, OSError):
+        return None
+    storage_cfg = contract.config.get("storage") or {}
+    raw = str(storage_cfg.get(key) or default).strip()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = (Path(workflow_root) / path).resolve()
+    return path
+
+
 def recent_daedalus_events(workflow_root: Path, limit: int = 50) -> list[dict[str, Any]]:
     paths = runtime_paths(Path(workflow_root))
     return _read_jsonl_tail(paths["event_log_path"], limit)
@@ -61,6 +93,9 @@ def recent_daedalus_events(workflow_root: Path, limit: int = 50) -> list[dict[st
 
 def recent_workflow_audit(workflow_root: Path, limit: int = 50) -> list[dict[str, Any]]:
     base = Path(workflow_root)
+    if _workflow_name(base) == "issue-runner":
+        audit_path = _resolve_issue_runner_storage_path(base, "audit-log", "memory/workflow-audit.jsonl")
+        return _read_jsonl_tail(audit_path, limit) if audit_path is not None else []
     # workflow-audit.jsonl lives under <root>/runtime/memory/ in the project layout
     # and under <root>/memory/ in the legacy layout — match runtime_paths logic.
     runtime_event_log = runtime_paths(base)["event_log_path"]
@@ -69,6 +104,47 @@ def recent_workflow_audit(workflow_root: Path, limit: int = 50) -> list[dict[str
 
 
 def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
+    workflow_root = Path(workflow_root)
+    if _workflow_name(workflow_root) == "issue-runner":
+        scheduler_path = _resolve_issue_runner_storage_path(
+            workflow_root, "scheduler", "memory/workflow-scheduler.json"
+        )
+        scheduler = _load_optional_json(scheduler_path) or {}
+        out: list[dict[str, Any]] = []
+        for row in scheduler.get("running") or []:
+            if not isinstance(row, dict):
+                continue
+            identifier = row.get("identifier") or row.get("issue_id")
+            out.append(
+                {
+                    "lane_id": row.get("issue_id"),
+                    "state": row.get("state") or "running",
+                    "workflow_state": row.get("state") or "running",
+                    "github_issue_number": identifier,
+                    "issue_number": identifier,
+                    "issue_identifier": identifier,
+                    "lane_status": "active",
+                    "kind": "running",
+                }
+            )
+        for row in scheduler.get("retry_queue") or []:
+            if not isinstance(row, dict):
+                continue
+            identifier = row.get("identifier") or row.get("issue_id")
+            out.append(
+                {
+                    "lane_id": row.get("issue_id"),
+                    "state": "retrying",
+                    "workflow_state": "retrying",
+                    "github_issue_number": identifier,
+                    "issue_number": identifier,
+                    "issue_identifier": identifier,
+                    "lane_status": "retrying",
+                    "kind": "retrying",
+                }
+            )
+        return out
+
     paths = runtime_paths(Path(workflow_root))
     db_path = paths["db_path"]
     if not db_path.exists():
@@ -118,3 +194,29 @@ def alert_state(workflow_root: Path) -> dict[str, Any]:
         return json.loads(alert_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def workflow_status(workflow_root: Path) -> dict[str, Any]:
+    workflow_root = Path(workflow_root)
+    if _workflow_name(workflow_root) != "issue-runner":
+        return {}
+    status_path = _resolve_issue_runner_storage_path(workflow_root, "status", "memory/workflow-status.json")
+    scheduler_path = _resolve_issue_runner_storage_path(workflow_root, "scheduler", "memory/workflow-scheduler.json")
+    status_payload = _load_optional_json(status_path) or {}
+    scheduler_payload = _load_optional_json(scheduler_path) or {}
+    scheduler = {
+        "running": scheduler_payload.get("running") or [],
+        "retry_queue": scheduler_payload.get("retry_queue") or scheduler_payload.get("retryQueue") or [],
+        "codex_totals": scheduler_payload.get("codex_totals") or scheduler_payload.get("codexTotals") or {},
+    }
+    last_run = status_payload.get("lastRun") or {}
+    return {
+        "workflow": "issue-runner",
+        "health": status_payload.get("health"),
+        "updated_at": scheduler_payload.get("updatedAt") or last_run.get("updatedAt"),
+        "running_count": len(scheduler["running"]),
+        "retry_count": len(scheduler["retry_queue"]),
+        "selected_issue": ((last_run.get("issue") or {}).get("identifier") or (last_run.get("issue") or {}).get("id")),
+        "total_tokens": int((scheduler["codex_totals"].get("total_tokens") or 0)),
+        "rate_limits": scheduler["codex_totals"].get("rate_limits"),
+    }

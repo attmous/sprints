@@ -82,12 +82,22 @@ def test_watch_dispatched_not_falling_through_to_unknown(tmp_path):
 def test_scaffold_workflow_dispatched_not_falling_through_to_unknown(tmp_path):
     tools = _tools()
     root = tmp_path / "attmous-daedalus-change-delivery"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:attmous/daedalus.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     out = tools.execute_raw_args(
-        f"scaffold-workflow --workflow-root {root} --github-slug attmous/daedalus"
+        f"scaffold-workflow --workflow-root {root} --repo-path {repo} --github-slug attmous/daedalus"
     )
     assert "unknown daedalus command" not in out, out
     assert "scaffolded workflow root" in out
-    assert (root / "WORKFLOW.md").exists()
+    assert (repo / "WORKFLOW.md").exists()
 
 
 def test_bootstrap_dispatched_not_falling_through_to_unknown(tmp_path, monkeypatch):
@@ -109,4 +119,4 @@ def test_bootstrap_dispatched_not_falling_through_to_unknown(tmp_path, monkeypat
     out = tools.execute_raw_args(f"bootstrap --repo-path {repo}")
     assert "unknown daedalus command" not in out, out
     assert "bootstrapped workflow root" in out
-    assert (home / ".hermes" / "workflows" / "attmous-daedalus-change-delivery" / "WORKFLOW.md").exists()
+    assert (repo / "WORKFLOW.md").exists()

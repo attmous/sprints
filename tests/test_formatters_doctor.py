@@ -88,3 +88,23 @@ def test_doctor_no_raw_python_bools():
     out = fmt.format_doctor(_doctor_all_pass(), use_color=False)
     assert " True" not in out
     assert " False" not in out
+
+
+def test_doctor_issue_runner_renders_named_checks():
+    fmt = _fmt()
+    result = {
+        "workflow": "issue-runner",
+        "ok": False,
+        "checks": [
+            {"name": "tracker", "status": "pass", "detail": "12 issue(s) loaded"},
+            {"name": "agent-runtime", "status": "fail", "detail": "unknown runtime profile 'codex'"},
+        ],
+    }
+    out = fmt.format_doctor(result, use_color=False)
+    assert "Issue runner doctor" in out
+    assert "tracker" in out
+    assert "agent-runtime" in out
+    assert "12 issue(s) loaded" in out
+    assert "unknown runtime profile" in out
+    assert "✓" in out
+    assert "✗" in out

@@ -1,6 +1,6 @@
 # Symphony Conformance
 
-This note tracks Daedalus against the public `openai/symphony` draft spec as reviewed on **April 29, 2026**.
+This note tracks Daedalus against the public `openai/symphony` draft spec as reviewed on **April 30, 2026**.
 
 The short version: Daedalus is already **Symphony-aligned** in architecture, but only **partially Symphony-compatible** at the contract and integration boundaries.
 
@@ -14,14 +14,14 @@ The short version: Daedalus is already **Symphony-aligned** in architecture, but
 
 | Symphony concept | Daedalus status | Notes |
 |---|---|---|
-| `WORKFLOW.md` loader | Partial | Supported at the workflow root as the public contract. Front matter maps to the selected workflow schema; `issue-runner` is the closer generic reference surface, while `change-delivery` still carries richer GitHub-specific semantics. |
+| `WORKFLOW.md` loader | Partial | Supported as a repo-owned public contract. Front matter maps to the selected workflow schema; `issue-runner` is the closer generic reference surface, while `change-delivery` still carries richer GitHub-specific semantics. |
 | Typed config + hot reload | Implemented | Current `change-delivery` schema is validated and hot-reloaded with last-known-good behavior. |
-| Issue tracker client boundary | Partial | GitHub issue selection exists, but there is no generic tracker protocol or Linear adapter yet. |
-| Workspace manager | Partial | Per-lane worktrees and lane-local files exist; generic lifecycle hooks are not first-class yet. |
-| Bounded concurrency | Partial | Ownership and recovery exist; Symphony-style global/per-state scheduler limits are not yet config-first. |
-| Retry/backoff policy | Partial | Durable retry and recovery bookkeeping exist, but backoff policy is not exposed as a clean public contract yet. |
-| Coding-agent protocol | Partial | CLI/session runtimes ship today; a real Codex app-server adapter is still missing. |
-| Observability surface | Partial | Events, status, watch, and HTTP surfaces exist; token/rate-limit accounting is still incomplete. |
+| Issue tracker client boundary | Partial | `issue-runner` now has a tracker client boundary with `local-json` and first-pass `linear` adapters, but the broader engine is still not tracker-agnostic end-to-end. |
+| Workspace manager | Partial | Generic workspace root, lifecycle hooks, terminal cleanup, managed long-running `issue-runner`, and persisted scheduler state now exist, but the scheduler policy is not yet fully spec-shaped. |
+| Bounded concurrency | Partial | `issue-runner` now dispatches bounded batches and persists running-worker recovery, but the broader engine is still not uniformly scheduler-driven. |
+| Retry/backoff policy | Partial | Durable retry/backoff state now survives scheduler restarts, but the policy is still not exposed as a clean spec-native contract. |
+| Coding-agent protocol | Partial | CLI/session runtimes still exist, but `issue-runner` now ships a first-pass `codex-app-server` adapter. It is not yet a full spec-native session protocol. |
+| Observability surface | Partial | Events, status, watch, and HTTP surfaces exist; `issue-runner` now records per-run token and rate-limit metrics, but broader operator surfaces still do not report them uniformly. |
 | Trust/safety posture | Implemented | See [security.md](security.md). |
 | Terminal workspace cleanup | Partial | Terminal lane states exist; full Symphony-style cleanup semantics still need explicit policy. |
 
@@ -29,15 +29,14 @@ The short version: Daedalus is already **Symphony-aligned** in architecture, but
 
 Daedalus currently differs from the Symphony draft in three material ways:
 
-1. The supported managed workflow is GitHub-backed `change-delivery`; the bundled `issue-runner` workflow is generic but still local-json based rather than Linear-backed.
-2. Runtime adapters are CLI-oriented today, not Codex app-server-native.
+1. The supported managed workflow is GitHub-backed `change-delivery`; `issue-runner` is the generic reference workflow and now has a first-pass Linear adapter, but the broader product story is still not Linear-first.
+2. Runtime adapters are still mixed: `issue-runner` now has a first-pass Codex app-server path, while the rest of Daedalus remains CLI/session-oriented.
 3. `WORKFLOW.md` still maps into the current Daedalus schema rather than a tracker-agnostic Symphony config model.
 
 ## Recommended Next Gaps
 
-1. Extract a real tracker interface and add a Linear adapter.
-2. Add configurable workspace root + lifecycle hooks.
-3. Promote concurrency and retry policy into the public schema.
-4. Add a Codex app-server runtime with token and rate-limit accounting.
+1. Promote the current tracker boundary into a fuller, repo-documented contract and harden the Linear adapter.
+2. Promote concurrency and retry policy into a fuller public scheduler contract.
+3. Promote the current Codex app-server path into a fuller spec-native protocol implementation.
 
 Until those land, Daedalus should be described as **Symphony-inspired and partially compatible**, not as a strict implementation of the current spec.
