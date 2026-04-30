@@ -140,8 +140,8 @@ Daedalus service
 | Command | What it does |
 |---|---|
 | `/daedalus init` | Init/migrate the runtime DB (idempotent) |
-| `/daedalus bootstrap` | Infer repo root + GitHub slug from the current checkout, create a starter workflow root, and persist a repo-local workflow pointer |
-| `/daedalus scaffold-workflow` | Create a new workflow root named `<owner>-<repo>-<workflow-type>` with a starter `WORKFLOW.md` |
+| `/daedalus bootstrap` | Infer repo root + GitHub slug from the current checkout, create a workflow state root, write the repo-owned workflow contract, and persist a repo-local workflow pointer |
+| `/daedalus scaffold-workflow` | Create a new workflow root named `<owner>-<repo>-<workflow-type>` and write the repo-owned workflow contract |
 | `/daedalus ingest-live` | Pull workflow CLI status into the ledger |
 | `/daedalus heartbeat` | Refresh the runtime lease |
 | `/daedalus request-active-actions` | Inspect what *would* be dispatched on the next tick |
@@ -205,6 +205,7 @@ This is the opinionated managed SDLC workflow.
 || `/workflow change-delivery reconcile` | Repair stale ledger state |
 || `/workflow change-delivery pause` | Disable lane processing |
 || `/workflow change-delivery resume` | Re-enable |
+|| `/workflow change-delivery serve` | Run the optional localhost HTTP status server |
 
 ### `issue-runner` workflow shortcuts
 
@@ -215,6 +216,8 @@ This is the bundled generic tracker-driven workflow.
 || `/workflow issue-runner status` | Selected issue + last run summary |
 || `/workflow issue-runner doctor` | Validate tracker, workspace, and runtime references |
 || `/workflow issue-runner tick` | Run one issue-runner dispatch tick |
+|| `/workflow issue-runner run` | Run the long-lived issue-runner polling loop |
+|| `/workflow issue-runner serve` | Run the optional localhost HTTP status server |
 
 ### Webhook commands
 

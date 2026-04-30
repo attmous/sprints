@@ -1,6 +1,10 @@
 # Runtimes
 
-A **runtime** is the thing Daedalus shells out to when a turn happens. Daedalus owns leases, state, and dispatch; the runtime owns "how do I actually run an LLM turn against a worktree." Three are shipped today.
+A **runtime** is the thing Daedalus shells out to when a turn happens. Daedalus owns leases, state, and dispatch; the runtime owns "how do I actually run an LLM turn against a worktree." Four are shipped today.
+
+At the code level, these shared execution backends live under
+`daedalus/runtimes/`. The operator-facing contract also uses the `runtimes:`
+config block because workflows bind named runtime profiles to workflow roles.
 
 ## The Protocol
 
@@ -20,14 +24,14 @@ class Runtime(Protocol):
 
 ## Adapter shape comparison
 
-|| | `claude-cli` | `acpx-codex` | `hermes-agent` |
-|---|---|---|---|---|
-| Persistent session | ❌ one-shot | ✅ resumable | ❌ one-shot |
-| `ensure_session` | no-op | `acpx codex sessions ensure` | no-op |
-| `run_prompt` | `claude --print …` | `acpx codex prompt -s <name>` | requires `command:` override |
-| `assess_health` | always healthy | freshness + grace window | always healthy |
-| `close_session` | no-op | `acpx codex sessions close` | no-op |
-| Records `last_activity_ts` | yes (before + after `_run`) | yes | yes |
+|| | `claude-cli` | `acpx-codex` | `hermes-agent` | `codex-app-server` |
+|---|---|---|---|---|---|
+| Persistent session | ❌ one-shot | ✅ resumable | ❌ one-shot | ❌ one-turn protocol client |
+| `ensure_session` | no-op | `acpx codex sessions ensure` | no-op | no-op |
+| `run_prompt` | `claude --print …` | `acpx codex prompt -s <name>` | requires `command:` override | stdio event stream to `codex app-server` |
+| `assess_health` | always healthy | freshness + grace window | always healthy | always healthy |
+| `close_session` | no-op | `acpx codex sessions close` | no-op | no-op |
+| Records `last_activity_ts` | yes (before + after `_run`) | yes | yes | yes |
 
 ## Selection in `WORKFLOW.md`
 
@@ -68,15 +72,23 @@ runtimes:
 
 Because it is one-shot, `assess_health` always returns healthy and `last_activity_ts` records the subprocess start/end timestamps.
 
+### `codex-app-server` runtime
+
+The `codex-app-server` runtime speaks a first-pass stdio protocol to a local
+`codex app-server` command. It is currently used by `issue-runner` to move
+closer to the Symphony execution model and to capture per-run token and
+rate-limit data.
+
 ## Adding a new runtime
 
 1. Subclass nothing — just implement the Protocol shape.
-2. Decorate with `@register("<your-kind>")` from `workflows.change_delivery.runtimes`.
+2. Decorate with `@register("<your-kind>")` from `runtimes`.
 3. Add the kind to `schema.yaml` so config validation accepts it.
 4. Optionally implement `last_activity_ts()` for stall participation.
 
 ## Where this lives in code
 
-- Protocol: `daedalus/workflows/change_delivery/runtimes/__init__.py`
-- Adapters: `daedalus/workflows/change_delivery/runtimes/{claude_cli,acpx_codex,hermes_agent}.py`
+- Protocol: `daedalus/runtimes/__init__.py`
+- Adapters: `daedalus/runtimes/{claude_cli,acpx_codex,hermes_agent,codex_app_server}.py`
+- Workflow compatibility shims: `daedalus/workflows/change_delivery/runtimes/`
 - Preflight: `daedalus/workflows/change_delivery/preflight.py`

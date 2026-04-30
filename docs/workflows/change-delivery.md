@@ -31,12 +31,15 @@ flow.
 ## Key config blocks
 
 - `repository`: repo checkout, GitHub slug, active-lane label
-- `runtimes`: coder + reviewer runtime profiles
-- `agents`: coder tiers, internal reviewer, external reviewer
+- `runtimes`: shared runtime backend profiles used by the workflow roles
+- `agents`: the workflow roles and their runtime/model bindings
 - `gates`: publish/merge policy
 - `triggers`: lane selector
 - `lane-selection`: issue filtering/ranking
 - `observability`: comments/webhooks integration
+
+`change-delivery` composes the shared `runtimes/` backends with workflow-specific
+prompts, reviewers, GitHub behavior, and merge policy.
 
 ## Operator path
 
@@ -45,7 +48,7 @@ Default onboarding:
 ```bash
 cd /path/to/repo
 hermes daedalus bootstrap
-$EDITOR ~/.hermes/workflows/<owner>-<repo>-change-delivery/WORKFLOW.md
+$EDITOR /path/to/repo/WORKFLOW.md
 hermes daedalus service-up
 ```
 
@@ -65,4 +68,3 @@ Common workflow commands:
 - [Reviewers](../concepts/reviewers.md)
 - [Failures](../concepts/failures.md)
 - [Slash commands](../operator/slash-commands.md)
-

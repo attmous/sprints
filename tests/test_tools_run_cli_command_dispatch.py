@@ -12,6 +12,7 @@ string-returning subcommands.
 These tests pin ``run_cli_command`` so it dispatches the string-returning
 handlers directly.
 """
+import json
 import importlib.util
 import subprocess
 from pathlib import Path
@@ -99,12 +100,24 @@ def test_run_cli_command_dispatches_watch(tmp_path, capsys):
 def test_run_cli_command_dispatches_scaffold_workflow(tmp_path, capsys):
     tools = _tools()
     root = tmp_path / "attmous-daedalus-change-delivery"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:attmous/daedalus.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     args = _parse(
         tools,
         [
             "scaffold-workflow",
             "--workflow-root",
             str(root),
+            "--repo-path",
+            str(repo),
             "--github-slug",
             "attmous/daedalus",
         ],
@@ -113,7 +126,7 @@ def test_run_cli_command_dispatches_scaffold_workflow(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "unknown daedalus command" not in out, out
     assert "scaffolded workflow root" in out
-    assert (root / "WORKFLOW.md").exists()
+    assert (repo / "WORKFLOW.md").exists()
 
 
 def test_run_cli_command_dispatches_bootstrap(tmp_path, capsys, monkeypatch):
@@ -144,4 +157,39 @@ def test_run_cli_command_dispatches_bootstrap(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "unknown daedalus command" not in out, out
     assert "bootstrapped workflow root" in out
-    assert (home / ".hermes" / "workflows" / "attmous-daedalus-change-delivery" / "WORKFLOW.md").exists()
+    assert (repo / "WORKFLOW.md").exists()
+
+
+def test_run_cli_command_dispatches_service_loop_for_issue_runner(tmp_path, capsys, monkeypatch):
+    tools = _tools()
+
+    class FakeWorkspace:
+        def run_loop(self, *, interval_seconds, max_iterations):
+            return {
+                "loop_status": "completed",
+                "iterations": max_iterations,
+                "last_result": {"ok": True},
+            }
+
+    monkeypatch.setattr(tools, "_assert_service_mode_supported", lambda **kwargs: "issue-runner")
+    monkeypatch.setattr(tools, "_load_issue_runner_workspace", lambda workflow_root: FakeWorkspace())
+    monkeypatch.setattr(tools, "_record_operator_command_event", lambda **kwargs: None)
+
+    args = _parse(
+        tools,
+        [
+            "service-loop",
+            "--workflow-root",
+            str(tmp_path),
+            "--project-key",
+            "attmous-daedalus-issue-runner",
+            "--max-iterations",
+            "1",
+            "--json",
+        ],
+    )
+    tools.run_cli_command(args)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["workflow"] == "issue-runner"
+    assert payload["loop_status"] == "completed"
+    assert payload["iterations"] == 1

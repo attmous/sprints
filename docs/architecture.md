@@ -305,26 +305,25 @@ daedalus/
 ├── formatters.py            # Human-readable inspection output
 ├── migration.py             # relay→daedalus filesystem migration
 ├── observability_overrides.py  # Operator config overrides
+├── runtimes/                # Shared execution backends (Codex, Claude, Hermes)
+├── trackers/                # Shared tracker clients (local-json, Linear, ...)
 └── workflows/
     ├── __init__.py          # Workflow loader + CLI dispatcher
-    ├── shared/              # Shared paths, config snapshots, runtimes, stalls
+    ├── shared/              # Shared paths, config snapshots, stalls
     ├── change_delivery/
         ├── workflow.py      # Semantic policy engine
         ├── dispatch.py      # Action dispatch
         ├── actions.py       # Action primitives
         ├── reviews.py       # Review policy + findings
         ├── sessions.py      # Session protocol
-        ├── runtimes/        # Runtime adapters
-        │   ├── claude_cli.py
-        │   ├── acpx_codex.py
-        │   └── hermes_agent.py
+        ├── runtimes/        # Workflow-local compatibility re-exports
         ├── reviewers/       # Reviewer implementations
         ├── webhooks/        # Outbound webhook subscribers
         ├── server/          # HTTP status surface
         ├── comments.py      # GitHub comment formatting
         └── observability.py # Config resolution
     └── issue_runner/
-        ├── tracker.py       # Tracker loading + issue selection
+        ├── tracker.py       # Issue selection + workflow-specific tracker policy
         ├── workspace.py     # Issue workspace lifecycle + hooks
         ├── cli.py           # status / doctor / tick
         ├── preflight.py     # Dispatch-gated config checks

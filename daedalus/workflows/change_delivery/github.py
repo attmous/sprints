@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
+from trackers.github import GithubTrackerClient, issue_label_names as _shared_issue_label_names
+
 
 """Change-delivery workflow GitHub integration helpers.
 
@@ -17,18 +19,7 @@ PRIORITY_RE = re.compile(r"\[P(\d+)\]")
 
 
 def issue_label_names(issue: dict[str, Any] | None) -> set[str]:
-    labels = (issue or {}).get("labels") or []
-    names: set[str] = set()
-    for label in labels:
-        if isinstance(label, dict):
-            name = str(label.get("name") or "").strip().lower()
-            if name:
-                names.add(name)
-        elif isinstance(label, str):
-            name = label.strip().lower()
-            if name:
-                names.add(name)
-    return names
+    return _shared_issue_label_names(issue)
 
 
 
@@ -168,10 +159,15 @@ def pick_next_lane_issue_from_repo(
     active_lane_label: str = "active-lane",
     lane_selection_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    items = run_json(
-        ["gh", "issue", "list", "--state", "open", "--limit", "100",
-         "--json", "number,title,url,labels,createdAt"],
-        cwd=repo_path,
+    client = GithubTrackerClient(
+        workflow_root=repo_path,
+        repo_path=repo_path,
+        tracker_cfg={"kind": "github"},
+        run_json=run_json,
+    )
+    items = client.list_open_issue_payloads(
+        limit=100,
+        fields="number,title,url,labels,createdAt",
     )
     return pick_next_lane_issue(
         items,
@@ -187,19 +183,15 @@ def get_active_lane_from_repo(
     run_json: Callable[..., list[dict[str, Any]]],
     active_lane_label: str = "active-lane",
 ) -> dict[str, Any] | None:
-    items = run_json(
-        [
-            "gh",
-            "issue",
-            "list",
-            "--state",
-            "open",
-            "--limit",
-            "200",
-            "--json",
-            "number,title,url,labels,assignees,updatedAt",
-        ],
-        cwd=repo_path,
+    client = GithubTrackerClient(
+        workflow_root=repo_path,
+        repo_path=repo_path,
+        tracker_cfg={"kind": "github"},
+        run_json=run_json,
+    )
+    items = client.list_open_issue_payloads(
+        limit=200,
+        fields="number,title,url,labels,assignees,updatedAt",
     )
     items = [
         item
@@ -259,10 +251,13 @@ def get_issue_details(
     if issue_number is None:
         return None
     try:
-        return run_json(
-            ["gh", "issue", "view", str(issue_number), "--json", "number,title,url,body"],
-            cwd=repo_path,
+        client = GithubTrackerClient(
+            workflow_root=repo_path,
+            repo_path=repo_path,
+            tracker_cfg={"kind": "github"},
+            run_json=run_json,
         )
+        return client.view_issue_payload(issue_number, fields="number,title,url,body")
     except Exception:
         return None
 

@@ -16,18 +16,36 @@ def _config() -> dict:
         "tracker": {
             "kind": "local-json",
             "path": "config/issues.json",
-            "active-states": ["todo"],
-            "terminal-states": ["done"],
+            "active_states": ["todo"],
+            "terminal_states": ["done"],
         },
         "workspace": {"root": "workspace/issues"},
-        "runtimes": {
-            "default": {
-                "kind": "claude-cli",
-                "max-turns-per-invocation": 8,
-                "timeout-seconds": 60,
+        "agent": {
+            "name": "runner",
+            "model": "claude-sonnet-4-6",
+            "runtime": "default",
+            "max_concurrent_agents": 1,
+            "max_turns": 20,
+            "max_retry_backoff_ms": 300000,
+        },
+        "codex": {
+            "command": "codex app-server",
+            "approval_policy": "auto",
+            "thread_sandbox": "workspace-write",
+            "turn_sandbox_policy": "auto",
+            "turn_timeout_ms": 3600000,
+            "read_timeout_ms": 5000,
+            "stall_timeout_ms": 300000,
+        },
+        "daedalus": {
+            "runtimes": {
+                "default": {
+                    "kind": "claude-cli",
+                    "max-turns-per-invocation": 8,
+                    "timeout-seconds": 60,
+                }
             }
         },
-        "agent": {"name": "runner", "model": "claude-sonnet-4-6", "runtime": "default"},
         "storage": {
             "status": "memory/workflow-status.json",
             "health": "memory/workflow-health.json",
@@ -55,3 +73,48 @@ def test_issue_runner_schema_rejects_wrong_workflow_name():
         return
     raise AssertionError("expected schema validation error for wrong workflow name")
 
+
+def test_issue_runner_schema_accepts_linear_tracker_and_codex_runtime():
+    schema = yaml.safe_load(
+        (REPO_ROOT / "daedalus" / "workflows" / "issue_runner" / "schema.yaml").read_text(encoding="utf-8")
+    )
+    cfg = _config()
+    cfg["tracker"] = {
+        "kind": "linear",
+        "endpoint": "https://api.linear.app/graphql",
+        "api_key": "$LINEAR_API_KEY",
+        "project_slug": "core",
+        "active_states": ["Todo"],
+        "terminal_states": ["Done"],
+    }
+    cfg["agent"]["runtime"] = "codex"
+    cfg["daedalus"] = {
+        "runtimes": {
+            "codex": {
+                "kind": "codex-app-server",
+                "command": "codex app-server",
+                "approval_policy": "auto",
+                "thread_sandbox": "workspace-write",
+                "turn_sandbox_policy": "auto",
+                "turn_timeout_ms": 3600000,
+                "read_timeout_ms": 5000,
+                "stall_timeout_ms": 300000,
+            }
+        }
+    }
+    jsonschema.validate(cfg, schema)
+
+
+def test_issue_runner_schema_accepts_github_tracker():
+    schema = yaml.safe_load(
+        (REPO_ROOT / "daedalus" / "workflows" / "issue_runner" / "schema.yaml").read_text(encoding="utf-8")
+    )
+    cfg = _config()
+    cfg["tracker"] = {
+        "kind": "github",
+        "active_states": ["open"],
+        "terminal_states": ["closed"],
+        "required_labels": ["ready"],
+        "exclude_labels": ["blocked"],
+    }
+    jsonschema.validate(cfg, schema)

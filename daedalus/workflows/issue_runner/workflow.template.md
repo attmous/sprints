@@ -13,39 +13,49 @@ repository:
 tracker:
   kind: local-json
   path: config/issues.json
-  active-states:
+  active_states:
     - todo
     - in-progress
-  terminal-states:
+  terminal_states:
     - done
     - canceled
 
 polling:
-  interval-seconds: 30
+  interval_ms: 30000
 
 workspace:
   root: workspace/issues
 
 hooks:
-  timeout-seconds: 60
-
-runtimes:
-  default:
-    kind: claude-cli
-    max-turns-per-invocation: 24
-    timeout-seconds: 1200
+  timeout_ms: 60000
 
 agent:
   name: Issue_Runner_Agent
   model: claude-sonnet-4-6
   runtime: default
-  max-concurrent-issues: 1
+  max_concurrent_agents: 1
+  max_turns: 20
+  max_retry_backoff_ms: 300000
 
-retry:
-  continuation-delay-seconds: 1
-  initial-backoff-seconds: 10
-  max-backoff-seconds: 300
-  max-attempts: 5
+codex:
+  command: codex app-server
+  approval_policy: auto
+  thread_sandbox: workspace-write
+  turn_sandbox_policy: auto
+  turn_timeout_ms: 3600000
+  read_timeout_ms: 5000
+  stall_timeout_ms: 300000
+
+daedalus:
+  runtimes:
+    default:
+      kind: hermes-agent
+      command:
+        - fake-agent
+        - --prompt
+        - "{prompt_path}"
+        - --issue
+        - "{issue_identifier}"
 
 storage:
   status: memory/workflow-status.json
@@ -55,12 +65,16 @@ storage:
 
 # Workflow Policy
 
-Daedalus runs the `issue-runner` workflow against the tracker configured above.
+Run the `issue-runner` workflow only on the selected issue and keep outputs grounded in the live issue state.
 
-Shared rules:
+Issue: {{ issue.identifier }} - {{ issue.title }}
 
-- Work only on the selected issue and its stated scope.
-- Prefer explicit handoffs over silent assumptions.
-- Record blockers clearly when you cannot continue safely.
-- Keep outputs grounded in the current issue state and repository checkout.
+State: {{ issue.state }}
+Labels: {{ issue.labels }}
+Priority: {{ issue.priority }}
+Branch: {{ issue.branch_name }}
+URL: {{ issue.url }}
+Attempt: {{ attempt }}
 
+Description:
+{{ issue.description }}

@@ -81,6 +81,50 @@ def test_status_no_info_loss():
     assert not missing, f"Missing in status output: {missing}"
 
 
+def test_issue_runner_status_no_info_loss():
+    fmt = _fmt()
+    result = {
+        "workflow": "issue-runner",
+        "workflowRoot": "/path/to/workflow-root",
+        "contractPath": "/path/to/WORKFLOW.md",
+        "health": "healthy",
+        "tracker": {
+            "kind": "github",
+            "path": "/path/to/repo",
+            "issueCount": 12,
+            "eligibleCount": 3,
+        },
+        "scheduler": {
+            "max_concurrent_agents": 2,
+            "running": [{"issue_id": "123"}],
+            "retry_queue": [{"issue_id": "124"}],
+            "codex_totals": {
+                "input_tokens": 11,
+                "output_tokens": 7,
+                "total_tokens": 18,
+                "rate_limits": {"requests_remaining": 99},
+            },
+        },
+        "selectedIssue": {
+            "identifier": "#123",
+            "title": "Important issue",
+            "state": "open",
+        },
+        "lastRun": {
+            "ok": True,
+            "attempt": 2,
+            "updatedAt": "2026-04-30T12:00:00Z",
+        },
+        "metrics": {
+            "tokens": {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+            "rate_limits": {"requests_remaining": 99},
+        },
+    }
+    out = fmt.format_status(result, use_color=False, now_iso="2026-04-30T12:00:15Z")
+    missing = _values_in_text(result, out)
+    assert not missing, f"Missing in issue-runner status output: {missing}"
+
+
 def test_active_gate_status_no_info_loss():
     fmt = _fmt()
     result = {
@@ -105,6 +149,21 @@ def test_doctor_no_info_loss():
     out = fmt.format_doctor(result, use_color=False)
     missing = _values_in_text(result, out)
     assert not missing, f"Missing in doctor output: {missing}"
+
+
+def test_issue_runner_doctor_no_info_loss():
+    fmt = _fmt()
+    result = {
+        "workflow": "issue-runner",
+        "ok": False,
+        "checks": [
+            {"name": "tracker", "status": "pass", "detail": "12 issue(s) loaded"},
+            {"name": "agent-runtime", "status": "fail", "detail": "unknown runtime profile 'codex'"},
+        ],
+    }
+    out = fmt.format_doctor(result, use_color=False)
+    missing = _values_in_text(result, out)
+    assert not missing, f"Missing in issue-runner doctor output: {missing}"
 
 
 def test_service_status_no_info_loss():

@@ -1,6 +1,9 @@
 # Observability
 
-Daedalus exposes three operator-facing observability surfaces: the **TUI watch frame**, the **HTTP status server**, and **GitHub comments publishing**. All three read from the same canonical state (SQLite + JSONL events) but serve different consumption patterns.
+Daedalus exposes three operator-facing observability surfaces: the **TUI watch
+frame**, the **HTTP status server**, and **GitHub comments publishing**. All
+three read from the workflow's canonical state but serve different
+consumption patterns.
 
 ---
 
@@ -38,9 +41,11 @@ Daedalus exposes three operator-facing observability surfaces: the **TUI watch f
 
 The watch frame is assembled from three sources:
 
-1. **`active_lanes`** — `SELECT * FROM lanes WHERE lane_status NOT IN ('merged', 'closed', 'archived')`
+1. **`active_lanes`** — workflow-aware projection of active work
+   `change-delivery`: `SELECT * FROM lanes WHERE lane_status NOT IN ('merged', 'closed', 'archived')`
+   `issue-runner`: persisted scheduler `running` + `retry_queue`
 2. **`alert_state`** — parsed from `daedalus/alerts.py` output
-3. **`recent_events`** — tail of `daedalus-events.jsonl` (last 20, reverse-chunked seek)
+3. **`recent_events`** — tail of the workflow audit/event log (last 20, reverse-chunked seek)
 
 ### Modes
 
@@ -59,15 +64,15 @@ See [http-status.md](http-status.md) for full endpoint documentation. Summary:
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/v1/state` | Snapshot — running + retrying lanes, totals, recent events |
-| `GET /api/v1/<identifier>` | Per-lane debug view (`#42`, `42`, or `lane_id`) |
+| `GET /api/v1/state` | Snapshot — running + retrying workflow work, totals, recent events |
+| `GET /api/v1/<identifier>` | Per-lane or per-issue debug view (`#42`, `42`, or `lane_id`) |
 | `POST /api/v1/refresh` | Trigger immediate tick subprocess |
 | `GET /` | Minimal HTML dashboard |
 
 ### Security
 
 - **Localhost only** (`127.0.0.1`). No auth — port access is the auth.
-- **Read-only DB** (`mode=ro` SQLite URI).
+- **Read-only state** (`mode=ro` SQLite URI for `change-delivery`, persisted JSON/JSONL state for `issue-runner`).
 - **Refresh is rate-limited by OS** (subprocess fork).
 
 ---
@@ -132,7 +137,7 @@ See [events.md](events.md) for the full taxonomy.
 
 - TUI frame renderer: `daedalus/watch.py`
 - Watch source aggregation: `daedalus/watch_sources.py`
-- HTTP server: `daedalus/workflows/change_delivery/server/`
+- Shared workflow-aware HTTP server: `daedalus/workflows/change_delivery/server/`
 - GitHub comments: `daedalus/workflows/change_delivery/comments.py`, `comments_publisher.py`
 - Observability config: `daedalus/workflows/change_delivery/observability.py`
 - Override surface: `daedalus/observability_overrides.py`

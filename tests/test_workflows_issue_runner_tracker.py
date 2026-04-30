@@ -1,0 +1,248 @@
+import json
+from pathlib import Path
+
+import pytest
+
+
+def test_local_json_tracker_client_lists_candidates_terminal_and_refresh(tmp_path):
+    from workflows.issue_runner.tracker import build_tracker_client
+
+    tracker_path = tmp_path / "issues.json"
+    tracker_path.write_text(
+        json.dumps(
+            {
+                "issues": [
+                    {
+                        "id": "ISSUE-2",
+                        "identifier": "ISSUE-2",
+                        "title": "Lower priority",
+                        "priority": 2,
+                        "state": "todo",
+                        "labels": [],
+                        "blocked_by": [],
+                    },
+                    {
+                        "id": "ISSUE-1",
+                        "identifier": "ISSUE-1",
+                        "title": "Higher priority",
+                        "priority": 1,
+                        "state": "todo",
+                        "labels": [],
+                        "blocked_by": [],
+                    },
+                    {
+                        "id": "ISSUE-3",
+                        "identifier": "ISSUE-3",
+                        "title": "Done",
+                        "priority": 3,
+                        "state": "done",
+                        "labels": [],
+                        "blocked_by": [],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = build_tracker_client(
+        workflow_root=tmp_path,
+        tracker_cfg={
+            "kind": "local-json",
+            "path": str(tracker_path),
+            "active_states": ["todo"],
+            "terminal_states": ["done"],
+        },
+    )
+
+    candidates = client.list_candidates()
+    terminals = client.list_terminal()
+    refreshed = client.refresh(["ISSUE-1"])
+
+    assert [issue["id"] for issue in candidates] == ["ISSUE-1", "ISSUE-2"]
+    assert [issue["id"] for issue in terminals] == ["ISSUE-3"]
+    assert refreshed["ISSUE-1"]["title"] == "Higher priority"
+
+
+def test_linear_tracker_client_normalizes_graphql_payload(monkeypatch, tmp_path):
+    from workflows.issue_runner.tracker import build_tracker_client
+
+    monkeypatch.setenv("LINEAR_API_KEY", "linear-token")
+
+    active_issue = {
+        "id": "lin-1",
+        "identifier": "ABC-123",
+        "title": "Important work",
+        "description": "Implement the thing.",
+        "priority": 1,
+        "branchName": "abc-123-important-work",
+        "url": "https://linear.app/acme/issue/ABC-123",
+        "createdAt": "2026-04-30T00:00:00Z",
+        "updatedAt": "2026-04-30T01:00:00Z",
+        "state": {"name": "In Progress"},
+        "labels": {"nodes": [{"name": "backend"}]},
+        "relations": {
+            "nodes": [
+                {
+                    "type": "blocks",
+                    "relatedIssue": {
+                        "id": "lin-0",
+                        "identifier": "ABC-122",
+                        "createdAt": "2026-04-29T00:00:00Z",
+                        "updatedAt": "2026-04-29T01:00:00Z",
+                        "state": {"name": "In Progress"},
+                    },
+                }
+            ]
+        },
+    }
+    terminal_issue = {
+        **active_issue,
+        "id": "lin-2",
+        "identifier": "ABC-999",
+        "title": "Done work",
+        "state": {"name": "Done"},
+    }
+
+    def fake_post_json(endpoint, *, query, variables, api_key):
+        assert endpoint == "https://api.linear.app/graphql"
+        assert api_key == "linear-token"
+        if "IssueRunnerIssuesByIds" in query:
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [active_issue],
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    }
+                }
+            }
+        states = {state.lower() for state in (variables.get("states") or [])}
+        nodes = [active_issue] if "in progress" in states else [terminal_issue]
+        return {
+            "data": {
+                "issues": {
+                    "nodes": nodes,
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }
+            }
+        }
+
+    client = build_tracker_client(
+        workflow_root=tmp_path,
+        tracker_cfg={
+            "kind": "linear",
+            "endpoint": "https://api.linear.app/graphql",
+            "api_key": "$LINEAR_API_KEY",
+            "project_slug": "core",
+            "active_states": ["In Progress"],
+            "terminal_states": ["Done"],
+        },
+        post_json=fake_post_json,
+    )
+
+    candidates = client.list_candidates()
+    terminals = client.list_terminal()
+    refreshed = client.refresh(["lin-1"])
+
+    assert candidates[0]["identifier"] == "ABC-123"
+    assert candidates[0]["labels"] == ["backend"]
+    assert candidates[0]["blocked_by"][0]["identifier"] == "ABC-122"
+    assert terminals[0]["state"] == "Done"
+    assert refreshed["lin-1"]["branch_name"] == "abc-123-important-work"
+
+
+def test_linear_tracker_client_requires_api_key(monkeypatch, tmp_path):
+    from workflows.issue_runner.tracker import TrackerConfigError, build_tracker_client
+
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+
+    with pytest.raises(TrackerConfigError):
+        build_tracker_client(
+            workflow_root=tmp_path,
+            tracker_cfg={
+                "kind": "linear",
+                "project_slug": "core",
+            },
+        )
+
+
+def test_github_tracker_client_normalizes_issue_payloads_and_refresh(tmp_path):
+    from workflows.issue_runner.tracker import build_tracker_client
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+
+    open_issue = {
+        "number": 123,
+        "title": "Important GitHub issue",
+        "body": "Implement the thing.",
+        "url": "https://github.com/attmous/daedalus/issues/123",
+        "labels": [{"name": "backend"}],
+        "createdAt": "2026-04-30T00:00:00Z",
+        "updatedAt": "2026-04-30T01:00:00Z",
+        "state": "OPEN",
+    }
+    excluded_issue = {
+        **open_issue,
+        "number": 124,
+        "title": "Skipped",
+        "url": "https://github.com/attmous/daedalus/issues/124",
+        "labels": [{"name": "skip"}],
+    }
+    closed_issue = {
+        **open_issue,
+        "number": 999,
+        "title": "Closed issue",
+        "url": "https://github.com/attmous/daedalus/issues/999",
+        "labels": [],
+        "state": "CLOSED",
+    }
+
+    def fake_run_json(command, cwd=None):
+        assert cwd == repo_path
+        if command[:3] == ["gh", "issue", "list"]:
+            state = command[command.index("--state") + 1]
+            if state == "open":
+                return [open_issue, excluded_issue]
+            if state == "closed":
+                return [closed_issue]
+            if state == "all":
+                return [open_issue, excluded_issue, closed_issue]
+        if command[:3] == ["gh", "issue", "view"] and command[3] == "123":
+            return open_issue
+        raise AssertionError(f"unexpected command: {command}")
+
+    client = build_tracker_client(
+        workflow_root=tmp_path,
+        repo_path=repo_path,
+        tracker_cfg={
+            "kind": "github",
+            "active_states": ["open"],
+            "terminal_states": ["closed"],
+            "required_labels": ["backend"],
+            "exclude_labels": ["skip"],
+        },
+        run_json=fake_run_json,
+    )
+
+    candidates = client.list_candidates()
+    terminals = client.list_terminal()
+    refreshed = client.refresh(["123"])
+
+    assert [issue["id"] for issue in candidates] == ["123"]
+    assert candidates[0]["identifier"] == "#123"
+    assert candidates[0]["description"] == "Implement the thing."
+    assert candidates[0]["labels"] == ["backend"]
+    assert [issue["id"] for issue in terminals] == ["999"]
+    assert refreshed["123"]["state"] == "open"
+
+
+def test_github_tracker_client_requires_repo_path(tmp_path):
+    from workflows.issue_runner.tracker import TrackerConfigError, build_tracker_client
+
+    with pytest.raises(TrackerConfigError):
+        build_tracker_client(
+            workflow_root=tmp_path,
+            tracker_cfg={
+                "kind": "github",
+            },
+        )

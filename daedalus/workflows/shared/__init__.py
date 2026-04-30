@@ -1,14 +1,13 @@
 """Shared workflow infrastructure reused across bundled workflows.
 
-This package holds the generic parts of the workflow system that are not
-specific to one lifecycle policy:
+This package holds generic workflow mechanics that stay workflow-agnostic:
 
 - workflow-root resolution and plugin path helpers
 - immutable config snapshots and hot-reload primitives
-- runtime adapter registry
 - stall detection helpers
 
-Policy-heavy code stays in individual workflow packages such as
-``workflows.change_delivery`` and ``workflows.issue_runner``.
+Shared execution backends now live under top-level ``runtimes/`` and shared
+tracker integrations under top-level ``trackers/``. Policy-heavy code stays in
+individual workflow packages such as ``workflows.change_delivery`` and
+``workflows.issue_runner``.
 """
-

@@ -12,9 +12,10 @@ For each eligible tracker issue:
 2. select the next eligible issue
 3. create/reuse an isolated issue workspace
 4. run lifecycle hooks
-5. render the shared workflow policy + issue payload into a prompt
+5. render the Markdown workflow body as the issue prompt template
 6. invoke the configured runtime/agent
 7. persist output and audit state
+8. persist scheduler state for retries, running workers, and token totals
 
 ## Use it when
 
@@ -30,19 +31,39 @@ For each eligible tracker issue:
 
 ## Key config blocks
 
-- `tracker`: tracker kind, source path, active/terminal states, label filters
+- `tracker`: shared tracker client kind, source path or endpoint, active/terminal states, label filters
 - `workspace`: per-issue workspace root
-- `hooks`: `after-create`, `before-run`, `after-run`, `before-remove`
-- `runtimes`: the runtime profiles available to the workflow
-- `agent`: model/runtime/optional command override
-- `retry`: continuation and backoff settings
+- `hooks`: `after_create`, `before_run`, `after_run`, `before_remove`
+- `agent`: model/runtime plus scheduler-facing limits
+- `codex`: spec-shaped Codex runner settings
+- `daedalus.runtimes`: shared runtime backend profiles used by the current implementation when you are not using the top-level `codex` block
 
-## Current operator path
+Supported tracker kinds today:
 
-`issue-runner` is bundled and scaffoldable, but it is not yet part of the
-managed `bootstrap` / `service-up` public path.
+- `github`
+- `local-json`
+- `linear`
 
-Use the explicit scaffold path:
+`issue-runner` composes the shared `trackers/` clients with workflow-specific
+eligibility, ordering, retry, and workspace policy.
+
+Scheduler state is persisted under `storage.scheduler` (default:
+`memory/workflow-scheduler.json`) so retry queues, running-worker recovery, and
+aggregate Codex token totals survive loop restarts.
+
+## Operator path
+
+`issue-runner` now supports the same repo-owned contract and managed service
+path as `change-delivery`.
+
+Use either:
+
+```bash
+cd /path/to/repo
+hermes daedalus bootstrap --workflow issue-runner
+```
+
+or the explicit scaffold path:
 
 ```bash
 hermes daedalus scaffold-workflow \
@@ -53,23 +74,37 @@ hermes daedalus scaffold-workflow \
 
 Then edit:
 
-- `WORKFLOW.md`
-- `config/issues.json` (or replace it with your own local-json tracker input)
+- `WORKFLOW.md` or `WORKFLOW-issue-runner.md` in the repo checkout
+- nothing extra if you are using `tracker.kind: github` and the repo checkout already has `gh` auth
+- `config/issues.json` if you are using `tracker.kind: local-json`
+- `tracker.endpoint`, `tracker.api_key`, and `tracker.project_slug` if you are using `tracker.kind: linear`
 
-Run it through the workflow CLI:
+Then bring it up:
+
+```bash
+hermes daedalus service-up
+```
+
+For direct workflow operations:
 
 ```bash
 /workflow issue-runner status
 /workflow issue-runner doctor
 /workflow issue-runner tick
+/workflow issue-runner run --max-iterations 1 --json
+/workflow issue-runner serve
 ```
+
+If `server.port` is set in the repo-owned contract, `serve` exposes the same
+localhost JSON + HTML status surface used by `change-delivery`, but backed by
+the `issue-runner` scheduler/status/audit files instead of the lane SQLite
+tables.
 
 ## Current limitation
 
-The broader Daedalus runtime/service layer still assumes the richer
-`change-delivery` status model. That is why `issue-runner` is bundled and
-fully loadable through `/workflow ...`, but not yet wired into the default
-managed daemon path.
+- The Linear adapter is first-pass. It is useful for issue selection and reconciliation, but it has not been hardened against every Linear schema edge yet.
+- Managed service mode is `active` only. `shadow` remains specific to `change-delivery`.
+- The bundled Codex app-server adapter now preserves partial metrics on failed turns, but it is still not a full spec-native session protocol yet.
 
 ## Related docs
 

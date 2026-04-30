@@ -1,7 +1,8 @@
 # Daedalus installation
 
 This is the supported community install path for the first public release.
-The default managed path is for the bundled `change-delivery` workflow.
+The default managed path is for the bundled `change-delivery` workflow, but
+`issue-runner` now uses the same repo-owned contract and `service-up` surface.
 
 ## Requirements
 
@@ -18,6 +19,11 @@ The bundled `change-delivery` template defaults to:
 
 If your host does not have those runtimes, edit `WORKFLOW.md` before starting the service.
 
+The bundled `issue-runner` template defaults to `tracker.kind: local-json` so
+it is runnable without an external tracker. If you want Symphony-style tracker
+operation, switch it to `tracker.kind: linear` and set the Linear fields in the
+repo-owned contract before running `service-up`.
+
 ## Bundled workflows
 
 Daedalus currently ships two workflow packages:
@@ -25,9 +31,9 @@ Daedalus currently ships two workflow packages:
 - `change-delivery`
   This is the supported managed workflow behind `bootstrap` and `service-up`.
 - `issue-runner`
-  This is a bundled generic reference workflow that uses the explicit
-  `scaffold-workflow --workflow issue-runner` path instead of the managed
-  onboarding path.
+  This is the bundled generic tracker-driven workflow. Use
+  `bootstrap --workflow issue-runner` or `scaffold-workflow --workflow issue-runner`,
+  then bring it up with `service-up` in `active` mode.
 
 ## Install the plugin
 
@@ -58,12 +64,17 @@ cd /path/to/your/repo
 hermes daedalus bootstrap
 ```
 
-This is the preferred path for `change-delivery`. `bootstrap`:
+This is the preferred path for `change-delivery`. To bootstrap the generic
+workflow instead, run `hermes daedalus bootstrap --workflow issue-runner`.
+
+`bootstrap`:
 
 - detects the git repo root from the current checkout
 - derives `github-slug` from `origin`
 - creates the supported instance layout below
-- writes a starter `WORKFLOW.md`
+- writes the repo-owned workflow contract
+- creates a dedicated bootstrap branch
+- commits the workflow contract file
 - writes `./.hermes/daedalus/workflow-root` in the repo checkout so later
   Daedalus commands can resolve the workflow root automatically
 
@@ -96,12 +107,26 @@ hermes daedalus scaffold-workflow \
   --github-slug your-org/your-repo
 ```
 
+The first workflow in a repo is written to:
+
+```text
+/path/to/repo/WORKFLOW.md
+```
+
+If the repo later carries multiple workflows, Daedalus promotes the contracts
+to:
+
+```text
+/path/to/repo/WORKFLOW-change-delivery.md
+/path/to/repo/WORKFLOW-issue-runner.md
+```
+
 ## Configure the workflow
 
 Edit:
 
 ```text
-~/.hermes/workflows/<owner>-<repo>-<workflow-type>/WORKFLOW.md
+/path/to/repo/WORKFLOW.md
 ```
 
 At minimum, set:
@@ -111,8 +136,8 @@ At minimum, set:
 - any gates, webhooks, or observability settings your repo needs
 
 The YAML front matter is the structured config. The Markdown body below it is
-workflow policy. `change-delivery` prepends that policy to its role-specific
-prompts; `issue-runner` renders it directly into the issue-run prompt.
+the workflow policy contract. `change-delivery` composes it into its role
+prompts; `issue-runner` renders it as the issue prompt template.
 
 ## Bring it up
 
@@ -129,6 +154,8 @@ hermes daedalus service-up
 - start the service
 
 Use `--service-mode shadow` if you want read-only parity validation first.
+That `shadow` mode applies to `change-delivery`. `issue-runner` supports
+`active` mode only.
 
 ## Manual low-level path
 
@@ -177,6 +204,7 @@ For the bundled generic workflow:
 /workflow issue-runner status
 /workflow issue-runner doctor
 /workflow issue-runner tick
+/workflow issue-runner run --max-iterations 1 --json
 ```
 
 ## Plugin state

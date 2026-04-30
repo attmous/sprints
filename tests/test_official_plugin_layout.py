@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,8 +21,10 @@ def test_repo_root_exposes_official_hermes_plugin_layout():
     expected = [
         REPO_ROOT / "plugin.yaml",
         REPO_ROOT / "__init__.py",
+        REPO_ROOT / "runtimes" / "__init__.py",
         REPO_ROOT / "schemas.py",
         REPO_ROOT / "tools.py",
+        REPO_ROOT / "trackers" / "__init__.py",
         REPO_ROOT / "runtime.py",
         REPO_ROOT / "workflows" / "__init__.py",
         REPO_ROOT / "workflows" / "__main__.py",
@@ -70,13 +73,23 @@ def test_repo_root_plugin_entrypoint_registers_same_commands_and_skill():
 def test_repo_root_tools_wrapper_dispatches_scaffold(tmp_path):
     tools = _load_module("daedalus_repo_root_tools_test", REPO_ROOT / "tools.py")
     workflow_root = tmp_path / "attmous-daedalus-change-delivery"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:attmous/daedalus.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
     out = tools.execute_raw_args(
-        f"scaffold-workflow --workflow-root {workflow_root} --github-slug attmous/daedalus"
+        f"scaffold-workflow --workflow-root {workflow_root} --repo-path {repo} --github-slug attmous/daedalus"
     )
 
     assert "daedalus error:" not in out, out
-    assert (workflow_root / "WORKFLOW.md").exists()
+    assert (repo / "WORKFLOW.md").exists()
 
 
 def test_repo_root_workflows_wrapper_exposes_change_delivery_submodules():
@@ -103,3 +116,33 @@ def test_repo_root_workflows_wrapper_exposes_issue_runner_submodules():
 
     assert tracker.__file__ is not None
     assert "daedalus/workflows/issue_runner/tracker" in tracker.__file__
+
+
+def test_repo_root_runtimes_wrapper_exposes_shared_runtime_modules():
+    for module_name in list(sys.modules):
+        if module_name == "runtimes" or module_name.startswith("runtimes."):
+            del sys.modules[module_name]
+
+    import importlib
+
+    runtimes_pkg = importlib.import_module("runtimes")
+    codex = importlib.import_module("runtimes.codex_app_server")
+
+    assert runtimes_pkg.__file__ is not None
+    assert codex.__file__ is not None
+    assert "daedalus/runtimes/codex_app_server" in codex.__file__
+
+
+def test_repo_root_trackers_wrapper_exposes_shared_tracker_modules():
+    for module_name in list(sys.modules):
+        if module_name == "trackers" or module_name.startswith("trackers."):
+            del sys.modules[module_name]
+
+    import importlib
+
+    trackers_pkg = importlib.import_module("trackers")
+    linear = importlib.import_module("trackers.linear")
+
+    assert trackers_pkg.__file__ is not None
+    assert linear.__file__ is not None
+    assert "daedalus/trackers/linear" in linear.__file__
