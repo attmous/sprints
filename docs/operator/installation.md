@@ -234,6 +234,9 @@ For the bundled generic workflow:
 /workflow issue-runner run --max-iterations 1 --json
 ```
 
+To validate the GitHub-backed tracker path against a disposable live issue, see
+[github-smoke.md](github-smoke.md).
+
 ## Plugin state
 
 Hermes plugins are opt-in. `hermes plugins install ... --enable` is the

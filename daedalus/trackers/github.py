@@ -1,11 +1,83 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
 from . import TrackerConfigError, issue_priority_sort_key, normalize_issue, register
+
+
+_GITHUB_SLUG_RE = re.compile(
+    r"^(?:(?P<host>[A-Za-z0-9.-]+(?::[0-9]+)?)/)?"
+    r"(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)$"
+)
+
+
+def _github_slug_match(raw: str) -> re.Match[str] | None:
+    return _GITHUB_SLUG_RE.match(raw)
+
+
+def _github_slug_config_error() -> TrackerConfigError:
+    return TrackerConfigError(
+        "repository.github-slug must be in owner/repo or host/owner/repo form for tracker.kind='github'"
+    )
+
+
+def github_auth_host_from_slug(slug: str | None) -> str | None:
+    raw = str(slug or "").strip()
+    if not raw:
+        return None
+    match = _github_slug_match(raw)
+    if not match:
+        raise _github_slug_config_error()
+    return match.group("host") or "github.com"
+
+
+def github_name_with_owner_from_slug(slug: str | None) -> str | None:
+    raw = str(slug or "").strip()
+    if not raw:
+        return None
+    match = _github_slug_match(raw)
+    if not match:
+        raise _github_slug_config_error()
+    return f"{match.group('owner')}/{match.group('repo')}"
+
+
+def github_auth_success_accounts(
+    payload: dict[str, Any],
+    *,
+    hostname: str | None = None,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    hosts = payload.get("hosts") if isinstance(payload, dict) else None
+    if not isinstance(hosts, dict):
+        raise RuntimeError("gh auth status did not return host information")
+
+    if hostname:
+        accounts = hosts.get(hostname) or []
+        if not isinstance(accounts, list):
+            raise RuntimeError(f"gh auth status returned invalid {hostname} account information")
+        valid_accounts = [account for account in accounts if isinstance(account, dict)]
+        success_accounts = [
+            account for account in valid_accounts if account.get("state") == "success"
+        ]
+        if not success_accounts:
+            raise RuntimeError(
+                f"gh is not authenticated for {hostname}; run `gh auth login --hostname {hostname}`"
+            )
+        return hostname, success_accounts
+
+    for host, accounts in hosts.items():
+        if not isinstance(accounts, list):
+            continue
+        valid_accounts = [account for account in accounts if isinstance(account, dict)]
+        success_accounts = [
+            account for account in valid_accounts if account.get("state") == "success"
+        ]
+        if success_accounts:
+            return str(host), success_accounts
+    raise RuntimeError("gh is not authenticated for any GitHub host; run `gh auth login`")
 
 
 def issue_label_names(issue: dict[str, Any] | None) -> set[str]:
@@ -59,12 +131,81 @@ def _subprocess_run_json(command: list[str], *, cwd: Path | None = None) -> Any:
     return payload
 
 
+def github_slug_from_config(
+    tracker_cfg: dict[str, Any],
+    repository_cfg: dict[str, Any] | None = None,
+) -> str | None:
+    repository_cfg = repository_cfg or {}
+    raw = str(
+        tracker_cfg.get("github_slug")
+        or tracker_cfg.get("github-slug")
+        or repository_cfg.get("github_slug")
+        or repository_cfg.get("github-slug")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    if not _github_slug_match(raw):
+        raise _github_slug_config_error()
+    return raw
+
+
+def _configured_states(tracker_cfg: dict[str, Any], *keys: str) -> list[str]:
+    for key in keys:
+        value = tracker_cfg.get(key)
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+    return []
+
+
+def validate_github_tracker_config(
+    *,
+    workflow_root: Path,
+    tracker_cfg: dict[str, Any],
+    repository_cfg: dict[str, Any] | None = None,
+    repo_path: Path | None = None,
+) -> None:
+    repository_cfg = repository_cfg or {}
+    slug = github_slug_from_config(tracker_cfg, repository_cfg)
+    resolved_repo_path = _resolve_repo_path(
+        workflow_root=workflow_root,
+        tracker_cfg=tracker_cfg,
+        repo_path=repo_path,
+        required=slug is None,
+    )
+    if resolved_repo_path is not None and not resolved_repo_path.exists():
+        raise TrackerConfigError(
+            f"repository.local-path does not exist for tracker.kind='github': {resolved_repo_path}"
+        )
+
+    active_states = _configured_states(tracker_cfg, "active_states", "active-states")
+    terminal_states = _configured_states(tracker_cfg, "terminal_states", "terminal-states")
+    if not active_states or set(active_states) != {"open"}:
+        raise TrackerConfigError(
+            "tracker.kind='github' requires tracker.active_states: [open]"
+        )
+    if not terminal_states or set(terminal_states) != {"closed"}:
+        raise TrackerConfigError(
+            "tracker.kind='github' requires tracker.terminal_states: [closed]"
+        )
+
+    for key in ("required_labels", "required-labels", "exclude_labels", "exclude-labels"):
+        value = tracker_cfg.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list):
+            raise TrackerConfigError(f"tracker.{key} must be a list for tracker.kind='github'")
+        if any(not str(item).strip() for item in value):
+            raise TrackerConfigError(f"tracker.{key} must not contain blank labels")
+
+
 def _resolve_repo_path(
     *,
     workflow_root: Path,
     tracker_cfg: dict[str, Any],
     repo_path: Path | None,
-) -> Path:
+    required: bool = True,
+) -> Path | None:
     if repo_path is not None:
         return repo_path.expanduser().resolve()
 
@@ -74,8 +215,10 @@ def _resolve_repo_path(
         or ""
     ).strip()
     if not raw:
+        if not required:
+            return None
         raise TrackerConfigError(
-            "tracker.kind='github' requires repository.local-path or tracker.repo_path"
+            "tracker.kind='github' requires repository.github-slug or repository.local-path"
         )
     path = Path(raw).expanduser()
     if not path.is_absolute():
@@ -110,12 +253,23 @@ class GithubTrackerClient:
             workflow_root=workflow_root,
             tracker_cfg=tracker_cfg,
             repo_path=repo_path,
+            required=github_slug_from_config(tracker_cfg) is None,
         )
+        self._repo_slug = github_slug_from_config(tracker_cfg)
         self._run_json = run_json or _subprocess_run_json
 
     @property
-    def repo_path(self) -> Path:
+    def repo_path(self) -> Path | None:
         return self._repo_path
+
+    @property
+    def repo_slug(self) -> str | None:
+        return self._repo_slug
+
+    def _with_repo(self, command: list[str]) -> list[str]:
+        if not self._repo_slug:
+            return command
+        return [*command, "--repo", self._repo_slug]
 
     def list_issue_payloads(
         self,
@@ -125,22 +279,62 @@ class GithubTrackerClient:
         fields: str,
     ) -> list[dict[str, Any]]:
         payload = self._run_json(
-            [
-                "gh",
-                "issue",
-                "list",
-                "--state",
-                state,
-                "--limit",
-                str(limit),
-                "--json",
-                fields,
-            ],
+            self._with_repo(
+                [
+                    "gh",
+                    "issue",
+                    "list",
+                    "--state",
+                    state,
+                    "--limit",
+                    str(limit),
+                    "--json",
+                    fields,
+                ]
+            ),
             cwd=self._repo_path,
         )
         if not isinstance(payload, list):
             raise RuntimeError("expected gh issue list JSON array payload")
         return [item for item in payload if isinstance(item, dict)]
+
+    def repo_view_payload(self) -> dict[str, Any]:
+        command = ["gh", "repo", "view", "--json", "nameWithOwner"]
+        if self._repo_slug:
+            command = ["gh", "repo", "view", self._repo_slug, "--json", "nameWithOwner"]
+        payload = self._run_json(
+            command,
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("expected gh repo view JSON object payload")
+        return payload
+
+    def auth_status_payload(self, hostname: str | None = None) -> dict[str, Any]:
+        command = [
+            "gh",
+            "auth",
+            "status",
+            "--json",
+            "hosts",
+        ]
+        if hostname:
+            command = [
+                "gh",
+                "auth",
+                "status",
+                "--hostname",
+                hostname,
+                "--json",
+                "hosts",
+            ]
+        payload = self._run_json(
+            command,
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("expected gh auth status JSON object payload")
+        return payload
 
     def list_open_issue_payloads(
         self,
@@ -160,7 +354,7 @@ class GithubTrackerClient:
         if issue_number is None:
             return None
         payload = self._run_json(
-            ["gh", "issue", "view", issue_number, "--json", fields],
+            self._with_repo(["gh", "issue", "view", issue_number, "--json", fields]),
             cwd=self._repo_path,
         )
         if not isinstance(payload, dict):

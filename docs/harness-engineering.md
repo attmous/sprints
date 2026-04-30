@@ -30,7 +30,19 @@ The harness tests should catch these regressions before review:
 
 Add tests for the next hardening slice in this order:
 
-1. GitHub issue selection, dispatch, and terminal reconciliation smoke against a
-   real test repository.
+1. `WORKFLOW*.md` bootstrap branch creation and update behavior when a repo
+   already has one workflow contract.
 2. Codex app-server diagnostics for managed and external service modes.
 3. CLI/docs drift checks for every command shown in the install guide.
+
+## Live GitHub Smoke
+
+The first live GitHub smoke is implemented but skipped by default:
+
+```bash
+export DAEDALUS_GITHUB_SMOKE_REPO=your-org/your-repo
+pytest tests/test_github_issue_runner_smoke.py -q
+```
+
+See [operator/github-smoke.md](operator/github-smoke.md) for setup and cleanup
+details.

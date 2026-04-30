@@ -310,3 +310,86 @@ def test_github_tracker_client_requires_repo_path(tmp_path):
                 "kind": "github",
             },
         )
+
+
+def test_github_tracker_client_can_use_repo_slug_without_checkout(tmp_path):
+    from workflows.issue_runner.tracker import build_tracker_client
+
+    commands = []
+    open_issue = {
+        "number": 42,
+        "title": "Slug-backed issue",
+        "body": "Run through --repo.",
+        "url": "https://github.com/attmous/daedalus/issues/42",
+        "labels": [],
+        "createdAt": "2026-04-30T00:00:00Z",
+        "updatedAt": "2026-04-30T01:00:00Z",
+        "state": "OPEN",
+    }
+
+    def fake_run_json(command, cwd=None):
+        commands.append(command)
+        assert cwd is None
+        assert command[-2:] == ["--repo", "attmous/daedalus"]
+        if command[:3] == ["gh", "issue", "list"]:
+            return [open_issue]
+        if command[:3] == ["gh", "issue", "view"]:
+            return open_issue
+        raise AssertionError(f"unexpected command: {command}")
+
+    client = build_tracker_client(
+        workflow_root=tmp_path,
+        tracker_cfg={
+            "kind": "github",
+            "github_slug": "attmous/daedalus",
+            "active_states": ["open"],
+            "terminal_states": ["closed"],
+        },
+        run_json=fake_run_json,
+    )
+
+    assert client.repo_path is None
+    assert client.repo_slug == "attmous/daedalus"
+    assert client.list_candidates()[0]["id"] == "42"
+    assert client.refresh(["42"])["42"]["title"] == "Slug-backed issue"
+    assert any(command[:3] == ["gh", "issue", "list"] for command in commands)
+
+
+def test_github_tracker_client_accepts_host_qualified_repo_slug_without_checkout(tmp_path):
+    from workflows.issue_runner.tracker import build_tracker_client
+
+    commands = []
+    open_issue = {
+        "number": 42,
+        "title": "Enterprise issue",
+        "body": "Run through a host-qualified --repo.",
+        "url": "https://github.example.com/attmous/daedalus/issues/42",
+        "labels": [],
+        "createdAt": "2026-04-30T00:00:00Z",
+        "updatedAt": "2026-04-30T01:00:00Z",
+        "state": "OPEN",
+    }
+
+    def fake_run_json(command, cwd=None):
+        commands.append(command)
+        assert cwd is None
+        assert command[-2:] == ["--repo", "github.example.com/attmous/daedalus"]
+        if command[:3] == ["gh", "issue", "list"]:
+            return [open_issue]
+        raise AssertionError(f"unexpected command: {command}")
+
+    client = build_tracker_client(
+        workflow_root=tmp_path,
+        tracker_cfg={
+            "kind": "github",
+            "github_slug": "github.example.com/attmous/daedalus",
+            "active_states": ["open"],
+            "terminal_states": ["closed"],
+        },
+        run_json=fake_run_json,
+    )
+
+    assert client.repo_path is None
+    assert client.repo_slug == "github.example.com/attmous/daedalus"
+    assert client.list_candidates()[0]["title"] == "Enterprise issue"
+    assert any(command[:3] == ["gh", "issue", "list"] for command in commands)

@@ -104,7 +104,7 @@ hermes daedalus scaffold-workflow \
 Then edit:
 
 - `WORKFLOW.md` or `WORKFLOW-issue-runner.md` in the repo checkout
-- nothing extra if you are using `tracker.kind: github` and the repo checkout already has `gh` auth
+- `tracker.active_states: [open]`, `tracker.terminal_states: [closed]`, and `gh` auth if you are using `tracker.kind: github`
 - `config/issues.json` if you are using `tracker.kind: local-json`
 - `tracker.endpoint`, `tracker.api_key`, and `tracker.project_slug` only if you are deliberately testing the experimental Linear adapter
 
@@ -124,6 +124,9 @@ For direct workflow operations:
 /workflow issue-runner serve
 ```
 
+`doctor` includes GitHub-specific checks for `gh auth status` and repository
+resolution when `tracker.kind: github`.
+
 If `server.port` is set in the repo-owned contract, `serve` exposes the same
 localhost JSON + HTML status surface used by `change-delivery`, but backed by
 the `issue-runner` scheduler/status/audit files instead of the lane SQLite
@@ -141,4 +144,5 @@ tables.
 - [Architecture](../architecture.md)
 - [Runtimes](../concepts/runtimes.md)
 - [Hot-reload](../concepts/hot-reload.md)
+- [GitHub smoke test](../operator/github-smoke.md)
 - [Symphony conformance](../symphony-conformance.md)

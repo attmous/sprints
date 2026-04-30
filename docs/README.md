@@ -33,6 +33,7 @@ Day-2 commands and observability.
 - [Cheat sheet](operator/cheat-sheet.md) — quickest path to a useful answer
 - [Slash commands](operator/slash-commands.md) — every `/daedalus` and `/workflow` form
 - [HTTP status surface](operator/http-status.md) — workflow-scoped JSON + HTML endpoints
+- [GitHub smoke test](operator/github-smoke.md) — skipped-by-default live test for the supported tracker path
 
 ## Workflow docs
 

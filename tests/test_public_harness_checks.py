@@ -68,7 +68,7 @@ def test_public_docs_present_github_first_path():
     assert "`github` — first-class public tracker path" in issue_runner
     assert "`local-json` — local development and test fixture path" in issue_runner
     assert "`linear` — experimental adapter" in issue_runner
-    assert "GitHub integration smoke tests" in conformance
+    assert "skipped-by-default live smoke" in conformance
     assert ("Linear integration" + " smoke tests") not in conformance
 
 

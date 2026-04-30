@@ -16,7 +16,7 @@ The short version: Daedalus is already **Symphony-aligned** in architecture, but
 |---|---|---|
 | `WORKFLOW.md` loader | Partial | Supported as a repo-owned public contract. Front matter maps to the selected workflow schema; `issue-runner` is the closer generic reference surface, while `change-delivery` still carries richer GitHub-specific semantics. |
 | Typed config + hot reload | Implemented | Bundled workflows load repo-owned `WORKFLOW.md`; `issue-runner` now keeps last-known-good config on invalid reloads. |
-| Issue tracker client boundary | Partial | `issue-runner` has shared `github`, `local-json`, and Linear clients. GitHub is the first-class public tracker path; `local-json` is for fixtures/dev; Linear is experimental and deferred. |
+| Issue tracker client boundary | Partial | `issue-runner` has shared `github`, `local-json`, and Linear clients. GitHub is the first-class public tracker path and now has a skipped-by-default live smoke; `local-json` is for fixtures/dev; Linear is experimental and deferred. |
 | Workspace manager | Partial | Generic workspace root, lifecycle hooks, terminal cleanup, sanitized workspace keys, root-containment checks, managed long-running `issue-runner`, supervised `change-delivery` active iterations, worker reconciliation, and persisted scheduler state now exist. |
 | Bounded concurrency | Partial | `issue-runner` dispatches bounded async workers in the service loop and persists running-worker recovery. `change-delivery` now supervises one active worker iteration at a time, but the broader engine is still not uniformly scheduler-driven. |
 | Retry/backoff policy | Partial | `issue-runner` uses Symphony-style 1s continuation retries and 10s-based exponential failure backoff, including supervised worker completion and terminal-state retry suppression. |
@@ -37,7 +37,7 @@ Daedalus currently differs from the Symphony draft in four material ways:
 ## Recommended Next Gaps
 
 1. Add stronger cancellation semantics for command-style runtimes, including subprocess group termination where safe.
-2. Add GitHub integration smoke tests that exercise issue selection, worker dispatch, status reporting, and terminal reconciliation against a real repository.
+2. Add broader GitHub integration coverage for comments, labels, and failure recovery against a real repository.
 3. Expand harness checks for public docs, generic examples, and workflow-template drift.
 
 Until those land, Daedalus should be described as **Symphony-inspired and partially compatible**, not as a strict implementation of the current spec.
