@@ -47,7 +47,7 @@
 
 | Doc | What It Covers | Read This If... |
 |:---|:---|:---|
-| [**Slash Commands**](./slash-commands.md) | Complete catalog of `/daedalus` commands: `status`, `doctor`, `watch`, `shadow-report`, `active-gate-status`, `service-status`, `get-observability`, and more. | ...you need to check what's happening or poke the system into action. |
+| [**Slash Commands**](./slash-commands.md) | Complete catalog of `/daedalus` commands plus workflow-specific `/workflow <name> ...` surfaces for both bundled workflows. | ...you need to check what's happening or poke the system into action. |
 | [**HTTP Status Surface**](./http-status.md) | Optional localhost HTTP server (`:8765`) exposing JSON health snapshots for dashboards and external monitoring. | ...you want to monitor Daedalus without SSHing into the box. |
 
 **The narrative arc:** *Check status* → *Watch live* → *Diagnose* → *Fix* → *Confirm*.
@@ -60,7 +60,7 @@
 
 | Doc | What It Covers | Read This If... |
 |:---|:---|:---|
-| [**Cheat Sheet**](./cheat-sheet.md) | Quick-reference commands, SQL queries for direct DB inspection, common failure patterns, and recovery procedures. | ...you need to debug a stuck lane, find a failed action, or verify lease health. |
+| [**Cheat Sheet**](./cheat-sheet.md) | Quick-reference commands, SQL queries for direct DB inspection, common failure patterns, and recovery procedures for the managed `change-delivery` workflow. | ...you need to debug a stuck lane, find a failed action, or verify lease health. |
 
 **The narrative arc:** *Observe symptoms* → *Query state* → *Identify root cause* → *Apply fix* → *Verify recovery*.
 
@@ -103,7 +103,7 @@
 [Cheat Sheet] ──► SQL queries, recovery procedures, common fixes
        │
        ▼
-Lane is unstuck, PR is merged, operator goes back to sleep
+Workflow run is healthy again, operator goes back to sleep
 ```
 
 ---

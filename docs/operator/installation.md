@@ -1,6 +1,7 @@
 # Daedalus installation
 
 This is the supported community install path for the first public release.
+The default managed path is for the bundled `change-delivery` workflow.
 
 ## Requirements
 
@@ -16,6 +17,17 @@ The bundled `change-delivery` template defaults to:
 - `claude-cli` for the internal reviewer runtime
 
 If your host does not have those runtimes, edit `WORKFLOW.md` before starting the service.
+
+## Bundled workflows
+
+Daedalus currently ships two workflow packages:
+
+- `change-delivery`
+  This is the supported managed workflow behind `bootstrap` and `service-up`.
+- `issue-runner`
+  This is a bundled generic reference workflow that uses the explicit
+  `scaffold-workflow --workflow issue-runner` path instead of the managed
+  onboarding path.
 
 ## Install the plugin
 
@@ -46,7 +58,7 @@ cd /path/to/your/repo
 hermes daedalus bootstrap
 ```
 
-This is the preferred path. `bootstrap`:
+This is the preferred path for `change-delivery`. `bootstrap`:
 
 - detects the git repo root from the current checkout
 - derives `github-slug` from `origin`
@@ -75,6 +87,15 @@ That creates the same supported instance layout:
 ~/.hermes/workflows/<owner>-<repo>-<workflow-type>/
 ```
 
+If you want the bundled generic workflow instead of the managed default:
+
+```bash
+hermes daedalus scaffold-workflow \
+  --workflow issue-runner \
+  --workflow-root ~/.hermes/workflows/your-org-your-repo-issue-runner \
+  --github-slug your-org/your-repo
+```
+
 ## Configure the workflow
 
 Edit:
@@ -90,7 +111,8 @@ At minimum, set:
 - any gates, webhooks, or observability settings your repo needs
 
 The YAML front matter is the structured config. The Markdown body below it is
-shared workflow policy that Daedalus prepends to its role-specific prompts.
+workflow policy. `change-delivery` prepends that policy to its role-specific
+prompts; `issue-runner` renders it directly into the issue-run prompt.
 
 ## Bring it up
 
@@ -147,6 +169,14 @@ Then use:
 /daedalus status
 /daedalus doctor
 /workflow change-delivery status
+```
+
+For the bundled generic workflow:
+
+```text
+/workflow issue-runner status
+/workflow issue-runner doctor
+/workflow issue-runner tick
 ```
 
 ## Plugin state

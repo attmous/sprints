@@ -41,19 +41,30 @@
 
 ---
 
-## Core Runtime
+## Engine concepts
 
 The beating heart of Daedalus. These five concepts explain how the engine keeps lanes alive, decides what to do, and survives restarts.
 
 | Concept | One-Liner | Read This If... |
 |:---|:---|:---|
 | [**Leases**](./leases.md) | The thread Theseus carried into the labyrinth. Heartbeat-based ownership with automatic recovery. | ...you want to understand how Daedalus prevents split-brain and claims dead lanes. |
-| [**Lanes**](./lanes.md) | The unit of work. One GitHub issue becomes one lane, carried from discovery to merge. | ...you want to see the full lifecycle of an automated issue. |
 | [**Actions**](./actions.md) | The atomic unit of work. Queued, idempotent, tracked with composite keys. | ...you want to know how Daedalus guarantees exactly-once execution. |
 | [**Shadow → Active**](./shadow-active.md) | Two execution modes: observe safely, then promote to real side effects. | ...you want to validate Daedalus parity before letting it touch real PRs. |
 | [**Hot-reload**](./hot-reload.md) | Edit `WORKFLOW.md`, save, next tick picks it up. Bad edits are ignored, not fatal. | ...you want to change policy without restarting the service. |
 
-**The narrative arc:** *Leases* give you ownership → *Lanes* give you work → *Actions* give you execution → *Shadow/Active* gives you safety → *Hot-reload* gives you agility.
+**The narrative arc:** *Leases* give you ownership → *Actions* give you execution → *Shadow/Active* gives you safety → *Hot-reload* gives you agility.
+
+## Workflow-specific concepts
+
+These docs use the opinionated `change-delivery` workflow as their concrete
+example. They are useful, but they are not the generic engine contract.
+
+| Concept | One-Liner | Read This If... |
+|:---|:---|:---|
+| [**Lanes**](./lanes.md) | The `change-delivery` unit of work. One labeled GitHub issue becomes one lane carried through code/review/merge. | ...you want to see the full lifecycle of the opinionated SDLC workflow. |
+| [**Reviewers**](./reviewers.md) | The multi-stage review pipeline used by `change-delivery`. | ...you want to see how publish/merge gates are structured. |
+| [**Failures**](./failures.md) | Runtime failure handling shown through the current managed workflow. | ...you want to know what happens when a review or merge step fails. |
+| [**Operator Attention**](./operator-attention.md) | How the managed workflow escalates when automation reaches its limit. | ...you want to know when Daedalus asks for help. |
 
 ---
 
@@ -149,11 +160,12 @@ GitHub Issue ──► [Lanes] ──► [Leases] claim ownership
 
 **New to Daedalus?** Read in this order:
 
-1. [**Lanes**](./lanes.md) — understand the unit of work
-2. [**Actions**](./actions.md) — understand what Daedalus actually does
-3. [**Leases**](./leases.md) — understand how it stays alive
+1. [**Architecture**](../architecture.md) — understand the engine/workflow boundary
+2. [**Leases**](./leases.md) — understand how Daedalus stays alive
+3. [**Actions**](./actions.md) — understand what Daedalus actually does
 4. [**Shadow → Active**](./shadow-active.md) — understand how to deploy safely
-5. [**Failures**](./failures.md) — understand how it handles bad days
+5. [**Hot-reload**](./hot-reload.md) — understand how policy changes land
+6. [**Workflow docs**](../workflows/README.md) — choose the bundled workflow that matches your use case
 
 **Operating Daedalus day-to-day?** Keep these open:
 
@@ -166,6 +178,7 @@ GitHub Issue ──► [Lanes] ──► [Leases] claim ownership
 - [**Runtimes**](./runtimes.md) — adding new backends
 - [**Reviewers**](./reviewers.md) — changing review policy
 - [**Webhooks**](./webhooks.md) — adding new integrations
+- [**Workflow docs**](../workflows/README.md) — deciding whether you are extending `change-delivery`, `issue-runner`, or adding a new workflow package
 
 ---
 
@@ -174,6 +187,7 @@ GitHub Issue ──► [Lanes] ──► [Leases] claim ownership
 | Doc | What It Covers |
 |---|---|
 | [Architecture Overview](../architecture.md) | The big picture — how all concepts fit together |
+| [Bundled Workflows](../workflows/README.md) | Workflow-specific docs for `change-delivery` and `issue-runner` |
 | [Operator Cheat Sheet](../operator/cheat-sheet.md) | Day-to-day commands, SQL, debugging |
 | [Slash Commands](../operator/slash-commands.md) | Every `/daedalus` command explained |
 | [Contributing](../contributing.md) | How to contribute to Daedalus |

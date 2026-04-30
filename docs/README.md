@@ -6,8 +6,7 @@ Entry point for everything that won't fit on the [project landing page](../READM
 
 - **[architecture.md](architecture.md)** — the big picture. What Daedalus is, what it isn't, how the pieces fit together.
 - **[operator/installation.md](operator/installation.md)** — the supported install, scaffold, verify, and supervise flow.
-- **[examples/change-delivery.workflow.md](examples/change-delivery.workflow.md)** — copyable public baseline for `WORKFLOW.md`.
-- **[examples/issue-runner.workflow.md](examples/issue-runner.workflow.md)** — bundled generic tracker-driven reference workflow.
+- **[workflows/README.md](workflows/README.md)** — the two bundled workflows, when to use each, and where their templates live.
 - **[public-contract.md](public-contract.md)** — the stability boundary for the first public release.
 - **[symphony-conformance.md](symphony-conformance.md)** — where Daedalus matches the current Symphony draft, and where it still differs.
 - **[security.md](security.md)** — the trust model, shell/network posture, and secret-handling expectations.
@@ -34,6 +33,14 @@ Day-2 commands and observability.
 - [Slash commands](operator/slash-commands.md) — every `/daedalus` and `/workflow` form
 - [HTTP status surface](operator/http-status.md) — `daedalus serve`, JSON + HTML endpoints
 
+## Workflow docs
+
+- [Bundled workflows](workflows/README.md) — overview of `change-delivery` and `issue-runner`
+- [change-delivery](workflows/change-delivery.md) — opinionated GitHub SDLC workflow
+- [issue-runner](workflows/issue-runner.md) — generic tracker-driven reference workflow
+- [examples/change-delivery.workflow.md](examples/change-delivery.workflow.md) — copyable default contract
+- [examples/issue-runner.workflow.md](examples/issue-runner.workflow.md) — copyable generic tracker-driven contract
+
 ## History & decisions
 
 - [Architectural decision records](adr/) — the *why* behind structural choices
@@ -52,6 +59,7 @@ docs/
 │
 ├── concepts/                "what does X mean" — one file per abstraction
 ├── examples/                copyable config baselines
+├── workflows/               bundled workflow-specific docs and templates
 ├── operator/                install + day-2 surface — cheat sheets, commands, endpoints
 │
 ├── adr/                     architectural decisions (immutable record)

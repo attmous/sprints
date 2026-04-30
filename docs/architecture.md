@@ -14,10 +14,10 @@
 
 | Question | Answer |
 |---|---|
-| **What is it?** | A plugin that turns fragile cron-loop automation into explicit, durable, role-based 24/7 workflow orchestration. |
+| **What is it?** | A plugin that turns fragile cron-loop automation into explicit, durable 24/7 workflow orchestration. |
 | **What problem does it solve?** | Agentic SDLC breaks because policy is buried in prompts, state is scattered, failures are logged but not modeled, and handoffs are implicit. |
-| **How?** | Leases. SQLite canonical state. JSONL event history. Shadow/active execution. Explicit actor roles. |
-| **Who owns what?** | The **wrapper** decides *what* should happen. **Daedalus** decides *how* to orchestrate it durably. |
+| **How?** | Leases. SQLite canonical state. JSONL event history. Shadow/active execution. Workflow packages with explicit contracts. |
+| **Who owns what?** | The **workflow package** decides *what* should happen. **Daedalus** decides *how* to orchestrate it durably. |
 
 ---
 
@@ -26,30 +26,30 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         EXTERNAL TRIGGERS                                   │
-│   GitHub Issue (#42)    Operator (/daedalus)    WORKFLOW.md (hot-reload)    │
+│   Tracker Issue        Operator (/daedalus)    WORKFLOW.md (hot-reload)     │
 └─────────────────────────────────────────────────────────────────────────────┘
          │                       │                       │
          ▼                       ▼                       ▼
 ┌──────────────────────────────────────┐  ┌──────────────────────────────────────┐
-│     DAEDALUS ENGINE                  │  │    WORKFLOW WRAPPER                  │
+│     DAEDALUS ENGINE                  │  │    WORKFLOW PACKAGE                  │
 │  ─────────────────────────────────   │  │  ─────────────────────────────────   │
 │  Runtime Loop                        │  │  Status / Read Model                 │
 │    Tick → Ingest → Derive → Dispatch │◄─┤  Policy Engine                       │
-│    → Record                          │  │  Actors (Coder / Reviewer / Merge)   │
-│                                      │  │  Lane State Machine                  │
+│    → Record                          │  │  Roles / Hooks / Gates               │
+│                                      │  │  Workflow State Machine              │
 │  Leases (heartbeat · TTL · recovery) │  │  Handoffs (explicit, durable)        │
 │                                      │  │                                      │
 │  SQLite ──► lanes · actions ·        │  │  Semantic Actions                    │
-│             reviews · failures       │  │    run_claude_review                 │
-│                                      │  │    publish_ready_pr                  │
-│  JSONL ───► turn_started ·           │  │    merge_and_promote                 │
+│             reviews · failures       │  │    select_issue                      │
+│                                      │  │    render_prompt                     │
+│  JSONL ───► turn_started ·           │  │    publish_ready_pr                  │
 │             turn_completed · stall   │  │                                      │
 │                                      │  │  ▼                                   │
 │  Shadow Mode ──► observe · plan      │  │  Execution Actions                   │
-│  Active Mode ──► execute · dispatch  │◄─┤    request_internal_review           │
+│  Active Mode ──► execute · dispatch  │◄─┤    dispatch_turn                     │
 │                                      │  │    publish_pr                        │
 │  Operator Surfaces                   │  │    merge_pr                          │
-│    /daedalus status · doctor · watch │  │    dispatch_implementation_turn      │
+│    /daedalus status · doctor · watch │  │    run_hooks                         │
 │    shadow-report · active-gate       │  │                                      │
 └──────────────────────────────────────┘  └──────────────────────────────────────┘
          │                                           │
@@ -68,23 +68,27 @@
 
 Daedalus has **two brains** that speak different languages. The boundary between them is the most important design decision in the system.
 
-### Brain 1: The Workflow Wrapper (Semantic)
+### Brain 1: The Workflow Package (Semantic)
 
 > *"What should happen next?"*
 
-The wrapper is the **policy engine**. It knows about:
-- GitHub issues, labels, PRs, review threads
-- Semantic workflow states (`implementing`, `under_review`, `approved`)
-- Review policy (Claude must pass before publish, Codex Cloud must pass before merge)
-- Actor configuration (which model runs which role)
+The workflow package is the **policy engine**. It knows about:
+- the tracker and issue model
+- workflow-specific states and transitions
+- role and prompt structure
+- review/publish/merge policy when the workflow has those concepts
 
 It speaks **workflow semantics**:
 ```
-run_claude_review
+select_issue
+render_prompt
 publish_ready_pr
 merge_and_promote
-dispatch_codex_turn
 ```
+
+Examples:
+- `change-delivery` knows about GitHub issues, PRs, reviewer gates, and merge policy.
+- `issue-runner` knows about tracker selection, isolated issue workspaces, lifecycle hooks, and one-agent execution.
 
 ### Brain 2: Daedalus Runtime (Execution)
 
@@ -108,7 +112,7 @@ dispatch_repair_handoff
 
 ### Why two vocabularies?
 
-Because **policy changes faster than orchestration**. The wrapper can change its mind about when to publish. Daedalus must still guarantee that the publish action happens exactly once, survives crashes, and retries correctly.
+Because **policy changes faster than orchestration**. A workflow package can change its issue lifecycle, gate structure, or prompt strategy. Daedalus still has to guarantee that dispatch happens durably, survives crashes, and retries correctly.
 
 ---
 
@@ -189,59 +193,27 @@ Lost workers never block forward motion.
 
 ---
 
-## The Lane Lifecycle
+## Bundled Workflows
 
-A lane is the unit of work. One GitHub issue becomes one lane. The lane carries the issue from discovery to merge.
+Daedalus does not ship one universal lifecycle. It ships a generic engine plus
+bundled workflow packages.
 
-```mermaid
-stateDiagram-v2
-    [*] --> discovered: issue labeled
-    discovered --> implementing: lane selected
-    implementing --> awaiting_review: coder commits
-    awaiting_review --> changes_requested: reviewer rejects
-    changes_requested --> implementing: repair handoff
-    awaiting_review --> ready_to_publish: internal gate passed
-    ready_to_publish --> under_review: PR published
-    under_review --> findings_open: external reviewer rejects
-    findings_open --> implementing: repair handoff
-    under_review --> approved: external gate passed
-    approved --> merged: merge tick
-    merged --> [*]
+| Workflow | Shape | Best for | Docs |
+|---|---|---|---|
+| `change-delivery` | GitHub issue -> code -> internal review -> PR -> external review -> merge | opinionated SDLC automation | [`workflows/change-delivery.md`](workflows/change-delivery.md) |
+| `issue-runner` | tracker issue -> workspace -> hooks -> prompt -> one agent run | generic tracker-driven automation | [`workflows/issue-runner.md`](workflows/issue-runner.md) |
 
-    implementing --> stall_terminated: stall timeout
-    stall_terminated --> implementing: retry queued
-    awaiting_review --> stall_terminated: stall timeout
-    under_review --> stall_terminated: stall timeout
-```
+The workflow package owns the lifecycle. Daedalus owns the durable execution
+machinery around it.
 
-States with no outgoing arrows (other than terminal `merged` / `closed` / `archived`) keep retrying — **the lane never crashes the loop, only the current attempt.**
+That means:
+- `change-delivery` can define reviewer roles, PR publish, and merge gates.
+- `issue-runner` can stay smaller and focus on issue selection plus isolated execution.
+- both reuse the same workflow contract loader, runtime adapters, hot-reload primitives, and stall detection.
 
----
-
-## The Actor Model
-
-Coding and reviewing are **explicit roles**, not ad-hoc prompt invocations.
-
-| Role | Runtime | Model | When Active | Gate |
-|---|---|---|---|---|
-| **Internal Coder** | `acpx-codex` | `gpt-5.3-codex-spark/high` | Before PR exists | — |
-| **Internal Reviewer** | `claude-cli` | `claude-sonnet-4-6` | Local branch exists | Must pass before publish |
-| **External Reviewer** | `acpx-codex` | `gpt-5` | PR published | Must pass before merge |
-| **Advisory Reviewer** | varies | varies | Any time | Informative only |
-
-### Handoff Map
-
-```
-Orchestrator ──► Coder ──► Internal Reviewer ──► Publish ──► External Reviewer ──► Merge
-     │              │              │                    │              │
-     │              │              └─► repair ──────────┘              │
-     │              │                                                  │
-     │              └─► repair ◄───────────────────────────────────────┘
-     │
-     └─► restart session (if stale)
-```
-
-Every handoff survives service restarts, session staleness, and GitHub drift.
+If you are looking for workflow-specific states, prompts, or operator commands,
+read the workflow docs rather than treating the generic architecture as if it
+described one universal lane state machine.
 
 ---
 
@@ -273,9 +245,9 @@ Promotion from shadow to active is gated by `active-gate-status` — an explicit
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   TICK      │────►│   INGEST    │────►│   DERIVE    │────►│   DISPATCH  │
-│  (cron/     │     │  wrapper    │     │  nextAction │     │  to runtime │
-│   manual)   │     │  status     │     │  from state │     │  (active)   │
+│   TICK      │────►│    LOAD     │────►│   DERIVE    │────►│   DISPATCH  │
+│  (cron/     │     │ workflow +  │     │ next step   │     │  to runtime │
+│   manual)   │     │ runtime     │     │ from state  │     │  (active)   │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
                                                                   │
                                                                   ▼
@@ -287,9 +259,9 @@ Promotion from shadow to active is gated by `active-gate-status` — an explicit
 ```
 
 Each tick:
-1. **Ingest** — Pull wrapper status into SQLite
-2. **Derive** — Compare wrapper `nextAction` with runtime state
-3. **Dispatch** — If action is new and idempotency key is free, dispatch to runtime
+1. **Load** — Read the workflow contract plus the workflow package's current state
+2. **Derive** — Ask the workflow package what operation should happen next
+3. **Dispatch** — If the derived action is new and its idempotency key is free, dispatch to runtime
 4. **Record** — Write result (success/failure/retry) to SQLite + JSONL
 5. **Heartbeat** — Refresh lease to prove liveness
 
@@ -334,8 +306,9 @@ daedalus/
 ├── migration.py             # relay→daedalus filesystem migration
 ├── observability_overrides.py  # Operator config overrides
 └── workflows/
-    ├── __init__.py          # Workflow CLI entrypoint
-    └── change_delivery/
+    ├── __init__.py          # Workflow loader + CLI dispatcher
+    ├── shared/              # Shared paths, config snapshots, runtimes, stalls
+    ├── change_delivery/
         ├── workflow.py      # Semantic policy engine
         ├── dispatch.py      # Action dispatch
         ├── actions.py       # Action primitives
@@ -350,6 +323,12 @@ daedalus/
         ├── server/          # HTTP status surface
         ├── comments.py      # GitHub comment formatting
         └── observability.py # Config resolution
+    └── issue_runner/
+        ├── tracker.py       # Tracker loading + issue selection
+        ├── workspace.py     # Issue workspace lifecycle + hooks
+        ├── cli.py           # status / doctor / tick
+        ├── preflight.py     # Dispatch-gated config checks
+        └── schema.yaml      # Workflow contract shape
 ```
 
 ---
@@ -390,6 +369,9 @@ That means:
 
 | Doc | What It Covers |
 |---|---|
+| [`workflows/README.md`](workflows/README.md) | Which bundled workflow to use and where its template lives |
+| [`workflows/change-delivery.md`](workflows/change-delivery.md) | The opinionated GitHub SDLC workflow |
+| [`workflows/issue-runner.md`](workflows/issue-runner.md) | The generic tracker-driven bundled workflow |
 | [`concepts/lanes.md`](concepts/lanes.md) | Lane state machine, selection, workspace binding |
 | [`concepts/actions.md`](concepts/actions.md) | Action types, idempotency, shadow vs active |
 | [`concepts/failures.md`](concepts/failures.md) | Failure lifecycle, retry policy, lane-220 fixes |

@@ -7,14 +7,14 @@ The short version: Daedalus is already **Symphony-aligned** in architecture, but
 ## Positioning
 
 - Daedalus is a long-running workflow orchestrator with durable state, hot reload, isolated lane worktrees, recovery, and operator observability.
-- Daedalus is still **GitHub-first**. The current Symphony draft is still **Linear-first**.
-- Daedalus now uses a Symphony-style `WORKFLOW.md` as the native public contract for the bundled workflow, but it remains GitHub-first and not fully spec-conformant.
+- Daedalus is still **GitHub-first** in its managed/default workflow. The current Symphony draft is still **Linear-first**.
+- Daedalus now uses a Symphony-style `WORKFLOW.md` as the native public contract for bundled workflows. `issue-runner` is the closer generic reference surface; `change-delivery` remains the richer GitHub SDLC workflow.
 
 ## Status Matrix
 
 | Symphony concept | Daedalus status | Notes |
 |---|---|---|
-| `WORKFLOW.md` loader | Partial | Supported at the workflow root as the public contract. Front matter maps directly to the current `change-delivery` schema, and the Markdown body becomes shared workflow policy. |
+| `WORKFLOW.md` loader | Partial | Supported at the workflow root as the public contract. Front matter maps to the selected workflow schema; `issue-runner` is the closer generic reference surface, while `change-delivery` still carries richer GitHub-specific semantics. |
 | Typed config + hot reload | Implemented | Current `change-delivery` schema is validated and hot-reloaded with last-known-good behavior. |
 | Issue tracker client boundary | Partial | GitHub issue selection exists, but there is no generic tracker protocol or Linear adapter yet. |
 | Workspace manager | Partial | Per-lane worktrees and lane-local files exist; generic lifecycle hooks are not first-class yet. |
@@ -29,7 +29,7 @@ The short version: Daedalus is already **Symphony-aligned** in architecture, but
 
 Daedalus currently differs from the Symphony draft in three material ways:
 
-1. The first workflow is GitHub-backed `change-delivery`, not a Linear-backed generic scheduler.
+1. The supported managed workflow is GitHub-backed `change-delivery`; the bundled `issue-runner` workflow is generic but still local-json based rather than Linear-backed.
 2. Runtime adapters are CLI-oriented today, not Codex app-server-native.
 3. `WORKFLOW.md` still maps into the current Daedalus schema rather than a tracker-agnostic Symphony config model.
 

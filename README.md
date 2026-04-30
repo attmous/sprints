@@ -58,7 +58,7 @@ Daedalus warned Icarus, then flew home. Edits take effect on the next tick. A ba
 - **Hot-reload.** Edit `WORKFLOW.md` and the next tick picks it up. Bad edits don't crash the loop; they get ignored until you fix them.
 - **Stall detection.** Wedged agents get terminated automatically and the lane retries. No zombie workers.
 - **Symphony-aligned event vocabulary** — events follow the [openai/symphony](https://github.com/openai/symphony) taxonomy, so observability tools work across systems.
-- **Operator commands** — `/daedalus status`, `/daedalus doctor`, `/workflow change-delivery status`, `/workflow change-delivery tick`.
+- **Operator commands** — `/daedalus status`, `/daedalus doctor`, `/workflow change-delivery status`, `/workflow change-delivery tick`, `/workflow issue-runner status`.
 - **Live status dashboard** — ships separately as a Hermes-Agent watch plugin.
 
 ## Supported path
@@ -162,6 +162,7 @@ A **labeled issue** is the trigger. The **engine** ticks; for every active issue
 ## Documentation
 
 - **[docs/architecture.md](docs/architecture.md)** — the big picture, end to end.
+- **[docs/workflows/README.md](docs/workflows/README.md)** — the bundled workflows, when to use them, and where their templates live.
 - **[docs/operator/installation.md](docs/operator/installation.md)** — the supported install, scaffold, verify, and supervise path.
 - **[docs/public-contract.md](docs/public-contract.md)** — the stability boundary for the first public release.
 - **[docs/symphony-conformance.md](docs/symphony-conformance.md)** — what is already Symphony-aligned, what is only partial, and what is still missing.

@@ -3,6 +3,7 @@
 > **When confused, trust GitHub + live derived status first, Daedalus DB second, stale ledger prose last.**
 
 This doc is for the 3am debugging session. Everything here is copy-paste ready.
+It is specifically written for the opinionated `change-delivery` workflow.
 
 ---
 

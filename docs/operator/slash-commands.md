@@ -7,6 +7,9 @@ For the operator playbook ("when something looks wrong, do X"), see
 `docs/operator/cheat-sheet.md`. This file is a flat catalog: every command,
 grouped by purpose, with a one-line description.
 
+Workflow-specific commands are grouped by workflow below. Do not assume every
+workflow exposes the richer `change-delivery` command surface.
+
 ## `/daedalus` — engine + service control
 
 ### Inspection (read-only)
@@ -186,6 +189,8 @@ Daedalus service
 
 ### `change-delivery` workflow shortcuts (the common ones)
 
+This is the opinionated managed SDLC workflow.
+
 || Command | What it does |
 |---|---|---|
 || `/workflow change-delivery status` | Lane state + `nextAction` |
@@ -200,6 +205,16 @@ Daedalus service
 || `/workflow change-delivery reconcile` | Repair stale ledger state |
 || `/workflow change-delivery pause` | Disable lane processing |
 || `/workflow change-delivery resume` | Re-enable |
+
+### `issue-runner` workflow shortcuts
+
+This is the bundled generic tracker-driven workflow.
+
+|| Command | What it does |
+|---|---|---|
+|| `/workflow issue-runner status` | Selected issue + last run summary |
+|| `/workflow issue-runner doctor` | Validate tracker, workspace, and runtime references |
+|| `/workflow issue-runner tick` | Run one issue-runner dispatch tick |
 
 ### Webhook commands
 
@@ -218,11 +233,10 @@ Daedalus service
 ## Most useful day-to-day, in order
 
 1. `/daedalus watch` — live overview of every active lane in one frame
-2. `/workflow change-delivery status` — current lane + next action
-3. `/daedalus doctor` — overall health
-4. `/workflow change-delivery show-active-lane` — what GitHub thinks
-5. `/daedalus service-logs` — last 50 journal entries from the active service
-5. `/workflow change-delivery tick` — manually fire a tick when impatient
+2. `/daedalus doctor` — overall health
+3. `/workflow <name> status` — workflow-specific current state
+4. `/daedalus service-logs` — last 50 journal entries from the active service
+5. `/workflow change-delivery tick` or `/workflow issue-runner tick` — manually fire a tick when impatient
 
 ## Notes
 
