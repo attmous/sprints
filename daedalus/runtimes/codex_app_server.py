@@ -162,21 +162,23 @@ class _AppServerClient:
             on_message(message)
 
     def next_message(self, *, deadline: float) -> dict[str, Any]:
-        timeout = max(deadline - time.monotonic(), 0)
-        if timeout <= 0:
+        message = self.poll_message(deadline=deadline)
+        if message is None:
             raise CodexAppServerError(
                 "codex-app-server protocol response timed out",
                 stderr=self.stderr_text,
                 returncode=self.returncode,
             )
+        return message
+
+    def poll_message(self, *, deadline: float) -> dict[str, Any] | None:
+        timeout = max(deadline - time.monotonic(), 0)
+        if timeout <= 0:
+            return None
         try:
             message = self._messages.get(timeout=timeout)
-        except queue.Empty as exc:
-            raise CodexAppServerError(
-                "codex-app-server protocol response timed out",
-                stderr=self.stderr_text,
-                returncode=self.returncode,
-            ) from exc
+        except queue.Empty:
+            return None
         if message is self._EOF:
             raise CodexAppServerError(
                 "codex-app-server exited before completing the turn",
@@ -772,7 +774,9 @@ class CodexAppServerRuntime:
             read_deadline = min(deadline, now + self._read_timeout_s())
             if stall_timeout is not None and self._last_activity is not None:
                 read_deadline = min(read_deadline, self._last_activity + stall_timeout)
-            message = client.next_message(deadline=read_deadline)
+            message = client.poll_message(deadline=read_deadline)
+            if message is None:
+                continue
             if client._is_server_request(message):
                 self._consume_message(message, state=state)
                 client._reject_server_request(message)

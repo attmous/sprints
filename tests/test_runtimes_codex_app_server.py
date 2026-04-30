@@ -104,6 +104,49 @@ def _write_fake_resume_rejecting_app_server(path: Path, requests_path: Path) -> 
     )
 
 
+def _write_fake_quiet_turn_app_server(path: Path, requests_path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import sys",
+                "import time",
+                f"requests_path = {str(requests_path)!r}",
+                "",
+                "def emit(payload):",
+                "    print(json.dumps(payload), flush=True)",
+                "",
+                "def record(payload):",
+                "    with open(requests_path, 'a', encoding='utf-8') as fh:",
+                "        fh.write(json.dumps(payload) + '\\n')",
+                "",
+                "for line in sys.stdin:",
+                "    payload = json.loads(line)",
+                "    record(payload)",
+                "    method = payload.get('method')",
+                "    request_id = payload.get('id')",
+                "    if method == 'initialize':",
+                "        emit({'id': request_id, 'result': {'userAgent': 'fake-codex'}})",
+                "    elif method == 'initialized':",
+                "        continue",
+                "    elif method == 'thread/start':",
+                "        emit({'id': request_id, 'result': {'thread': {'id': 'thread-quiet'}}})",
+                "    elif method == 'turn/start':",
+                "        turn = {'id': 'turn-quiet', 'status': 'running', 'items': []}",
+                "        emit({'id': request_id, 'result': {'turn': turn}})",
+                "        time.sleep(1.2)",
+                "        item = {'threadId': 'thread-quiet', 'turnId': 'turn-quiet', 'itemId': 'item-1'}",
+                "        emit({'method': 'item/agentMessage/delta', 'params': {**item, 'delta': 'quiet ok'}})",
+                "        completed_turn = {'id': 'turn-quiet', 'status': 'completed', 'items': []}",
+                "        emit({'method': 'turn/completed', 'params': {'threadId': 'thread-quiet', 'turn': completed_turn}})",
+                "        break",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class _FakeWebSocketAppServer:
     def __init__(self):
         self.requests: list[dict] = []
@@ -390,6 +433,38 @@ def test_codex_app_server_runtime_does_not_fallback_when_resume_fails(tmp_path):
     assert "thread/resume" in methods
     assert "thread/start" not in methods
     assert "turn/start" not in methods
+
+
+def test_codex_app_server_runtime_allows_quiet_period_longer_than_read_timeout(tmp_path):
+    from runtimes.codex_app_server import CodexAppServerRuntime
+
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+    server = tmp_path / "fake_quiet_turn_app_server.py"
+    requests_path = tmp_path / "requests.jsonl"
+    _write_fake_quiet_turn_app_server(server, requests_path)
+
+    runtime = CodexAppServerRuntime(
+        {
+            "command": [sys.executable, str(server)],
+            "approval_policy": "never",
+            "turn_timeout_ms": 5000,
+            "read_timeout_ms": 1000,
+            "stall_timeout_ms": 4000,
+        },
+        run=None,
+    )
+
+    result = runtime.run_prompt_result(
+        worktree=worktree,
+        session_name="ISSUE-QUIET",
+        prompt="Work quietly",
+        model="gpt-5.5",
+    )
+
+    assert result.output == "quiet ok\n"
+    assert result.thread_id == "thread-quiet"
+    assert result.turn_id == "turn-quiet"
 
 
 def test_codex_app_server_runtime_rejects_non_protocol_approval_policy(tmp_path):
