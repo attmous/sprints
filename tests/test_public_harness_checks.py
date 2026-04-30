@@ -71,6 +71,7 @@ def test_public_docs_present_tracker_neutral_path():
 
     assert "Durable SDLC automation engine" in readme
     assert "issue-runner` is the default public bootstrap path" in readme
+    assert "GitHub-first SDLC automation engine" not in readme
     assert "First-class tracker" in readme
     assert "docs/harness-engineering.md" in readme
     assert "tracker.kind: github" in install
@@ -89,6 +90,7 @@ def test_docs_index_links_harness_and_omits_removed_planning_archive():
 
     assert "harness-engineering.md" in docs_index
     assert "release-readiness.md" in docs_index
+    assert "workflows/workflow-contract.md" in docs_index
     assert REMOVED_PUBLIC_ARCHIVE not in docs_index.casefold()
     assert REMOVED_PUBLIC_ARCHIVE not in public_contract.casefold()
 
