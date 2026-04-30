@@ -4,7 +4,7 @@
 
 ![Daedalus banner](assets/daedalus-banner.gif)
 
-**Durable SDLC automation engine for Hermes Agent.**
+**Durable SDLC automation engine for Hermes-Agent.**
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-4CAF50?style=flat-square)](LICENSE)
