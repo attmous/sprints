@@ -10,6 +10,7 @@ Entry point for everything that won't fit on the [project landing page](../READM
 - **[public-contract.md](public-contract.md)** — the stability boundary for the first public release.
 - **[symphony-conformance.md](symphony-conformance.md)** — where Daedalus matches the current Symphony draft, and where it still differs.
 - **[harness-engineering.md](harness-engineering.md)** — repo-level checks that keep the public surface generic, GitHub-first, and template-safe.
+- **[release-readiness.md](release-readiness.md)** — public-beta scorecard, launch gates, and next hardening slice.
 - **[security.md](security.md)** — the trust model, shell/network posture, and secret-handling expectations.
 
 ## Concepts
@@ -58,6 +59,7 @@ docs/
 ├── public-contract.md       stable public surfaces for the first release
 ├── symphony-conformance.md  current spec alignment vs. remaining gaps
 ├── harness-engineering.md   public-readiness checks and guardrails
+├── release-readiness.md     launch scorecard and hardening gates
 ├── security.md              trust model + execution posture
 │
 ├── concepts/                "what does X mean" — one file per abstraction

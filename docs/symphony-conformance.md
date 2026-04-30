@@ -2,7 +2,10 @@
 
 This note tracks Daedalus against the public `openai/symphony` draft spec as reviewed on **April 30, 2026**.
 
-The short version: Daedalus is already **Symphony-aligned** in architecture, but only **partially Symphony-compatible** at the contract and integration boundaries.
+The short version: Daedalus is already **Symphony-aligned** in architecture, but
+only **partially Symphony-compatible** at the contract and integration
+boundaries. The target is to make `issue-runner` the strict reference surface
+and keep `change-delivery` as the opinionated GitHub SDLC workflow.
 
 ## Positioning
 
@@ -25,6 +28,17 @@ The short version: Daedalus is already **Symphony-aligned** in architecture, but
 | Trust/safety posture | Implemented | See [security.md](security.md). |
 | Terminal workspace cleanup | Partial | Terminal lane states exist; full Symphony-style cleanup semantics still need explicit policy. |
 
+## Compatibility Target
+
+`issue-runner` is the workflow that should converge toward strict Symphony
+compatibility. Its public contract should keep the Symphony-shaped keys
+(`tracker`, `polling`, `workspace`, `hooks`, `agent`, `codex`) as the operator
+surface and move Daedalus-specific implementation details under `daedalus:`.
+
+`change-delivery` should not be forced into that shape. It is the richer
+workflow with GitHub lane policy, review gates, PR publication, merge promotion,
+and workflow-specific prompts.
+
 ## Important Differences
 
 Daedalus currently differs from the Symphony draft in four material ways:
@@ -36,8 +50,16 @@ Daedalus currently differs from the Symphony draft in four material ways:
 
 ## Recommended Next Gaps
 
-1. Add stronger cancellation semantics for command-style runtimes, including subprocess group termination where safe.
-2. Add broader GitHub integration coverage for comments, labels, and failure recovery against a real repository.
-3. Expand harness checks for public docs, generic examples, and workflow-template drift.
+1. Make `issue-runner` accept a stricter Symphony-style contract with Daedalus
+   extensions isolated under `daedalus:`.
+2. Add stronger cancellation semantics for command-style runtimes, including
+   subprocess group termination where safe.
+3. Add broader GitHub integration coverage for comments, labels, and failure
+   recovery against a real repository.
+4. Expand harness checks for public docs, generic examples, workflow-template
+   drift, and operator CLI/docs drift.
+
+See [release-readiness.md](release-readiness.md) for the launch scorecard and
+hardening gates.
 
 Until those land, Daedalus should be described as **Symphony-inspired and partially compatible**, not as a strict implementation of the current spec.

@@ -86,5 +86,25 @@ def test_docs_index_links_harness_and_omits_removed_planning_archive():
     public_contract = (REPO_ROOT / "docs" / "public-contract.md").read_text(encoding="utf-8")
 
     assert "harness-engineering.md" in docs_index
+    assert "release-readiness.md" in docs_index
     assert REMOVED_PUBLIC_ARCHIVE not in docs_index.casefold()
     assert REMOVED_PUBLIC_ARCHIVE not in public_contract.casefold()
+
+
+def test_release_readiness_tracks_public_beta_gates():
+    readiness = (REPO_ROOT / "docs" / "release-readiness.md").read_text(encoding="utf-8")
+    conformance = (REPO_ROOT / "docs" / "symphony-conformance.md").read_text(encoding="utf-8")
+    harness = (REPO_ROOT / "docs" / "harness-engineering.md").read_text(encoding="utf-8")
+
+    assert "public beta candidate" in readiness
+    assert "Reference workflow: `issue-runner`" in readiness
+    assert "Flagship workflow: `change-delivery`" in readiness
+    assert "First-class tracker: GitHub" in readiness
+    assert "Experimental tracker: Linear" in readiness
+    assert "Keep `daedalus/projects/` placeholder-only" in readiness
+    assert "GitHub and real Codex app-server smoke tests are opt-in" in readiness
+    assert "strict Symphony contract" in readiness
+    assert "issue-runner` is the workflow that should converge" in conformance
+    assert "release-readiness.md" in conformance
+    assert "Harness Principles" in harness
+    assert "release readiness" in harness

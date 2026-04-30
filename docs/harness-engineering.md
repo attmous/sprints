@@ -18,6 +18,7 @@ The public release is GitHub-first:
 The harness tests should catch these regressions before review:
 
 - public docs must describe the GitHub-first path clearly
+- release readiness must keep the public-beta posture and launch gates explicit
 - public examples must use generic placeholders like `your-org/your-repo`
 - bundled workflow templates must match their public docs copies
 - bootstrap must safely promote `WORKFLOW.md` to `WORKFLOW-<workflow>.md`
@@ -38,6 +39,15 @@ Add tests for the next hardening slice in this order:
 2. End-to-end `change-delivery` Codex app-server smoke around a real active
    lane, PR update, and review loop.
 3. Live GitHub recovery coverage for labels, comments, and failure replay.
+
+## Harness Principles
+
+- Keep repository knowledge discoverable in `docs/`, bundled templates, and
+  `AGENTS.md` rather than relying on chat history.
+- Turn repeated review comments into structural checks or docs updates.
+- Prefer small, explicit guardrails over broad lint rules that hide the fix.
+- Keep public examples generic and keep deployment-specific material private.
+- Treat opt-in smoke tests as evidence paths, not as default CI requirements.
 
 ## Live GitHub Smoke
 
