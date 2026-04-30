@@ -66,6 +66,44 @@ def _write_fake_app_server(path: Path, requests_path: Path) -> None:
     )
 
 
+def _write_fake_resume_rejecting_app_server(path: Path, requests_path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import sys",
+                f"requests_path = {str(requests_path)!r}",
+                "",
+                "def emit(payload):",
+                "    print(json.dumps(payload), flush=True)",
+                "",
+                "def record(payload):",
+                "    with open(requests_path, 'a', encoding='utf-8') as fh:",
+                "        fh.write(json.dumps(payload) + '\\n')",
+                "",
+                "for line in sys.stdin:",
+                "    payload = json.loads(line)",
+                "    record(payload)",
+                "    method = payload.get('method')",
+                "    request_id = payload.get('id')",
+                "    if method == 'initialize':",
+                "        emit({'id': request_id, 'result': {'userAgent': 'fake-codex'}})",
+                "    elif method == 'initialized':",
+                "        continue",
+                "    elif method == 'thread/resume':",
+                "        error = {'code': -32000, 'message': 'thread not found'}",
+                "        emit({'id': request_id, 'error': error})",
+                "        break",
+                "    elif method == 'thread/start':",
+                "        emit({'id': request_id, 'result': {'thread': {'id': 'unexpected-thread'}}})",
+                "        break",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class _FakeWebSocketAppServer:
     def __init__(self):
         self.requests: list[dict] = []
@@ -311,6 +349,47 @@ def test_codex_app_server_runtime_resumes_existing_thread(tmp_path):
     assert "thread/start" not in [item.get("method") for item in requests]
     thread_resume = next(item for item in requests if item.get("method") == "thread/resume")
     assert thread_resume["params"]["threadId"] == "thread-existing"
+
+
+def test_codex_app_server_runtime_does_not_fallback_when_resume_fails(tmp_path):
+    from runtimes.codex_app_server import CodexAppServerError, CodexAppServerRuntime
+
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+    server = tmp_path / "fake_resume_rejecting_app_server.py"
+    requests_path = tmp_path / "requests.jsonl"
+    _write_fake_resume_rejecting_app_server(server, requests_path)
+
+    runtime = CodexAppServerRuntime(
+        {
+            "command": [sys.executable, str(server)],
+            "approval_policy": "never",
+            "turn_timeout_ms": 5000,
+            "read_timeout_ms": 1000,
+            "stall_timeout_ms": 5000,
+        },
+        run=None,
+    )
+    runtime.ensure_session(
+        worktree=worktree,
+        session_name="ISSUE-1",
+        model="gpt-5.5",
+        resume_session_id="missing-thread",
+    )
+
+    with pytest.raises(CodexAppServerError, match="thread/resume.*thread not found"):
+        runtime.run_prompt_result(
+            worktree=worktree,
+            session_name="ISSUE-1",
+            prompt="Continue",
+            model="gpt-5.5",
+        )
+
+    requests = [json.loads(line) for line in requests_path.read_text(encoding="utf-8").splitlines()]
+    methods = [item.get("method") for item in requests]
+    assert "thread/resume" in methods
+    assert "thread/start" not in methods
+    assert "turn/start" not in methods
 
 
 def test_codex_app_server_runtime_rejects_non_protocol_approval_policy(tmp_path):

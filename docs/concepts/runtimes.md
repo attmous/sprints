@@ -98,6 +98,7 @@ user service:
 hermes daedalus codex-app-server install
 hermes daedalus codex-app-server up
 hermes daedalus codex-app-server status
+hermes daedalus codex-app-server logs
 ```
 
 The default listener is `ws://127.0.0.1:4500`. The generated unit runs:
@@ -105,6 +106,26 @@ The default listener is `ws://127.0.0.1:4500`. The generated unit runs:
 ```bash
 codex app-server --listen ws://127.0.0.1:4500
 ```
+
+If you expose the WebSocket listener beyond loopback, configure auth when
+installing the service. Supported auth modes mirror Codex app-server:
+
+```bash
+hermes daedalus codex-app-server up \
+  --ws-token-file /absolute/path/to/codex-app-server.token
+
+hermes daedalus codex-app-server up \
+  --ws-token-sha256 <sha256-hex>
+
+hermes daedalus codex-app-server up \
+  --ws-shared-secret-file /absolute/path/to/shared-secret \
+  --ws-issuer daedalus \
+  --ws-audience codex-app-server
+```
+
+Client-side runtime config can then use `ws_token_file` or `ws_token_env` so
+Daedalus presents `Authorization: Bearer <token>` during the WebSocket
+handshake. `status` includes both systemd state and a `GET /readyz` probe.
 
 Then configure Daedalus for external mode:
 

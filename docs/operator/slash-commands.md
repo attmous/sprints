@@ -164,7 +164,9 @@ Daedalus service
 | `/daedalus service-logs` | Last N journal entries |
 | `/daedalus codex-app-server install` | Write the shared Codex app-server user unit |
 | `/daedalus codex-app-server up` | Install, enable, and start the shared Codex app-server |
-| `/daedalus codex-app-server status` | Show Codex app-server unit status |
+| `/daedalus codex-app-server status` | Show unit status plus `GET /readyz` readiness |
+| `/daedalus codex-app-server restart` | Restart the Codex app-server unit |
+| `/daedalus codex-app-server logs` | Last N Codex app-server journal entries |
 | `/daedalus codex-app-server down` | Stop and disable Codex app-server |
 
 ### Cutover / migration (one-shot operator commands)
