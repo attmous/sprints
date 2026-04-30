@@ -34,6 +34,7 @@ Day-2 commands and observability.
 - [Slash commands](operator/slash-commands.md) — every `/daedalus` and `/workflow` form
 - [HTTP status surface](operator/http-status.md) — workflow-scoped JSON + HTML endpoints
 - [GitHub smoke test](operator/github-smoke.md) — skipped-by-default live test for the supported tracker path
+- [Codex app-server smoke tests](operator/codex-app-server-smoke.md) — fake CI harness and opt-in real runtime smoke
 
 ## Workflow docs
 

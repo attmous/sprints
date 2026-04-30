@@ -390,6 +390,10 @@ def test_issue_runner_codex_thread_mapping_persists_and_resumes(tmp_path):
 
     second = reloaded.tick()
     assert second["ok"] is True
+    scheduler = reloaded.build_status()["scheduler"]
+    assert scheduler["codex_threads"]["ISSUE-1"]["thread_id"] == "thread-1"
+    assert scheduler["codex_totals"]["total_tokens"] == 36
+    assert scheduler["codex_totals"]["turn_count"] == 2
 
     requests = [json.loads(line) for line in requests_path.read_text(encoding="utf-8").splitlines()]
     methods = [item.get("method") for item in requests]

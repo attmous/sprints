@@ -152,8 +152,11 @@ app-server when it exposes a socket transport. Setting `keep_alive: true` with
 managed stdio mode is invalid and fails config loading.
 
 It maps `thread/tokenUsage/updated` into Daedalus token totals and
-`account/rateLimits/updated` into the latest rate-limit snapshot. It rejects
-non-interactive approval requests so an unattended service does not hang.
+`account/rateLimits/updated` into the latest rate-limit snapshot. When Codex
+emits both `tokenUsage.last` and cumulative `tokenUsage.total`, Daedalus records
+`last` as the per-turn delta so resumed threads do not double-count cumulative
+totals. It rejects non-interactive approval requests so an unattended service
+does not hang.
 Bundled workflows persist work-item thread mappings in scheduler state
 (`issue-runner`: `issue_id -> thread_id`; `change-delivery`:
 `lane:<issue-number> -> thread_id`) and resume the existing Codex thread on

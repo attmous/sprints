@@ -1060,10 +1060,10 @@ class CodexAppServerRuntime:
         return f"codex-app-server exited with code {returncode}"
 
     def _coerce_usage(self, payload: dict[str, Any], *, current: dict[str, int]) -> dict[str, int]:
-        if isinstance(payload.get("total"), dict):
-            payload = payload["total"]
-        elif isinstance(payload.get("last"), dict):
+        if isinstance(payload.get("last"), dict):
             payload = payload["last"]
+        elif isinstance(payload.get("total"), dict):
+            payload = payload["total"]
 
         input_tokens = payload.get("input_tokens")
         if input_tokens is None:

@@ -49,6 +49,7 @@
 |:---|:---|:---|
 | [**Slash Commands**](./slash-commands.md) | Complete catalog of `/daedalus` commands plus workflow-specific `/workflow <name> ...` surfaces for both bundled workflows. | ...you need to check what's happening or poke the system into action. |
 | [**HTTP Status Surface**](./http-status.md) | Optional localhost HTTP server (`:8765`) exposing JSON health snapshots for dashboards and external monitoring. | ...you want to monitor Daedalus without SSHing into the box. |
+| [**Codex app-server Smoke Tests**](./codex-app-server-smoke.md) | Fake CI harness and opt-in real Codex app-server smoke for start/resume behavior. | ...you changed Codex runtime/service behavior or want local production confidence. |
 
 **The narrative arc:** *Check status* → *Watch live* → *Diagnose* → *Fix* → *Confirm*.
 

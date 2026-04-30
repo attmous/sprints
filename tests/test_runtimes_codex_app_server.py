@@ -1,6 +1,8 @@
 import base64
 import hashlib
 import json
+import os
+import shutil
 import socket
 import sys
 import threading
@@ -97,6 +99,31 @@ def _write_fake_resume_rejecting_app_server(path: Path, requests_path: Path) -> 
                 "        break",
                 "    elif method == 'thread/start':",
                 "        emit({'id': request_id, 'result': {'thread': {'id': 'unexpected-thread'}}})",
+                "        break",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_fake_malformed_app_server(path: Path, requests_path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import sys",
+                f"requests_path = {str(requests_path)!r}",
+                "",
+                "def record(payload):",
+                "    with open(requests_path, 'a', encoding='utf-8') as fh:",
+                "        fh.write(json.dumps(payload) + '\\n')",
+                "",
+                "for line in sys.stdin:",
+                "    payload = json.loads(line)",
+                "    record(payload)",
+                "    if payload.get('method') == 'initialize':",
+                "        print('not-json-from-app-server', flush=True)",
                 "        break",
             ]
         )
@@ -348,6 +375,8 @@ class _FakePersistentWebSocketAppServer(_FakeWebSocketAppServer):
     def _run_jsonrpc(self, conn: socket.socket):
         thread_id = "thread-warm"
         turn_count = 0
+        cumulative_input_tokens = 0
+        cumulative_output_tokens = 0
         while True:
             payload = self._read_ws_text(conn)
             if payload is None:
@@ -369,6 +398,10 @@ class _FakePersistentWebSocketAppServer(_FakeWebSocketAppServer):
                 self._send_ws_json(conn, {"id": request_id, "result": {"thread": thread}})
             elif method == "turn/start":
                 turn_count += 1
+                input_tokens = turn_count
+                output_tokens = turn_count + 1
+                cumulative_input_tokens += input_tokens
+                cumulative_output_tokens += output_tokens
                 turn = {"id": f"turn-warm-{turn_count}", "status": "running", "items": []}
                 self._send_ws_json(conn, {"id": request_id, "result": {"turn": turn}})
                 self._send_ws_json(
@@ -385,6 +418,31 @@ class _FakePersistentWebSocketAppServer(_FakeWebSocketAppServer):
                             "itemId": f"item-{turn_count}",
                             "delta": f"warm {turn_count}",
                         },
+                    },
+                )
+                item = {"threadId": thread_id, "turnId": turn["id"], "itemId": f"item-{turn_count}"}
+                last_usage = {
+                    "inputTokens": input_tokens,
+                    "outputTokens": output_tokens,
+                    "totalTokens": input_tokens + output_tokens,
+                }
+                total_usage = {
+                    "inputTokens": cumulative_input_tokens,
+                    "outputTokens": cumulative_output_tokens,
+                    "totalTokens": cumulative_input_tokens + cumulative_output_tokens,
+                }
+                self._send_ws_json(
+                    conn,
+                    {
+                        "method": "thread/tokenUsage/updated",
+                        "params": {**item, "tokenUsage": {"last": last_usage, "total": total_usage}},
+                    },
+                )
+                self._send_ws_json(
+                    conn,
+                    {
+                        "method": "account/rateLimits/updated",
+                        "params": {"rateLimits": {"requests_remaining": 100 - turn_count}},
                     },
                 )
                 completed = {"id": turn["id"], "status": "completed", "items": []}
@@ -429,7 +487,7 @@ def test_codex_app_server_runtime_speaks_jsonrpc_and_maps_metrics(tmp_path):
     assert result.turn_id == "turn-1"
     assert result.turn_count == 1
     assert result.last_event == "turn/completed"
-    assert result.tokens == {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+    assert result.tokens == {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5}
     assert result.rate_limits == {"limitName": "primary", "requests_remaining": 99}
 
     requests = [json.loads(line) for line in requests_path.read_text(encoding="utf-8").splitlines()]
@@ -526,6 +584,38 @@ def test_codex_app_server_runtime_does_not_fallback_when_resume_fails(tmp_path):
     assert "thread/resume" in methods
     assert "thread/start" not in methods
     assert "turn/start" not in methods
+
+
+def test_codex_app_server_runtime_surfaces_malformed_stdout(tmp_path):
+    from runtimes.codex_app_server import CodexAppServerError, CodexAppServerRuntime
+
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+    server = tmp_path / "fake_malformed_app_server.py"
+    requests_path = tmp_path / "requests.jsonl"
+    _write_fake_malformed_app_server(server, requests_path)
+
+    runtime = CodexAppServerRuntime(
+        {
+            "command": [sys.executable, str(server)],
+            "approval_policy": "never",
+            "turn_timeout_ms": 5000,
+            "read_timeout_ms": 1000,
+            "stall_timeout_ms": 5000,
+        },
+        run=None,
+    )
+
+    with pytest.raises(CodexAppServerError, match="non-JSON stdout"):
+        runtime.run_prompt_result(
+            worktree=worktree,
+            session_name="ISSUE-BAD-PROTOCOL",
+            prompt="Do the thing",
+            model="gpt-5.5",
+        )
+
+    requests = [json.loads(line) for line in requests_path.read_text(encoding="utf-8").splitlines()]
+    assert [item.get("method") for item in requests] == ["initialize"]
 
 
 def test_codex_app_server_runtime_allows_quiet_period_longer_than_read_timeout(tmp_path):
@@ -766,6 +856,52 @@ def test_codex_app_server_runtime_reuses_external_websocket_by_default(tmp_path)
     assert second.output == "warm 2\n"
 
 
+def test_codex_app_server_runtime_uses_last_token_usage_as_turn_delta(tmp_path):
+    from runtimes.codex_app_server import CodexAppServerRuntime
+
+    with _FakePersistentWebSocketAppServer() as server:
+        runtime = CodexAppServerRuntime(
+            {
+                "mode": "external",
+                "endpoint": server.endpoint,
+                "approval_policy": "never",
+                "keep_alive": True,
+                "turn_timeout_ms": 5000,
+                "read_timeout_ms": 1000,
+                "stall_timeout_ms": 5000,
+            },
+            run=None,
+        )
+        try:
+            first = runtime.run_prompt_result(
+                worktree=tmp_path,
+                session_name="ISSUE-1",
+                prompt="First",
+                model="gpt-5.5",
+            )
+            runtime.ensure_session(
+                worktree=tmp_path,
+                session_name="ISSUE-1",
+                model="gpt-5.5",
+                resume_session_id=first.thread_id,
+            )
+            second = runtime.run_prompt_result(
+                worktree=tmp_path,
+                session_name="ISSUE-1",
+                prompt="Second",
+                model="gpt-5.5",
+            )
+        finally:
+            runtime.close()
+
+    methods = [item.get("method") for item in server.requests]
+    assert methods.count("thread/start") == 1
+    assert methods.count("thread/resume") == 1
+    assert first.tokens == {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}
+    assert second.tokens == {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5}
+    assert second.rate_limits == {"requests_remaining": 98}
+
+
 def test_codex_app_server_runtime_reuses_external_websocket_when_keep_alive(tmp_path):
     from runtimes.codex_app_server import CodexAppServerRuntime
 
@@ -936,3 +1072,60 @@ def test_codex_app_server_runtime_reconnects_when_warm_websocket_closes(tmp_path
     assert methods.count("turn/start") == 2
     assert first.output == "ws ok\n"
     assert second.output == "ws ok\n"
+
+
+@pytest.mark.skipif(
+    os.environ.get("DAEDALUS_REAL_CODEX_APP_SERVER") != "1",
+    reason="set DAEDALUS_REAL_CODEX_APP_SERVER=1 to run the real Codex app-server smoke",
+)
+def test_codex_app_server_runtime_real_smoke_start_and_resume(tmp_path):
+    from runtimes.codex_app_server import CodexAppServerRuntime
+
+    if shutil.which("codex") is None:
+        pytest.skip("codex CLI is not installed")
+
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+    model = os.environ.get("DAEDALUS_REAL_CODEX_MODEL", "")
+    runtime = CodexAppServerRuntime(
+        {
+            "command": "codex app-server",
+            "approval_policy": "never",
+            "thread_sandbox": "workspace-write",
+            "turn_sandbox_policy": "workspace-write",
+            "turn_timeout_ms": int(os.environ.get("DAEDALUS_REAL_CODEX_TURN_TIMEOUT_MS", "180000")),
+            "read_timeout_ms": int(os.environ.get("DAEDALUS_REAL_CODEX_READ_TIMEOUT_MS", "5000")),
+            "stall_timeout_ms": int(os.environ.get("DAEDALUS_REAL_CODEX_STALL_TIMEOUT_MS", "60000")),
+            "ephemeral": False,
+        },
+        run=None,
+    )
+
+    first = runtime.run_prompt_result(
+        worktree=worktree,
+        session_name="REAL-CODEX-SMOKE",
+        prompt="Reply with exactly this text: DAE-OK-1",
+        model=model,
+    )
+    assert first.thread_id
+    assert first.turn_id
+    assert first.last_event == "turn/completed"
+    assert first.output.strip()
+
+    runtime.ensure_session(
+        worktree=worktree,
+        session_name="REAL-CODEX-SMOKE",
+        model=model,
+        resume_session_id=first.thread_id,
+    )
+    second = runtime.run_prompt_result(
+        worktree=worktree,
+        session_name="REAL-CODEX-SMOKE",
+        prompt="Reply with exactly this text: DAE-OK-2",
+        model=model,
+    )
+
+    assert second.thread_id == first.thread_id
+    assert second.turn_id
+    assert second.last_event == "turn/completed"
+    assert second.output.strip()
