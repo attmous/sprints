@@ -157,6 +157,15 @@ Use `--service-mode shadow` if you want read-only parity validation first.
 That `shadow` mode applies to `change-delivery`. `issue-runner` supports
 `active` mode only.
 
+If your `issue-runner` contract uses `codex.mode: external`, bring up the
+shared Codex listener once:
+
+```bash
+hermes daedalus codex-app-server up
+```
+
+Then point the workflow runtime at `ws://127.0.0.1:4500`.
+
 ## Manual low-level path
 
 If you want to inspect or script each step separately, the lower-level commands

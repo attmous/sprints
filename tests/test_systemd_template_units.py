@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
 
@@ -46,6 +47,55 @@ def test_instance_unit_name():
     tools = load_tools()
     assert tools._instance_unit_name("active", "workflow") == "daedalus-active@workflow.service"
     assert tools._instance_unit_name("shadow", "blueprint") == "daedalus-shadow@blueprint.service"
+
+
+def test_codex_app_server_service_name_and_unit(tmp_path):
+    tools = load_tools()
+    workflow_root = tmp_path / "attmous-daedalus-issue-runner"
+    workflow_root.mkdir()
+
+    assert (
+        tools._codex_app_server_service_name(workflow_root=workflow_root)
+        == "daedalus-codex-app-server@attmous-daedalus-issue-runner.service"
+    )
+    rendered = tools._render_codex_app_server_unit(listen="ws://127.0.0.1:4500", codex_command="codex")
+    assert "Description=Daedalus Codex app-server" in rendered
+    assert "ExecStart=/usr/bin/env codex app-server --listen ws://127.0.0.1:4500" in rendered
+    assert "Restart=always" in rendered
+
+
+def test_codex_app_server_install_command_writes_user_unit(tmp_path, monkeypatch):
+    tools = load_tools()
+    systemd_dir = tmp_path / "systemd"
+    monkeypatch.setenv("DAEDALUS_SYSTEMD_USER_DIR", str(systemd_dir))
+    workflow_root = tmp_path / "attmous-daedalus-issue-runner"
+    workflow_root.mkdir()
+    calls = []
+
+    def fake_systemctl(*args):
+        calls.append(args)
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+            "command": ["systemctl", "--user", *args],
+        }
+
+    monkeypatch.setattr(tools, "_run_systemctl", fake_systemctl)
+
+    result = tools.execute_raw_args(
+        f"codex-app-server install --workflow-root {workflow_root} "
+        "--listen ws://127.0.0.1:4500 --json"
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["service_name"] == "daedalus-codex-app-server@attmous-daedalus-issue-runner.service"
+    unit_path = systemd_dir / payload["service_name"]
+    assert unit_path.exists()
+    assert "codex app-server --listen ws://127.0.0.1:4500" in unit_path.read_text(encoding="utf-8")
+    assert ("daemon-reload",) in calls
 
 
 def test_migrate_systemd_tolerant_of_missing_old_units(tmp_path, monkeypatch):

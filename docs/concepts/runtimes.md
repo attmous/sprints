@@ -28,7 +28,7 @@ class Runtime(Protocol):
 |---|---|---|---|---|---|
 | Persistent session | ❌ one-shot | ✅ resumable | ❌ one-shot | ❌ one-turn protocol client |
 | `ensure_session` | no-op | `acpx codex sessions ensure` | no-op | no-op |
-| `run_prompt` | `claude --print …` | `acpx codex prompt -s <name>` | requires `command:` override | stdio event stream to `codex app-server` |
+| `run_prompt` | `claude --print …` | `acpx codex prompt -s <name>` | requires `command:` override | JSON-RPC over stdio to `codex app-server` |
 | `assess_health` | always healthy | freshness + grace window | always healthy | always healthy |
 | `close_session` | no-op | `acpx codex sessions close` | no-op | no-op |
 | Records `last_activity_ts` | yes (before + after `_run`) | yes | yes | yes |
@@ -74,10 +74,62 @@ Because it is one-shot, `assess_health` always returns healthy and `last_activit
 
 ### `codex-app-server` runtime
 
-The `codex-app-server` runtime speaks a first-pass stdio protocol to a local
-`codex app-server` command. It is currently used by `issue-runner` to move
-closer to the Symphony execution model and to capture per-run token and
-rate-limit data.
+The `codex-app-server` runtime speaks JSON-RPC to Codex app-server. In managed
+mode it starts `codex app-server` over stdio for one run. In external mode it
+connects to a long-running WebSocket listener. It sends `initialize`, starts or
+resumes a thread with `thread/start` or `thread/resume`, sends `turn/start`, and
+consumes notifications until `turn/completed`.
+
+```yaml
+runtimes:
+  codex:
+    kind: codex-app-server
+    command: codex app-server
+    ephemeral: false
+    approval_policy: never
+    thread_sandbox: workspace-write
+    turn_sandbox_policy: workspace-write
+```
+
+For a supervised long-running listener, install and start the Daedalus-managed
+user service:
+
+```bash
+hermes daedalus codex-app-server install
+hermes daedalus codex-app-server up
+hermes daedalus codex-app-server status
+```
+
+The default listener is `ws://127.0.0.1:4500`. The generated unit runs:
+
+```bash
+codex app-server --listen ws://127.0.0.1:4500
+```
+
+Then configure Daedalus for external mode:
+
+```yaml
+runtimes:
+  codex:
+    kind: codex-app-server
+    mode: external
+    endpoint: ws://127.0.0.1:4500
+    healthcheck_path: /readyz
+    ephemeral: false
+    ws_token_env: CODEX_APP_SERVER_TOKEN  # only if the listener requires auth
+```
+
+External mode checks `GET /readyz` before connecting, then opens one JSON-RPC
+WebSocket connection for the run. `ephemeral: false` keeps Codex threads visible
+through app-server thread APIs. The default stdio transport cannot be shared:
+Daedalus can only attach to an already-started app-server when it exposes a
+socket transport.
+
+It maps `thread/tokenUsage/updated` into Daedalus token totals and
+`account/rateLimits/updated` into the latest rate-limit snapshot. It rejects
+non-interactive approval requests so an unattended service does not hang.
+`issue-runner` persists `issue_id -> thread_id` in scheduler state and resumes
+the existing Codex thread on later ticks instead of starting a fresh thread.
 
 ## Adding a new runtime
 

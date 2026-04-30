@@ -52,6 +52,8 @@ DAEDALUS_TEMPLATE_UNIT_FILENAMES = {
 }
 
 DAEDALUS_INSTANCE_ID_FORMAT = "daedalus-{mode}-{workspace}"
+CODEX_APP_SERVER_SERVICE_PREFIX = "daedalus-codex-app-server"
+DEFAULT_CODEX_APP_SERVER_LISTEN = "ws://127.0.0.1:4500"
 
 
 def _instance_id_for(*, service_mode: str, workspace: str) -> str:
@@ -262,6 +264,40 @@ def _render_template_unit(*, mode: str) -> str:
             f"--project-key %i --instance-id daedalus-{mode}-%i "
             f"--interval-seconds 30 --service-mode {mode} --json"
         ),
+        "Restart=always",
+        "RestartSec=5",
+        "",
+        "[Install]",
+        "WantedBy=default.target",
+        "",
+    ])
+
+
+def _codex_app_server_service_name(*, workflow_root: Path, service_name: str | None = None) -> str:
+    if service_name:
+        return service_name if service_name.endswith(".service") else f"{service_name}.service"
+    return f"{CODEX_APP_SERVER_SERVICE_PREFIX}@{workflow_root.name}.service"
+
+
+def _codex_app_server_unit_path(service_name: str) -> Path:
+    return _systemd_user_dir() / service_name
+
+
+def _render_codex_app_server_unit(*, listen: str, codex_command: str = "codex") -> str:
+    service_path = os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin"
+    command_parts = shlex.split(str(codex_command).strip() or "codex")
+    exec_start = shlex.join(["/usr/bin/env", *command_parts, "app-server", "--listen", listen])
+    return "\n".join([
+        "[Unit]",
+        "Description=Daedalus Codex app-server (workspace=%i)",
+        "After=default.target",
+        "",
+        "[Service]",
+        "Type=simple",
+        "WorkingDirectory=%h",
+        f"Environment=PATH={service_path}",
+        "Environment=PYTHONUNBUFFERED=1",
+        f"ExecStart={exec_start}",
         "Restart=always",
         "RestartSec=5",
         "",
@@ -539,6 +575,142 @@ def service_up(
         "service_enable": enable_result,
         "service_start": start_result,
         "service_status": service_status_result,
+    }
+
+
+def codex_app_server_install(
+    *,
+    workflow_root: Path,
+    listen: str = DEFAULT_CODEX_APP_SERVER_LISTEN,
+    service_name: str | None = None,
+    codex_command: str = "codex",
+) -> dict[str, Any]:
+    resolved_service_name = _codex_app_server_service_name(
+        workflow_root=workflow_root,
+        service_name=service_name,
+    )
+    unit_path = _codex_app_server_unit_path(resolved_service_name)
+    unit_path.parent.mkdir(parents=True, exist_ok=True)
+    unit_path.write_text(
+        _render_codex_app_server_unit(listen=listen, codex_command=codex_command),
+        encoding="utf-8",
+    )
+    reload_result = _run_systemctl("daemon-reload")
+    return {
+        "ok": reload_result.get("ok", False),
+        "action": "install",
+        "workflow_root": str(workflow_root),
+        "service_name": resolved_service_name,
+        "unit_path": str(unit_path),
+        "listen": listen,
+        "codex_command": codex_command,
+        "daemon_reload": reload_result,
+    }
+
+
+def codex_app_server_up(
+    *,
+    workflow_root: Path,
+    listen: str = DEFAULT_CODEX_APP_SERVER_LISTEN,
+    service_name: str | None = None,
+    codex_command: str = "codex",
+) -> dict[str, Any]:
+    install_result = codex_app_server_install(
+        workflow_root=workflow_root,
+        listen=listen,
+        service_name=service_name,
+        codex_command=codex_command,
+    )
+    if not install_result.get("ok"):
+        daemon_reload = install_result.get("daemon_reload") or {}
+        raise DaedalusCommandError(
+            "unable to install codex-app-server service: "
+            f"{daemon_reload.get('stderr') or daemon_reload.get('stdout') or 'daemon-reload failed'}"
+        )
+    resolved_service_name = str(install_result["service_name"])
+    enable_result = _run_systemctl("enable", resolved_service_name)
+    if not enable_result.get("ok"):
+        raise DaedalusCommandError(
+            "unable to enable codex-app-server service: "
+            f"{enable_result.get('stderr') or enable_result.get('stdout') or enable_result.get('returncode')}"
+        )
+    start_result = _run_systemctl("start", resolved_service_name)
+    if not start_result.get("ok"):
+        raise DaedalusCommandError(
+            "unable to start codex-app-server service: "
+            f"{start_result.get('stderr') or start_result.get('stdout') or start_result.get('returncode')}"
+        )
+    return {
+        "ok": True,
+        "action": "up",
+        "workflow_root": str(workflow_root),
+        "service_name": resolved_service_name,
+        "listen": listen,
+        "install": install_result,
+        "enable": enable_result,
+        "start": start_result,
+        "status": codex_app_server_status(workflow_root=workflow_root, service_name=resolved_service_name),
+    }
+
+
+def codex_app_server_down(
+    *,
+    workflow_root: Path,
+    service_name: str | None = None,
+) -> dict[str, Any]:
+    resolved_service_name = _codex_app_server_service_name(
+        workflow_root=workflow_root,
+        service_name=service_name,
+    )
+    stop_result = _run_systemctl("stop", resolved_service_name)
+    disable_result = _run_systemctl("disable", resolved_service_name)
+    return {
+        "ok": stop_result.get("ok", False) or disable_result.get("ok", False),
+        "action": "down",
+        "workflow_root": str(workflow_root),
+        "service_name": resolved_service_name,
+        "stop": stop_result,
+        "disable": disable_result,
+        "status": codex_app_server_status(workflow_root=workflow_root, service_name=resolved_service_name),
+    }
+
+
+def codex_app_server_status(
+    *,
+    workflow_root: Path,
+    service_name: str | None = None,
+) -> dict[str, Any]:
+    resolved_service_name = _codex_app_server_service_name(
+        workflow_root=workflow_root,
+        service_name=service_name,
+    )
+    unit_path = _codex_app_server_unit_path(resolved_service_name)
+    active = _run_systemctl("is-active", resolved_service_name)
+    enabled = _run_systemctl("is-enabled", resolved_service_name)
+    show = _run_systemctl(
+        "show",
+        "--property=Id,Names,LoadState,ActiveState,SubState,UnitFileState,FragmentPath,ExecMainPID,ExecMainStatus,Result",
+        resolved_service_name,
+    )
+    props: dict[str, Any] = {}
+    if show.get("ok") and show.get("stdout"):
+        for line in show["stdout"].splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                props[key] = value
+    return {
+        "ok": active.get("ok", False),
+        "action": "status",
+        "workflow_root": str(workflow_root),
+        "service_name": resolved_service_name,
+        "unit_path": str(unit_path),
+        "installed": unit_path.exists(),
+        "active": active.get("stdout") or ("active" if active.get("ok") else "unknown"),
+        "enabled": enabled.get("stdout") or ("enabled" if enabled.get("ok") else "unknown"),
+        "properties": props,
+        "active_check": active,
+        "enabled_check": enabled,
+        "show": show,
     }
 
 
@@ -2153,6 +2325,47 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     bootstrap_cmd.add_argument("--json", action="store_true")
     bootstrap_cmd.set_defaults(handler=cmd_bootstrap_workflow, func=run_cli_command)
 
+    codex_cmd = sub.add_parser(
+        "codex-app-server",
+        help="Install and control the shared Codex app-server systemd user service.",
+    )
+    codex_sub = codex_cmd.add_subparsers(dest="codex_app_server_command")
+    codex_sub.required = True
+
+    codex_install_cmd = codex_sub.add_parser("install", help="Write the Codex app-server user unit.")
+    codex_install_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    codex_install_cmd.add_argument("--listen", default=DEFAULT_CODEX_APP_SERVER_LISTEN)
+    codex_install_cmd.add_argument("--service-name")
+    codex_install_cmd.add_argument("--codex-command", default="codex")
+    codex_install_cmd.add_argument("--json", action="store_true")
+    codex_install_cmd.set_defaults(func=run_cli_command)
+
+    codex_up_cmd = codex_sub.add_parser("up", help="Install, enable, and start the Codex app-server user unit.")
+    codex_up_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    codex_up_cmd.add_argument("--listen", default=DEFAULT_CODEX_APP_SERVER_LISTEN)
+    codex_up_cmd.add_argument("--service-name")
+    codex_up_cmd.add_argument("--codex-command", default="codex")
+    codex_up_cmd.add_argument("--json", action="store_true")
+    codex_up_cmd.set_defaults(func=run_cli_command)
+
+    codex_status_cmd = codex_sub.add_parser("status", help="Show Codex app-server user unit status.")
+    codex_status_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    codex_status_cmd.add_argument("--service-name")
+    codex_status_cmd.add_argument("--json", action="store_true")
+    codex_status_cmd.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (text|json). --json flag is a back-compat alias for --format json.",
+    )
+    codex_status_cmd.set_defaults(func=run_cli_command)
+
+    codex_down_cmd = codex_sub.add_parser("down", help="Stop and disable the Codex app-server user unit.")
+    codex_down_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    codex_down_cmd.add_argument("--service-name")
+    codex_down_cmd.add_argument("--json", action="store_true")
+    codex_down_cmd.set_defaults(func=run_cli_command)
+
     return parser
 
 
@@ -2238,7 +2451,13 @@ def _resolve_format(format_arg: str | None, json_flag: bool | None) -> str:
 def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
     workflow_root = Path(args.workflow_root).resolve() if hasattr(args, "workflow_root") else None
     daedalus = _load_daedalus_module(workflow_root) if workflow_root is not None else None
-    if workflow_root is not None and daedalus is not None and getattr(args, "daedalus_command", None):
+    eventless_commands = {"codex-app-server"}
+    if (
+        workflow_root is not None
+        and daedalus is not None
+        and getattr(args, "daedalus_command", None)
+        and args.daedalus_command not in eventless_commands
+    ):
         _record_operator_command_event(workflow_root=workflow_root, args=args, daedalus=daedalus)
     command = getattr(args, "daedalus_command", None)
     project_key_commands = {"init", "start", "service-install", "service-up", "service-loop", "run-shadow", "run-active"}
@@ -2361,6 +2580,33 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             service_mode=args.service_mode,
             lines=args.lines,
         )
+    if args.daedalus_command == "codex-app-server":
+        action = args.codex_app_server_command
+        if action == "install":
+            return codex_app_server_install(
+                workflow_root=workflow_root,
+                listen=args.listen,
+                service_name=args.service_name,
+                codex_command=args.codex_command,
+            )
+        if action == "up":
+            return codex_app_server_up(
+                workflow_root=workflow_root,
+                listen=args.listen,
+                service_name=args.service_name,
+                codex_command=args.codex_command,
+            )
+        if action == "status":
+            return codex_app_server_status(
+                workflow_root=workflow_root,
+                service_name=args.service_name,
+            )
+        if action == "down":
+            return codex_app_server_down(
+                workflow_root=workflow_root,
+                service_name=args.service_name,
+            )
+        raise DaedalusCommandError(f"unknown codex-app-server command: {action}")
     if args.daedalus_command == "ingest-live":
         return daedalus.ingest_live_legacy_status(workflow_root=workflow_root)
     if args.daedalus_command == "heartbeat":
@@ -2518,6 +2764,30 @@ def render_result(
     if command == "service-logs":
         output = result.get("stdout") or result.get("stderr") or ""
         return output if output else f"no logs for {result.get('service_name')}"
+    if command == "codex-app-server":
+        action = result.get("action")
+        if action == "install":
+            return (
+                f"codex-app-server installed service={result.get('service_name')} "
+                f"listen={result.get('listen')} ok={result.get('ok')}"
+            )
+        if action == "up":
+            status = result.get("status") or {}
+            return (
+                f"codex-app-server up service={result.get('service_name')} "
+                f"listen={result.get('listen')} active={status.get('active')} enabled={status.get('enabled')}"
+            )
+        if action == "down":
+            status = result.get("status") or {}
+            return (
+                f"codex-app-server down service={result.get('service_name')} "
+                f"active={status.get('active')} enabled={status.get('enabled')}"
+            )
+        if action == "status":
+            return (
+                f"codex-app-server service={result.get('service_name')} "
+                f"installed={result.get('installed')} active={result.get('active')} enabled={result.get('enabled')}"
+            )
     if command == "ingest-live":
         return f"ingested lane={result.get('lane_id')} actor={result.get('actor_id')}"
     if command == "heartbeat":

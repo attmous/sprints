@@ -162,6 +162,10 @@ Daedalus service
 | `/daedalus service-disable` | Disable on boot |
 | `/daedalus service-status` | systemd status snapshot |
 | `/daedalus service-logs` | Last N journal entries |
+| `/daedalus codex-app-server install` | Write the shared Codex app-server user unit |
+| `/daedalus codex-app-server up` | Install, enable, and start the shared Codex app-server |
+| `/daedalus codex-app-server status` | Show Codex app-server unit status |
+| `/daedalus codex-app-server down` | Stop and disable Codex app-server |
 
 ### Cutover / migration (one-shot operator commands)
 
