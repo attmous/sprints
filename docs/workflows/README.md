@@ -16,3 +16,14 @@ its own lifecycle, prompts, gates, and operator commands.
 - Generic docs such as [architecture](../architecture.md), [public contract](../public-contract.md), [security](../security.md), and the engine-level concept docs describe Daedalus itself.
 - Workflow docs describe the lifecycle and contract details that belong to one workflow package.
 - If a doc is mostly about GitHub review gates, PR publish/merge stages, or reviewer roles, it belongs to `change-delivery`, not to the generic engine story.
+
+## Repo Contract Naming
+
+Daedalus uses `WORKFLOW.md` when a repository carries one workflow. When you
+bootstrap a second workflow, Daedalus promotes the existing default contract to
+`WORKFLOW-<existing-workflow>.md` and writes the new contract to
+`WORKFLOW-<new-workflow>.md`.
+
+Bootstrap does not overwrite existing named workflow contracts. If
+`WORKFLOW.md` is a non-Daedalus file, rename it manually or choose a different
+repo before running `hermes daedalus bootstrap`.

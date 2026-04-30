@@ -74,9 +74,9 @@ workflow instead, run `hermes daedalus bootstrap --workflow issue-runner`.
 - detects the git repo root from the current checkout
 - derives `github-slug` from `origin`
 - creates the supported instance layout below
-- writes the repo-owned workflow contract
+- writes or promotes the repo-owned workflow contract
 - creates a dedicated bootstrap branch
-- commits the workflow contract file
+- commits the workflow contract changes
 - writes `./.hermes/daedalus/workflow-root` in the repo checkout so later
   Daedalus commands can resolve the workflow root automatically
 
@@ -123,12 +123,24 @@ to:
 /path/to/repo/WORKFLOW-issue-runner.md
 ```
 
+Promotion is fail-safe. If `WORKFLOW.md` exists but is not a Daedalus contract,
+bootstrap stops and leaves the file unchanged. If a target named contract
+already exists, bootstrap also stops instead of overwriting user edits.
+
 ## Configure the workflow
 
-Edit:
+Edit the path printed by `bootstrap` as `edit next`. For a repo with one
+workflow this is usually:
 
 ```text
 /path/to/repo/WORKFLOW.md
+```
+
+For a repo with multiple workflows, edit the workflow-specific file, for
+example:
+
+```text
+/path/to/repo/WORKFLOW-issue-runner.md
 ```
 
 At minimum, set:

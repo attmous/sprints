@@ -1734,19 +1734,27 @@ def _prepare_repo_contract_paths(
         return named_path, []
 
     if default_path.exists():
-        existing_contract = load_workflow_contract_file(default_path)
+        try:
+            existing_contract = load_workflow_contract_file(default_path)
+        except (WorkflowContractError, OSError, UnicodeDecodeError) as exc:
+            raise DaedalusCommandError(
+                f"{default_path} exists but is not a Daedalus workflow contract; "
+                "expected YAML front matter with a top-level `workflow:` field"
+            ) from exc
         existing_workflow = str(existing_contract.config.get("workflow") or "").strip()
         if existing_workflow == workflow_name:
             return default_path, []
         if not existing_workflow:
             raise DaedalusCommandError(
-                f"{default_path} exists but does not declare a workflow name"
+                f"{default_path} exists but is not a Daedalus workflow contract; "
+                "expected YAML front matter with a top-level `workflow:` field"
             )
         migrated_path = workflow_named_markdown_path(repo_root, existing_workflow)
-        if migrated_path.exists() and not force:
+        if migrated_path.exists():
             raise DaedalusCommandError(
                 f"cannot promote {default_path.name} into multi-workflow form because "
-                f"{migrated_path.name} already exists (pass --force to overwrite)"
+                f"{migrated_path.name} already exists; Daedalus will not overwrite "
+                "repo-owned workflow contracts"
             )
         return named_path, [(default_path, migrated_path)]
 
@@ -1796,6 +1804,21 @@ def _ensure_bootstrap_branch(*, repo_root: Path, workflow_name: str) -> str:
     return branch_name
 
 
+def _git_path_is_tracked(*, repo_root: Path, path: Path) -> bool:
+    try:
+        relpath = str(path.resolve().relative_to(repo_root.resolve()))
+    except ValueError:
+        return False
+    completed = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", relpath],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
 def _commit_bootstrap_contract(
     *,
     repo_root: Path,
@@ -1803,7 +1826,16 @@ def _commit_bootstrap_contract(
     paths: list[Path],
 ) -> dict[str, Any]:
     branch_name = _ensure_bootstrap_branch(repo_root=repo_root, workflow_name=workflow_name)
-    relpaths = [str(path.resolve().relative_to(repo_root.resolve())) for path in paths]
+    relpaths = []
+    for path in paths:
+        resolved = path.resolve()
+        try:
+            relpath = str(resolved.relative_to(repo_root.resolve()))
+        except ValueError as exc:
+            raise DaedalusCommandError(f"cannot commit path outside repo root: {resolved}") from exc
+        if resolved.exists() or _git_path_is_tracked(repo_root=repo_root, path=resolved):
+            relpaths.append(relpath)
+    relpaths = sorted(set(relpaths))
     subprocess.run(
         ["git", "add", "--", *relpaths],
         cwd=str(repo_root),
@@ -1820,6 +1852,7 @@ def _commit_bootstrap_contract(
     )
     committed = False
     commit_sha = None
+    commit_message = f"Add {workflow_name} workflow contract"
     if status.stdout.strip():
         subprocess.run(
             [
@@ -1830,7 +1863,7 @@ def _commit_bootstrap_contract(
                 "user.email=daedalus@local",
                 "commit",
                 "-m",
-                f"Add {workflow_name} workflow contract",
+                commit_message,
             ],
             cwd=str(repo_root),
             check=True,
@@ -1843,6 +1876,7 @@ def _commit_bootstrap_contract(
         "branch": branch_name,
         "committed": committed,
         "commit_sha": commit_sha,
+        "commit_message": commit_message if committed else None,
         "paths": [str(path) for path in paths],
     }
 
@@ -1894,7 +1928,11 @@ def bootstrap_workflow_root(
     commit_result = _commit_bootstrap_contract(
         repo_root=repo_root,
         workflow_name=workflow_name,
-        paths=[Path(result["contract_path"]), *[Path(path) for path in result.get("renamed_contract_paths") or []]],
+        paths=[
+            Path(result["contract_path"]),
+            *[Path(path) for path in result.get("renamed_contract_paths") or []],
+            *[Path(path) for path in result.get("renamed_contract_source_paths") or []],
+        ],
     )
 
     result.update(
@@ -1908,6 +1946,7 @@ def bootstrap_workflow_root(
             "git_branch": commit_result["branch"],
             "git_committed": commit_result["committed"],
             "git_commit_sha": commit_result["commit_sha"],
+            "git_commit_message": commit_result["commit_message"],
         }
     )
     return result
@@ -1992,12 +2031,12 @@ def scaffold_workflow_root(
         path.mkdir(parents=True, exist_ok=True)
 
     renamed_contract_paths: list[str] = []
+    renamed_contract_source_paths: list[str] = []
     for source_path, target_path in rename_pairs:
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        if target_path.exists() and force:
-            target_path.unlink()
         source_path.replace(target_path)
         renamed_contract_paths.append(str(target_path))
+        renamed_contract_source_paths.append(str(source_path))
 
     contract_path.write_text(
         render_workflow_markdown(config=config, prompt_template=workflow_policy),
@@ -2024,6 +2063,7 @@ def scaffold_workflow_root(
         "force": force,
         "workflow_contract_pointer_path": str(workflow_contract_pointer_path(root)),
         "renamed_contract_paths": renamed_contract_paths,
+        "renamed_contract_source_paths": renamed_contract_source_paths,
     }
 
 
