@@ -14,13 +14,13 @@ PLUGIN_NAME = "daedalus"
 PAYLOAD_ROOT = "daedalus"
 PAYLOAD_ITEMS = [
     "__init__.py",
-    "agents",
     "alerts.py",
     "formatters.py",
     "migration.py",
     "observability_overrides.py",
     "plugin.yaml",
     "runtime.py",
+    "runtimes",
     "schemas.py",
     "trackers",
     "tools.py",

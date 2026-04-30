@@ -71,9 +71,9 @@ pytest -n auto  # parallel (requires pytest-xdist)
 
 ## Adding a new runtime
 
-1. **Implement the Protocol** in `daedalus/agents/your_runtime.py`:
+1. **Implement the Protocol** in `daedalus/runtimes/your_runtime.py`:
    ```python
-   from agents import register
+   from runtimes import register
 
    @register("your-kind")
    class YourRuntime:

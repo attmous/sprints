@@ -1,9 +1,9 @@
-"""Repo-root shared trackers wrapper for official Hermes plugin installs."""
+"""Repo-root shared runtimes wrapper for official Hermes plugin installs."""
 
 from pathlib import Path
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-_REAL_DIR = _PLUGIN_ROOT / "daedalus" / "trackers"
+_REAL_DIR = _PLUGIN_ROOT / "daedalus" / "runtimes"
 
 _real_dir_str = str(_REAL_DIR)
 if _real_dir_str not in __path__:

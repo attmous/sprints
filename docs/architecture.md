@@ -305,7 +305,7 @@ daedalus/
 ├── formatters.py            # Human-readable inspection output
 ├── migration.py             # relay→daedalus filesystem migration
 ├── observability_overrides.py  # Operator config overrides
-├── agents/                  # Shared execution backends (Codex, Claude, Hermes)
+├── runtimes/                # Shared execution backends (Codex, Claude, Hermes)
 ├── trackers/                # Shared tracker clients (local-json, Linear, ...)
 └── workflows/
     ├── __init__.py          # Workflow loader + CLI dispatcher

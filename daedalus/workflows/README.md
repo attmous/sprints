@@ -8,7 +8,7 @@ specific lifecycle. Today we bundle two workflow surfaces:
 - `issue_runner/` — the generic tracker-driven reference workflow
 
 Shared workflow mechanics live under `shared/`. Shared execution backends live
-under top-level `agents/`, and shared tracker integrations live under
+under top-level `runtimes/`, and shared tracker integrations live under
 top-level `trackers/`.
 
 Workflows are loaded by name through `workflows.<slug>`. The dispatcher
@@ -50,7 +50,7 @@ workflows/
     ├── sessions.py          # per-turn agent invocation bookkeeping
     ├── prompts.py           # prompt loading + parameter binding
     ├── prompts/             # prompt templates (coder, reviewer, repair)
-    ├── runtimes/            # workflow-local compatibility re-exports over shared agents/
+    ├── runtimes/            # workflow-local compatibility re-exports over shared runtimes/
     ├── reviewers/           # external reviewer plug points
     ├── webhooks/            # incoming webhooks (slack, http_json)
     ├── server/              # optional HTTP status surface (Symphony §13.7)

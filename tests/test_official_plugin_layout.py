@@ -21,7 +21,7 @@ def test_repo_root_exposes_official_hermes_plugin_layout():
     expected = [
         REPO_ROOT / "plugin.yaml",
         REPO_ROOT / "__init__.py",
-        REPO_ROOT / "agents" / "__init__.py",
+        REPO_ROOT / "runtimes" / "__init__.py",
         REPO_ROOT / "schemas.py",
         REPO_ROOT / "tools.py",
         REPO_ROOT / "trackers" / "__init__.py",
@@ -118,19 +118,19 @@ def test_repo_root_workflows_wrapper_exposes_issue_runner_submodules():
     assert "daedalus/workflows/issue_runner/tracker" in tracker.__file__
 
 
-def test_repo_root_agents_wrapper_exposes_shared_agent_modules():
+def test_repo_root_runtimes_wrapper_exposes_shared_runtime_modules():
     for module_name in list(sys.modules):
-        if module_name == "agents" or module_name.startswith("agents."):
+        if module_name == "runtimes" or module_name.startswith("runtimes."):
             del sys.modules[module_name]
 
     import importlib
 
-    agents_pkg = importlib.import_module("agents")
-    codex = importlib.import_module("agents.codex_app_server")
+    runtimes_pkg = importlib.import_module("runtimes")
+    codex = importlib.import_module("runtimes.codex_app_server")
 
-    assert agents_pkg.__file__ is not None
+    assert runtimes_pkg.__file__ is not None
     assert codex.__file__ is not None
-    assert "daedalus/agents/codex_app_server" in codex.__file__
+    assert "daedalus/runtimes/codex_app_server" in codex.__file__
 
 
 def test_repo_root_trackers_wrapper_exposes_shared_tracker_modules():

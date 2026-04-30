@@ -79,8 +79,8 @@ def test_wheel_contains_runtime_loaded_plugin_payload(tmp_path):
         names = set(zf.namelist())
 
     expected = {
-        "daedalus/agents/__init__.py",
-        "daedalus/agents/codex_app_server.py",
+        "daedalus/runtimes/__init__.py",
+        "daedalus/runtimes/codex_app_server.py",
         "daedalus/plugin.yaml",
         "daedalus/skills/operator/SKILL.md",
         "daedalus/trackers/__init__.py",
@@ -107,7 +107,7 @@ def test_wheel_extracts_to_working_plugin_package(tmp_path):
     plugin_dir = site_packages / "daedalus"
     plugin = _load_module("daedalus_packaged_plugin_test", plugin_dir / "__init__.py")
     tools = _load_module("daedalus_packaged_tools_test", plugin_dir / "tools.py")
-    assert (plugin_dir / "agents" / "__init__.py").exists()
+    assert (plugin_dir / "runtimes" / "__init__.py").exists()
     assert (plugin_dir / "trackers" / "__init__.py").exists()
 
     calls = {

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from agents import PromptRunResult, Runtime, build_runtimes
+from runtimes import PromptRunResult, Runtime, build_runtimes
 from workflows.contract import WORKFLOW_POLICY_KEY, load_workflow_contract
 from workflows.shared.config_snapshot import AtomicRef, ConfigSnapshot
 from workflows.issue_runner.tracker import (

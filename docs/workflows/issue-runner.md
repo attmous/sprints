@@ -36,7 +36,7 @@ For each eligible tracker issue:
 - `hooks`: `after_create`, `before_run`, `after_run`, `before_remove`
 - `agent`: model/runtime plus scheduler-facing limits
 - `codex`: spec-shaped Codex runner settings
-- `daedalus.runtimes`: shared agent backend profiles used by the current implementation when you are not using the top-level `codex` block
+- `daedalus.runtimes`: shared runtime backend profiles used by the current implementation when you are not using the top-level `codex` block
 
 Supported tracker kinds today:
 

@@ -1,6 +1,6 @@
-"""Shared execution adapters reused across workflows.
+"""Shared runtime adapters reused across workflows.
 
-This package owns the agent backend protocol and the concrete implementations
+This package owns the runtime backend protocol and the concrete implementations
 that know how to talk to Codex, Claude, Hermes Agent, and similar executors.
 Workflow packages compose these backends with workflow-specific prompts,
 policies, and state machines.
@@ -40,7 +40,7 @@ class PromptRunResult:
 
 
 @runtime_checkable
-class AgentRuntime(Protocol):
+class Runtime(Protocol):
     def ensure_session(
         self,
         *,
@@ -85,44 +85,49 @@ class AgentRuntime(Protocol):
     def last_activity_ts(self) -> float | None: ...
 
 
-# Public compatibility alias. The workflow config still uses a `runtimes:`
-# block today, so the runtime vocabulary remains valid at the contract layer
-# while the shared implementation package becomes `agents/`.
-Runtime = AgentRuntime
-
-_AGENT_KINDS: dict[str, type] = {}
-_RUNTIME_KINDS = _AGENT_KINDS
+_RUNTIME_KINDS: dict[str, type] = {}
 
 
 def register(kind: str):
     def _register(cls):
-        _AGENT_KINDS[kind] = cls
+        _RUNTIME_KINDS[kind] = cls
         return cls
 
     return _register
 
 
-def build_agents(agent_cfg: dict, *, run=None, run_json=None) -> dict[str, AgentRuntime]:
-    if not agent_cfg:
+def _ensure_builtin_runtimes_registered() -> None:
+    """Populate built-ins even if module reloading left decorator state stale."""
+    from . import acpx_codex
+    from . import claude_cli
+    from . import codex_app_server
+    from . import hermes_agent
+
+    builtins = {
+        "acpx-codex": getattr(acpx_codex, "AcpxCodexRuntime", None),
+        "claude-cli": getattr(claude_cli, "ClaudeCliRuntime", None),
+        "codex-app-server": getattr(codex_app_server, "CodexAppServerRuntime", None),
+        "hermes-agent": getattr(hermes_agent, "HermesAgentRuntime", None),
+    }
+    for kind, cls in builtins.items():
+        if cls is not None:
+            _RUNTIME_KINDS.setdefault(kind, cls)
+
+
+def build_runtimes(runtimes_cfg: dict, *, run=None, run_json=None) -> dict[str, Runtime]:
+    if not runtimes_cfg:
         return {}
 
-    from . import acpx_codex  # noqa: F401
-    from . import claude_cli  # noqa: F401
-    from . import codex_app_server  # noqa: F401
-    from . import hermes_agent  # noqa: F401
+    _ensure_builtin_runtimes_registered()
 
-    out: dict[str, AgentRuntime] = {}
-    for profile_name, profile_cfg in agent_cfg.items():
+    out: dict[str, Runtime] = {}
+    for profile_name, profile_cfg in runtimes_cfg.items():
         kind = profile_cfg.get("kind")
-        if kind not in _AGENT_KINDS:
+        if kind not in _RUNTIME_KINDS:
             raise ValueError(
                 f"runtime profile {profile_name!r} declares unknown kind={kind!r}; "
-                f"registered kinds: {sorted(_AGENT_KINDS)}"
+                f"registered kinds: {sorted(_RUNTIME_KINDS)}"
             )
-        cls = _AGENT_KINDS[kind]
+        cls = _RUNTIME_KINDS[kind]
         out[profile_name] = cls(profile_cfg, run=run, run_json=run_json)
     return out
-
-
-def build_runtimes(runtimes_cfg: dict, *, run=None, run_json=None) -> dict[str, AgentRuntime]:
-    return build_agents(runtimes_cfg, run=run, run_json=run_json)

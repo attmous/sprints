@@ -22,7 +22,7 @@ def test_install_into_default_hermes_home_copies_plugin_tree(tmp_path):
     plugin_dir = hermes_home / "plugins" / "daedalus"
     assert result == plugin_dir
     assert (plugin_dir / "plugin.yaml").exists()
-    assert (plugin_dir / "agents" / "__init__.py").exists()
+    assert (plugin_dir / "runtimes" / "__init__.py").exists()
     assert (plugin_dir / "runtime.py").exists()
     assert (plugin_dir / "alerts.py").exists()
     assert (plugin_dir / "trackers" / "__init__.py").exists()
@@ -41,7 +41,7 @@ def test_install_into_explicit_destination_uses_given_path(tmp_path):
     result = install.install_plugin(repo_root=repo_root, destination=target)
 
     assert result == target
-    assert (target / "agents" / "codex_app_server.py").exists()
+    assert (target / "runtimes" / "codex_app_server.py").exists()
     assert (target / "plugin.yaml").exists()
     assert (target / "trackers" / "linear.py").exists()
     assert (target / "tools.py").exists()

@@ -2,8 +2,8 @@
 
 A **runtime** is the thing Daedalus shells out to when a turn happens. Daedalus owns leases, state, and dispatch; the runtime owns "how do I actually run an LLM turn against a worktree." Four are shipped today.
 
-At the code level, these shared execution backends now live under
-`daedalus/agents/`. The operator-facing contract still uses the `runtimes:`
+At the code level, these shared execution backends live under
+`daedalus/runtimes/`. The operator-facing contract also uses the `runtimes:`
 config block because workflows bind named runtime profiles to workflow roles.
 
 ## The Protocol
@@ -82,13 +82,13 @@ rate-limit data.
 ## Adding a new runtime
 
 1. Subclass nothing — just implement the Protocol shape.
-2. Decorate with `@register("<your-kind>")` from `agents`.
+2. Decorate with `@register("<your-kind>")` from `runtimes`.
 3. Add the kind to `schema.yaml` so config validation accepts it.
 4. Optionally implement `last_activity_ts()` for stall participation.
 
 ## Where this lives in code
 
-- Protocol: `daedalus/agents/__init__.py`
-- Adapters: `daedalus/agents/{claude_cli,acpx_codex,hermes_agent,codex_app_server}.py`
+- Protocol: `daedalus/runtimes/__init__.py`
+- Adapters: `daedalus/runtimes/{claude_cli,acpx_codex,hermes_agent,codex_app_server}.py`
 - Workflow compatibility shims: `daedalus/workflows/change_delivery/runtimes/`
 - Preflight: `daedalus/workflows/change_delivery/preflight.py`

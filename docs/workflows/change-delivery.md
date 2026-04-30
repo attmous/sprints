@@ -31,14 +31,14 @@ flow.
 ## Key config blocks
 
 - `repository`: repo checkout, GitHub slug, active-lane label
-- `runtimes`: shared agent backend profiles used by the workflow roles
+- `runtimes`: shared runtime backend profiles used by the workflow roles
 - `agents`: the workflow roles and their runtime/model bindings
 - `gates`: publish/merge policy
 - `triggers`: lane selector
 - `lane-selection`: issue filtering/ranking
 - `observability`: comments/webhooks integration
 
-`change-delivery` composes the shared `agents/` backends with workflow-specific
+`change-delivery` composes the shared `runtimes/` backends with workflow-specific
 prompts, reviewers, GitHub behavior, and merge policy.
 
 ## Operator path
