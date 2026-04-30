@@ -153,7 +153,7 @@ flowchart LR
 
 **Surface:** Symphony-compatible. **State:** JSON/JSONL. **Gates:** None.
 
----
+
 
 ### `change-delivery`
 
