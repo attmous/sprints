@@ -124,42 +124,33 @@ how to use it. See the full [WORKFLOW.md guide](docs/workflows/workflow-contract
 
 ## Bundled Workflows
 
-<div align="center">
+### `issue-runner`
 
-<table>
-<tr>
-<td width="50%" valign="top">
+![issue-runner workflow](assets/issue-runner-demo.gif)
 
-### 🎯 `issue-runner`
+| Stage | Action |
+|---|---|
+| Select | Tracker query → issue filter → eligibility check |
+| Prepare | Workspace isolation → checkout → context assembly |
+| Dispatch | Runtime adapter → agent prompt → bounded execution |
+| Record | Result capture → state persistence → terminal cleanup |
 
-**The lightweight path.**
+Single-turn execution. No review gates, no PR lifecycle. Symphony-compatible surface.
 
-```
-issue → workspace → hooks → prompt → agent run
-```
+---
 
-Use this when you want a small, generic issue workflow without ceremony. Closest surface to Symphony-style execution. Good for experiments, one-off tasks, and simple automation.
+### `change-delivery`
 
-</td>
-<td width="50%" valign="top">
+![change-delivery workflow](assets/change-delivery-demo.gif)
 
-### 🚀 `change-delivery`
+| Stage | Action |
+|---|---|
+| Select | GitHub issue → label filter → lane assignment |
+| Implement | Agent dispatch → code generation → internal review |
+| Publish | PR creation → CI gate → external review |
+| Merge | Approval check → merge commit → promotion hook |
 
-**The opinionated SDLC path.**
-
-```
-issue → implementation → internal review → PR → external review → merge
-```
-
-Use this when you want full lifecycle automation with review gates, PR publishing, and merge promotion. Built for production software delivery.
-
-</td>
-</tr>
-</table>
-
-</div>
-
-`issue-runner` is the generic reference workflow. `change-delivery` is richer and more opinionated.
+Full SDLC lifecycle. SQLite-backed state. Leases, idempotency, review gates, merge promotion.
 
 ## Supported Surfaces
 
