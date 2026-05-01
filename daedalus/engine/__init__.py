@@ -31,11 +31,15 @@ from .scheduler import (
 from .sqlite import connect_daedalus_db
 from .state import (
     engine_state_tables_exist,
+    finish_engine_run_to_connection,
     init_engine_state,
+    latest_engine_runs_from_connection,
     load_engine_scheduler_state,
+    read_engine_runs,
     read_engine_scheduler_state,
     save_engine_scheduler_state,
     save_engine_scheduler_state_to_connection,
+    start_engine_run_to_connection,
 )
 from .store import EngineStore
 from .storage import append_jsonl, load_optional_json, write_json_atomic, write_text_atomic
@@ -63,13 +67,16 @@ __all__ = [
     "codex_threads_snapshot",
     "connect_daedalus_db",
     "engine_state_tables_exist",
+    "finish_engine_run_to_connection",
     "init_engine_state",
     "init_engine_leases",
+    "latest_engine_runs_from_connection",
     "load_engine_scheduler_state",
     "load_optional_json",
     "mark_running_work",
     "make_audit_fn",
     "read_engine_lease",
+    "read_engine_runs",
     "read_engine_scheduler_state",
     "recover_running_as_retry",
     "restore_scheduler_state",
@@ -81,6 +88,7 @@ __all__ = [
     "save_engine_scheduler_state",
     "save_engine_scheduler_state_to_connection",
     "release_engine_lease",
+    "start_engine_run_to_connection",
     "work_item_from_change_delivery_lane",
     "work_item_from_issue",
     "write_json_atomic",

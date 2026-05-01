@@ -16,10 +16,13 @@ from .sqlite import connect_daedalus_db
 from .state import (
     ENGINE_STATE_TABLES,
     engine_state_tables_exist,
+    finish_engine_run_to_connection,
     init_engine_state,
+    latest_engine_runs_from_connection,
     load_engine_scheduler_state_from_connection,
     read_engine_scheduler_state,
     save_engine_scheduler_state_to_connection,
+    start_engine_run_to_connection,
 )
 
 
@@ -173,6 +176,105 @@ class EngineStore:
         finally:
             conn.close()
 
+    def start_run(
+        self,
+        *,
+        mode: str,
+        metadata: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        selected_count: int = 0,
+        completed_count: int = 0,
+        now_iso: str | None = None,
+        now_epoch: float | None = None,
+    ) -> dict[str, Any]:
+        with self.transaction() as conn:
+            return start_engine_run_to_connection(
+                conn,
+                workflow=self.workflow,
+                mode=mode,
+                now_iso=now_iso or self._now_iso(),
+                now_epoch=self._now_epoch() if now_epoch is None else now_epoch,
+                run_id=run_id,
+                selected_count=selected_count,
+                completed_count=completed_count,
+                metadata=metadata,
+            )
+
+    def finish_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        selected_count: int | None = None,
+        completed_count: int | None = None,
+        error: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        now_iso: str | None = None,
+        now_epoch: float | None = None,
+    ) -> dict[str, Any]:
+        with self.transaction() as conn:
+            return finish_engine_run_to_connection(
+                conn,
+                workflow=self.workflow,
+                run_id=run_id,
+                status=status,
+                now_iso=now_iso or self._now_iso(),
+                now_epoch=self._now_epoch() if now_epoch is None else now_epoch,
+                selected_count=selected_count,
+                completed_count=completed_count,
+                error=error,
+                metadata=metadata,
+            )
+
+    def complete_run(
+        self,
+        run_id: str,
+        *,
+        selected_count: int | None = None,
+        completed_count: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        now_iso: str | None = None,
+        now_epoch: float | None = None,
+    ) -> dict[str, Any]:
+        return self.finish_run(
+            run_id,
+            status="completed",
+            selected_count=selected_count,
+            completed_count=completed_count,
+            metadata=metadata,
+            now_iso=now_iso,
+            now_epoch=now_epoch,
+        )
+
+    def fail_run(
+        self,
+        run_id: str,
+        *,
+        error: str,
+        selected_count: int | None = None,
+        completed_count: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        now_iso: str | None = None,
+        now_epoch: float | None = None,
+    ) -> dict[str, Any]:
+        return self.finish_run(
+            run_id,
+            status="failed",
+            selected_count=selected_count,
+            completed_count=completed_count,
+            error=error,
+            metadata=metadata,
+            now_iso=now_iso,
+            now_epoch=now_epoch,
+        )
+
+    def latest_runs(self, *, limit: int = 10) -> list[dict[str, Any]]:
+        conn = self.connect()
+        try:
+            return latest_engine_runs_from_connection(conn, workflow=self.workflow, limit=limit)
+        finally:
+            conn.close()
+
     def doctor(self, *, stale_running_seconds: int = 600) -> list[dict[str, Any]]:
         checks: list[dict[str, Any]] = []
         try:
@@ -229,6 +331,29 @@ class EngineStore:
                     "name": "engine-retry-queue",
                     "status": "pass",
                     "detail": f"{int(retry_count or 0)} queued retry item(s)",
+                }
+            )
+
+            stale_runs = conn.execute(
+                """
+                SELECT run_id, mode, started_at
+                FROM engine_runs
+                WHERE workflow=? AND status='running' AND completed_at IS NULL AND started_at_epoch < ?
+                ORDER BY started_at_epoch ASC
+                LIMIT 10
+                """,
+                (self.workflow, now_epoch - stale_running_seconds),
+            ).fetchall()
+            checks.append(
+                {
+                    "name": "engine-runs",
+                    "status": "warn" if stale_runs else "pass",
+                    "detail": (
+                        f"{len(stale_runs)} stale running engine run(s)"
+                        if stale_runs
+                        else "no stale running engine runs"
+                    ),
+                    "items": [row[0] for row in stale_runs],
                 }
             )
 

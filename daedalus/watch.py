@@ -79,6 +79,13 @@ def _workflow_status_panel(workflow_status: Mapping[str, Any]) -> Panel | None:
         lines.append(f"selected={workflow_status.get('selected_issue')}")
     if workflow_status.get("rate_limits"):
         lines.append(f"rate_limits={workflow_status.get('rate_limits')}")
+    for run in (workflow_status.get("latest_runs") or [])[:3]:
+        lines.append(
+            "run="
+            f"{run.get('mode') or '?'}:{run.get('status') or '?'} "
+            f"selected={run.get('selected_count') or 0} "
+            f"completed={run.get('completed_count') or 0}"
+        )
     for turn in workflow_status.get("codex_turns") or []:
         if turn.get("status") == "canceling" or turn.get("cancel_requested"):
             lines.append(

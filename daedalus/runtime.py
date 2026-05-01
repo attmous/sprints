@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.leases import acquire_engine_lease, init_engine_leases, release_engine_lease
+from engine.store import EngineStore
 from engine.state import init_engine_state
 from engine.sqlite import connect_daedalus_db
 from workflows.shared.paths import (
@@ -3668,7 +3669,7 @@ def run_shadow_loop(
     }
 
 
-def run_active_iteration(
+def _run_active_iteration_body(
     *,
     workflow_root: Path,
     instance_id: str,
@@ -3762,6 +3763,65 @@ def run_active_iteration(
         "stalled_recoveries": stalled_recoveries,
         "dispatched_reap": dispatched_reap,
     }
+
+
+def run_active_iteration(
+    *,
+    workflow_root: Path,
+    instance_id: str,
+    legacy_status: dict[str, Any] | None = None,
+    now_iso: str | None = None,
+    action_runners: dict[str, Any] | None = None,
+    cancel_event: Any | None = None,
+) -> dict[str, Any]:
+    now_iso = now_iso or _now_iso()
+    engine_store = EngineStore(
+        db_path=runtime_paths(Path(workflow_root))["db_path"],
+        workflow="change-delivery",
+        now_iso=_now_iso,
+        now_epoch=time.time,
+    )
+    engine_run = engine_store.start_run(
+        mode="active-iteration",
+        metadata={"instance_id": instance_id},
+        now_iso=now_iso,
+    )
+    try:
+        result = _run_active_iteration_body(
+            workflow_root=workflow_root,
+            instance_id=instance_id,
+            legacy_status=legacy_status,
+            now_iso=now_iso,
+            action_runners=action_runners,
+            cancel_event=cancel_event,
+        )
+        ingested = result.get("ingested") or {}
+        requested_actions = result.get("requested_actions") or []
+        executed_action = result.get("executed_action")
+        final_run = engine_store.complete_run(
+            engine_run["run_id"],
+            selected_count=1 if ingested.get("lane_id") or requested_actions else 0,
+            completed_count=1 if executed_action else 0,
+            metadata={
+                "instance_id": instance_id,
+                "iteration_status": result.get("iteration_status"),
+                "reason": result.get("reason"),
+                "lane_id": ingested.get("lane_id"),
+                "action_id": (executed_action or {}).get("action_id"),
+            },
+        )
+        result["engineRun"] = final_run
+        return result
+    except Exception as exc:
+        try:
+            engine_store.fail_run(
+                engine_run["run_id"],
+                error=f"{type(exc).__name__}: {exc}",
+                metadata={"instance_id": instance_id},
+            )
+        except Exception:
+            pass
+        raise
 
 
 def _active_loop_running_snapshot(supervised_iteration: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from engine.state import read_engine_scheduler_state
+from engine.state import read_engine_runs, read_engine_scheduler_state
 from engine.work_items import work_item_from_change_delivery_lane, work_item_from_issue
 from workflows.contract import WorkflowContractError, load_workflow_contract
 
@@ -88,6 +88,14 @@ def _engine_scheduler(workflow_root: Path, workflow: str) -> dict[str, Any]:
         now_epoch=time.time(),
     )
     return payload or {}
+
+
+def _engine_runs(workflow_root: Path, workflow: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    return read_engine_runs(
+        runtime_paths(Path(workflow_root))["db_path"],
+        workflow=workflow,
+        limit=limit,
+    )
 
 
 def _resolve_issue_runner_storage_path(workflow_root: Path, key: str, default: str) -> Path | None:
@@ -261,6 +269,7 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         scheduler_payload = _engine_scheduler(workflow_root, "change-delivery")
         totals = scheduler_payload.get("codex_totals") or scheduler_payload.get("codexTotals") or {}
         codex_turns = _codex_turn_entries(scheduler_payload)
+        latest_runs = _engine_runs(workflow_root, "change-delivery")
         return {
             "workflow": "change-delivery",
             "health": None,
@@ -270,6 +279,7 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
             "canceling_count": len([entry for entry in codex_turns if entry.get("status") == "canceling"]),
             "selected_issue": None,
             "codex_turns": codex_turns,
+            "latest_runs": latest_runs,
             "total_tokens": int(totals.get("total_tokens") or 0),
             "rate_limits": totals.get("rate_limits"),
         }
@@ -282,6 +292,7 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         "codex_totals": scheduler_payload.get("codex_totals") or scheduler_payload.get("codexTotals") or {},
     }
     last_run = status_payload.get("lastRun") or {}
+    latest_runs = _engine_runs(workflow_root, "issue-runner")
     return {
         "workflow": "issue-runner",
         "health": status_payload.get("health"),
@@ -289,6 +300,7 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         "running_count": len(scheduler["running"]),
         "retry_count": len(scheduler["retry_queue"]),
         "selected_issue": ((last_run.get("issue") or {}).get("identifier") or (last_run.get("issue") or {}).get("id")),
+        "latest_runs": latest_runs,
         "total_tokens": int((scheduler["codex_totals"].get("total_tokens") or 0)),
         "rate_limits": scheduler["codex_totals"].get("rate_limits"),
     }

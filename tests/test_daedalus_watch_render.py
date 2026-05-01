@@ -85,6 +85,7 @@ def test_render_frame_includes_issue_runner_workflow_status():
             "total_tokens": 18,
             "rate_limits": {"requests_remaining": 88},
             "selected_issue": "#123",
+            "latest_runs": [{"mode": "tick", "status": "completed", "selected_count": 1, "completed_count": 1}],
             "updated_at": "2026-04-30T12:00:15Z",
         },
         "alert_state": {},
@@ -94,6 +95,7 @@ def test_render_frame_includes_issue_runner_workflow_status():
     assert "issue-runner" in out
     assert "tokens=18" in out
     assert "selected=#123" in out
+    assert "run=tick:completed selected=1 completed=1" in out
 
 
 def test_render_frame_includes_canceling_codex_turns():
