@@ -96,6 +96,30 @@ role under `agent:` or `agents:`. Use `--runtime-name` if you want the profile
 key to be different from the preset name. Use `--dry-run --json` to inspect the
 change without writing the file.
 
+## Runtime Matrix Check
+
+After editing runtime bindings, inspect the workflow's role matrix:
+
+```bash
+hermes daedalus runtime-matrix
+hermes daedalus runtime-matrix --format json
+```
+
+This reports every runtime-backed role, the selected profile, adapter kind,
+binding health, and host availability. To exercise the shared stage boundary
+with a tiny prompt, run:
+
+```bash
+hermes daedalus runtime-matrix --execute
+hermes daedalus runtime-matrix --role agent --execute
+hermes daedalus runtime-matrix --runtime codex-service --execute --format json
+```
+
+`--execute` does not mutate trackers or code hosts. It only creates a temporary
+worktree under the workflow root and dispatches one minimal prompt through the
+configured runtime profile. For `codex-service`, start the shared Codex listener
+first with `hermes daedalus codex-app-server up`.
+
 ### `hermes-agent` runtime
 
 The `hermes-agent` runtime delegates turns to a local Hermes Agent CLI. By

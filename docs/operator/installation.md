@@ -170,6 +170,17 @@ hermes daedalus configure-runtime --runtime codex-service --role coder.default
 runtime profile under `runtimes:`, and updates the selected role binding. It
 does not start external services.
 
+To inspect the resulting role-to-runtime matrix:
+
+```bash
+hermes daedalus runtime-matrix
+hermes daedalus runtime-matrix --execute
+```
+
+Use `--execute` only after the referenced local CLIs or shared Codex service are
+available. It runs a tiny runtime-stage prompt without touching trackers or code
+hosts.
+
 ## Bring it up
 
 ```bash

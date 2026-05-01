@@ -104,7 +104,9 @@ Built-in presets are `hermes-final`, `hermes-chat`, and `codex-service`.
 `coder.high-effort`, `internal-reviewer`, `coder`, `reviewer`, and `all`.
 Run `hermes daedalus validate` and `hermes daedalus doctor` after changing a
 binding. Doctor reports each role-to-runtime binding and whether the required
-CLI or external Codex service appears reachable.
+CLI or external Codex service appears reachable. Use
+`hermes daedalus runtime-matrix --execute` when you want to run a tiny prompt
+through the configured role runtimes without touching trackers or code hosts.
 
 ## Markdown Body
 

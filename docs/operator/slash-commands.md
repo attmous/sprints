@@ -19,6 +19,7 @@ workflow exposes the richer `change-delivery` command surface.
 | `/daedalus status` | Runtime row + lane count + paths (DB, event log) |
 | `/daedalus doctor` | Full health check across all subsystems |
 | `/daedalus validate` | Validate `WORKFLOW.md`, schema, service mode, and workflow preflight |
+| `/daedalus runtime-matrix` | Show workflow role-to-runtime bindings and optional tiny runtime-stage smoke results |
 | `/daedalus events` | Query the durable engine event ledger |
 | `/daedalus events stats` | Count durable events by type/severity and show retention posture |
 | `/daedalus events prune` | Apply explicit or `WORKFLOW.md` event retention immediately |

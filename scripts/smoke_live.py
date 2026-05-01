@@ -55,6 +55,21 @@ SMOKES: tuple[Smoke, ...] = (
         required_env=("DAEDALUS_REAL_CODEX_APP_SERVER",),
     ),
     Smoke(
+        name="runtime-matrix-codex",
+        description="Runtime-matrix issue-runner smoke against the shared Codex service profile.",
+        command=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_runtime_matrix.py",
+            "-k",
+            "real_codex_service_issue_runner_smoke",
+            "-q",
+            "-s",
+        ),
+        required_env=("DAEDALUS_REAL_CODEX_APP_SERVER",),
+    ),
+    Smoke(
         name="change-delivery-codex",
         description="Self-contained change-delivery GitHub issue plus Codex app-server lane dispatch smoke.",
         command=(

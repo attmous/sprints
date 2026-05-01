@@ -47,6 +47,7 @@ from workflows.runtime_presets import (
     runtime_availability_checks,
     runtime_binding_checks,
 )
+from workflows.runtime_matrix import build_runtime_matrix_report
 from workflows.shared.paths import (
     derive_workflow_instance_name,
     plugin_runtime_path,
@@ -3264,6 +3265,23 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     )
     configure_runtime_cmd.set_defaults(func=run_cli_command)
 
+    runtime_matrix_cmd = sub.add_parser(
+        "runtime-matrix",
+        help="Show workflow role-to-runtime bindings and optionally execute a tiny runtime-stage smoke.",
+    )
+    runtime_matrix_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    runtime_matrix_cmd.add_argument("--role", action="append", help="Limit to a workflow role. Can be repeated.")
+    runtime_matrix_cmd.add_argument("--runtime", action="append", help="Limit to a runtime profile. Can be repeated.")
+    runtime_matrix_cmd.add_argument("--execute", action="store_true", help="Run a tiny prompt through each selected role runtime.")
+    runtime_matrix_cmd.add_argument("--json", action="store_true")
+    runtime_matrix_cmd.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (text|json). --json flag is a back-compat alias for --format json.",
+    )
+    runtime_matrix_cmd.set_defaults(func=run_cli_command)
+
     codex_cmd = sub.add_parser(
         "codex-app-server",
         help="Install and control the shared Codex app-server systemd user service.",
@@ -3432,7 +3450,7 @@ def _resolve_format(format_arg: str | None, json_flag: bool | None) -> str:
 def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
     workflow_root = Path(args.workflow_root).resolve() if hasattr(args, "workflow_root") else None
     daedalus = _load_daedalus_module(workflow_root) if workflow_root is not None else None
-    eventless_commands = {"codex-app-server", "runs", "events", "validate", "configure-runtime"}
+    eventless_commands = {"codex-app-server", "runs", "events", "validate", "configure-runtime", "runtime-matrix"}
     if (
         workflow_root is not None
         and daedalus is not None
@@ -3492,6 +3510,13 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             role=args.role,
             runtime_name=args.runtime_name,
             dry_run=args.dry_run,
+        )
+    if args.daedalus_command == "runtime-matrix":
+        return build_runtime_matrix_report(
+            workflow_root=workflow_root,
+            execute=args.execute,
+            roles=args.role,
+            runtimes=args.runtime,
         )
     if args.daedalus_command == "runs":
         return build_runs_report(
@@ -3827,6 +3852,35 @@ def render_result(
             )
         for check in availability:
             lines.append(f"- {check.get('status')} {check.get('name')}: {check.get('detail')}")
+        return "\n".join(lines)
+    if command == "runtime-matrix":
+        lines = [
+            (
+                f"runtime matrix ok={result.get('ok')} workflow={result.get('workflow')} "
+                f"execute={result.get('execute')}"
+            ),
+            f"contract={result.get('contract_path')}",
+        ]
+        missing = result.get("missing") or {}
+        if missing.get("roles") or missing.get("runtimes"):
+            lines.append(f"missing roles={missing.get('roles') or []} runtimes={missing.get('runtimes') or []}")
+        for item in result.get("matrix") or []:
+            binding = item.get("binding") or {}
+            availability = item.get("availability") or {}
+            smoke = item.get("smoke") or {}
+            detail = (
+                f"- {item.get('role')} -> {item.get('runtime')} kind={item.get('kind')} "
+                f"binding={binding.get('status')} availability={availability.get('status')}"
+            )
+            if smoke:
+                detail += f" smoke={'pass' if smoke.get('ok') else 'fail'}"
+            lines.append(detail)
+            if availability.get("detail"):
+                lines.append(f"  availability: {availability.get('detail')}")
+            if smoke.get("error"):
+                lines.append(f"  smoke error: {smoke.get('error')}")
+            elif smoke.get("output_preview"):
+                lines.append(f"  output: {smoke.get('output_preview')}")
         return "\n".join(lines)
     if command == "runs":
         if result.get("mode") == "show":
