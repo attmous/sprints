@@ -1312,7 +1312,7 @@ def derive_shadow_actions_for_lane(*, lane_row: dict[str, Any], reviews: list[di
             "reason": "implementation-in-progress",
         }]
     if (
-        workflow_state in {"claude_prepublish_findings", "rework_required"}
+        workflow_state in {"pre_publish_review_findings", "rework_required"}
         and not active_pr_number
         and internal_review
         and internal_review.get("status") == "completed"
@@ -1334,7 +1334,7 @@ def derive_shadow_actions_for_lane(*, lane_row: dict[str, Any], reviews: list[di
             "reason": "local-review-findings-need-repair",
         }]
     if (
-        workflow_state in {"claude_prepublish_findings", "rework_required"}
+        workflow_state in {"pre_publish_review_findings", "rework_required"}
         and not active_pr_number
         and internal_review
         and internal_review.get("status") == "completed"
@@ -1366,7 +1366,7 @@ def derive_shadow_actions_for_lane(*, lane_row: dict[str, Any], reviews: list[di
             "reason": "local-repair-head-ahead-of-published-pr",
         }]
     if (
-        workflow_state == "awaiting_claude_prepublish"
+        workflow_state == "awaiting_pre_publish_review"
         and not active_pr_number
         and lane_row.get("required_internal_review")
         and (internal_review is None or internal_review.get("status") in {None, "", "pending", "not_started"})
@@ -1699,7 +1699,7 @@ def _run_legacy_publish_pr(*, workflow_root: Path) -> dict[str, Any]:
 
 
 def _run_legacy_request_internal_review(*, workflow_root: Path) -> dict[str, Any]:
-    return _run_workflow_cli_json(workflow_root=workflow_root, command="dispatch-claude-review")
+    return _run_workflow_cli_json(workflow_root=workflow_root, command="dispatch-internal-review")
 
 
 def _run_legacy_merge_pr(*, workflow_root: Path) -> dict[str, Any]:

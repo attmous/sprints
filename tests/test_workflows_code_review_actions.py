@@ -558,7 +558,7 @@ def _dispatch_review_deps(tmp_path: Path):
         return {
             "activeLane": {"number": 224, "title": "T", "url": "https://example.test/224"},
             "implementation": {"worktree": str(worktree), "codexModel": "gpt-5.3-codex"},
-            "preflight": {"interReviewAgent": {"shouldRun": True, "currentHeadSha": "head123"}},
+            "preflight": {"prePublishReview": {"shouldRun": True, "currentHeadSha": "head123"}},
         }
 
     def load_ledger_fn():
@@ -630,13 +630,13 @@ def test_run_dispatch_inter_review_agent_review_skips_when_preflight_blocks(tmp_
         return {
             "activeLane": {"number": 224, "title": "T"},
             "implementation": {"worktree": str(tmp_path / "worktree")},
-            "preflight": {"interReviewAgent": {"shouldRun": False, "reasons": ["claude-cooldown"]}},
+            "preflight": {"prePublishReview": {"shouldRun": False, "reasons": ["internal-review-cooldown"]}},
         }
 
     deps["reconcile_fn"] = reconcile_fn
     result = actions_module.run_dispatch_inter_review_agent_review(**deps)
     assert result["dispatched"] is False
-    assert result["reason"] == "claude-preflight-blocked"
+    assert result["reason"] == "internal-review-preflight-blocked"
 
 
 def test_run_dispatch_inter_review_agent_review_records_completed_review_on_success(tmp_path):

@@ -552,9 +552,9 @@ def run_dispatch_inter_review_agent_review(
     worktree = Path(impl['worktree']) if impl.get('worktree') else None
     if worktree is None:
         return {'dispatched': False, 'reason': 'missing-worktree'}
-    preflight = ((status.get('preflight') or {}).get('interReviewAgent') or (status.get('preflight') or {}).get('claudeReview') or {})
+    preflight = ((status.get('preflight') or {}).get('prePublishReview') or {})
     if not preflight.get('shouldRun'):
-        return {'dispatched': False, 'reason': 'claude-preflight-blocked', 'preflight': preflight}
+        return {'dispatched': False, 'reason': 'internal-review-preflight-blocked', 'preflight': preflight}
     head_sha = preflight.get('currentHeadSha')
     now_iso = now_iso_fn()
     run_id = new_inter_review_agent_run_id_fn()

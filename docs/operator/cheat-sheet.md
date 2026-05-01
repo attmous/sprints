@@ -81,10 +81,10 @@ python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
   --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
   dispatch-implementation-turn --json
 
-# Claude review
+# internal review
 python3 ~/.hermes/plugins/daedalus/workflows/__main__.py \
   --workflow-root ~/.hermes/workflows/<owner>-<repo>-<workflow-type> \
-  dispatch-claude-review --json
+  dispatch-internal-review --json
 ```
 
 ### Daedalus Runtime (Direct)
@@ -151,7 +151,7 @@ systemctl --user restart \
 ### Local Phase (No PR yet)
 
 ```
-implementing → awaiting_claude_prepublish → ready_to_publish
+implementing → awaiting_pre_publish_review → ready_to_publish
      ↑                    │
      └──── findings ──────┘
 ```
@@ -179,8 +179,8 @@ under_review → findings_open → approved → merged
 
 | Phase | Required Reviewer | Gate |
 |:---|:---|:---|
-| **Before PR** | Claude (internal) | Must pass before publish |
-| **After PR** | Codex Cloud (external) | Must pass before merge |
+| **Before PR** | Internal reviewer | Must pass before publish |
+| **After PR** | external review (external) | Must pass before merge |
 | **Advisory** | Rock Claw | Informative only |
 
 ---
@@ -192,7 +192,7 @@ under_review → findings_open → approved → merged
 | Internal Coder | `gpt-5.3-codex-spark/high` | Default implementation |
 | Escalation Coder | `gpt-5.4` | Large-effort / complex tasks |
 | Internal Reviewer | `claude-sonnet-4-6` | Local unpublished branch gate |
-| External Reviewer | Codex Cloud | Published PR review |
+| External Reviewer | external review | Published PR review |
 | Advisory Reviewer | Rock Claw | Optional additional eyes |
 
 ---
@@ -200,7 +200,7 @@ under_review → findings_open → approved → merged
 ## Handoff Map
 
 ```
-Orchestrator ──► Coder ──► Internal Reviewer (Claude) ──► Publish ──► External Reviewer (Codex Cloud) ──► Merge
+Orchestrator ──► Coder ──► Internal Reviewer ──► Publish ──► External Reviewer (external review) ──► Merge
      │              │                    │                                    │                          │
      │              │                    └─► repair ──────────────────────────┘                          │
      │              │                                                                                    │
@@ -212,11 +212,11 @@ Orchestrator ──► Coder ──► Internal Reviewer (Claude) ──► Publ
 | Step | Workflow Action | Daedalus Action |
 |:---|:---|:---|
 | 1. Orchestrator → Coder | `dispatch-implementation-turn` | `dispatch_implementation_turn` |
-| 2. Coder → Claude | `run_claude_review` | `request_internal_review` |
-| 3. Claude → Coder repair | local findings → lane session | `dispatch_repair_handoff` |
-| 4. Claude → Publish | workflow derives publish | `publish_pr` |
-| 5. Publish → Codex Cloud | external review triggered | — |
-| 6. Codex Cloud → Coder repair | post-publish findings | `dispatch_repair_handoff` |
+| 2. Coder → Internal Reviewer | `run_internal_review` | `request_internal_review` |
+| 3. Internal Reviewer → Coder repair | local findings → lane session | `dispatch_repair_handoff` |
+| 4. Internal Reviewer → Publish | workflow derives publish | `publish_pr` |
+| 5. Publish → external review | external review triggered | — |
+| 6. external review → Coder repair | post-publish findings | `dispatch_repair_handoff` |
 | 7. Clean → Merge | `merge_and_promote` | `merge_pr` |
 
 ---
@@ -240,7 +240,7 @@ Orchestrator ──► Coder ──► Internal Reviewer (Claude) ──► Publ
 
 ## Common Failure Signatures
 
-### A. Workflow says `run_claude_review`, Daedalus returns `[]`
+### A. Workflow says `run_internal_review`, Daedalus returns `[]`
 
 **Likely cause:** Failed active `request_internal_review` for the same head wedged the idempotency key.
 
@@ -258,9 +258,9 @@ order by requested_at desc;
 
 ### B. Workflow says review is `running` but nothing is actually running
 
-**Likely cause:** `dispatch_claude_review()` failed after marking review as running.
+**Likely cause:** `dispatch_internal_review()` failed after marking review as running.
 
-**Fix:** Already in place — failure now resets Claude review back to retryable pending state.
+**Fix:** Already in place — failure now resets internal review back to retryable pending state.
 
 ---
 
@@ -270,7 +270,7 @@ order by requested_at desc;
 
 **Typical causes:**
 - PR was published or updated
-- Codex Cloud review changed faster than ledger reconciliation
+- External review changed faster than ledger reconciliation
 - Live GitHub truth outran persisted state
 
 **Operator move:** Trust derived live state more than stale ledger prose.
@@ -383,9 +383,9 @@ Tracker feedback is configured in `WORKFLOW.md` under `tracker-feedback`.
 | Coder default model | `gpt-5.3-codex-spark/high` |
 | Coder large-effort model | `gpt-5.3-codex` |
 | Coder escalation model | `gpt-5.4` |
-| Claude model | `claude-sonnet-4-6` |
-| Claude pass-with-findings reviews | `1` |
-| Claude max turns | `12` |
+| Internal reviewer model | `claude-sonnet-4-6` |
+| Internal review pass-with-findings reviews | `1` |
+| Internal review max turns | `12` |
 | Lane failure retry budget | `3` |
 | Lane no-progress tick budget | `3` |
 | Operator-attention thresholds | `5 / 5` |

@@ -34,7 +34,7 @@ Re-frame the plugin around a **workflow-plugin contract**:
   `ws.runtime(name)`.
 - The contract front matter cleanly separates **role** (coder, reviewer) from
   **identity** (name, model) from **runtime** (plumbing); no more
-  Claude-prefixed and inter-review-agent-prefixed aliases for the same
+  provider-prefixed aliases for the same
   concept.
 
 ## Consequences
