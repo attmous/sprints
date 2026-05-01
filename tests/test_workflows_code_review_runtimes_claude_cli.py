@@ -27,11 +27,11 @@ def test_ensure_session_is_a_noop_and_returns_synthetic_handle(tmp_path):
     runtime, calls = _make_runtime()
     handle = runtime.ensure_session(
         worktree=tmp_path,
-        session_name="inter-review-agent:abc",
+        session_name="internal-review:abc",
         model="claude-sonnet-4-6",
     )
     assert calls == []
-    assert handle.name == "inter-review-agent:abc"
+    assert handle.name == "internal-review:abc"
     assert handle.session_id is None
     assert handle.record_id is None
 
@@ -52,7 +52,7 @@ def test_run_prompt_invokes_claude_cli_with_model(tmp_path):
     runtime, calls = _make_runtime()
     out = runtime.run_prompt(
         worktree=tmp_path,
-        session_name="inter-review-agent:abc",
+        session_name="internal-review:abc",
         prompt="review this",
         model="claude-sonnet-4-6",
     )
@@ -88,7 +88,7 @@ def test_run_prompt_supports_workspace_runner_without_timeout_kwarg(tmp_path):
 
     assert runtime.run_prompt(
         worktree=tmp_path,
-        session_name="inter-review-agent:abc",
+        session_name="internal-review:abc",
         prompt="review this",
         model="claude-sonnet-4-6",
     ) == "ok"

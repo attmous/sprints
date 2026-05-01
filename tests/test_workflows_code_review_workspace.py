@@ -107,7 +107,7 @@ def test_make_workspace_exposes_config_constants_and_primitives(tmp_path):
     assert ws.ACTIVE_LANE_LABEL == "active-lane"
     assert ws.ENGINE_OWNER == "hermes"
     assert ws.WORKFLOW_WATCHDOG_JOB_NAME == "workflow-watchdog"
-    assert ws.INTER_REVIEW_AGENT_MODEL == "claude-sonnet-4-6"
+    assert ws.INTERNAL_REVIEW_MODEL == "claude-sonnet-4-6"
     assert ws.INTERNAL_REVIEWER_AGENT_NAME == "Internal_Reviewer_Agent"
     assert ws.LANE_FAILURE_RETRY_BUDGET == 3
     assert ws.WORKFLOW_POLICY == ""
@@ -242,7 +242,7 @@ def test_workspace_exposes_full_wrapper_facade(tmp_path):
     for name in (
         "publish_ready_pr_raw", "push_pr_update_raw", "merge_and_promote_raw",
         "dispatch_implementation_turn_raw", "restart_actor_session_raw",
-        "dispatch_inter_review_agent_review_raw", "dispatch_claude_review_raw",
+        "dispatch_inter_review_agent_review_raw",
         "dispatch_repair_handoff_raw", "tick_raw",
         "_dispatch_lane_turn", "_maybe_dispatch_repair_handoff",
     ):
@@ -294,14 +294,14 @@ def test_workspace_exposes_full_wrapper_facade(tmp_path):
         "render_lane_memo", "build_acp_session_strategy",
         "build_session_nudge_payload", "should_nudge_session",
         "record_session_nudge",
-        "should_dispatch_claude_repair_handoff",
+        "should_dispatch_internal_review_repair_handoff",
         "should_dispatch_external_review_repair_handoff",
         "build_external_review_repair_handoff_payload",
         "record_external_review_repair_handoff",
         "_render_external_review_repair_handoff_prompt",
-        "build_claude_repair_handoff_payload",
-        "record_claude_repair_handoff",
-        "_render_claude_repair_handoff_prompt",
+        "build_internal_review_repair_handoff_payload",
+        "record_internal_review_repair_handoff",
+        "_render_internal_review_repair_handoff_prompt",
     ):
         assert callable(getattr(ws, name)), name
 
@@ -380,8 +380,8 @@ def test_workspace_exposes_runtime_accessor_with_named_profiles(tmp_path):
             "codexSessionNudgeCooldownSeconds": 600,
         },
         "reviewPolicy": {
-            "interReviewAgentMaxTurns": 24,
-            "interReviewAgentTimeoutSeconds": 1200,
+            "internalReviewMaxTurns": 24,
+            "internalReviewTimeoutSeconds": 1200,
         },
         "agentLabels": {},
     }
@@ -439,7 +439,7 @@ def test_workspace_runtime_accessor_errors_on_unknown_name(tmp_path):
 
 def test_workspace_from_yaml_exposes_same_surface_as_legacy_json(tmp_path):
     """Given the new YAML shape, workspace exposes the same attribute surface
-    callers have historically used (REPO_PATH, INTER_REVIEW_AGENT_MODEL, etc.)."""
+    callers have historically used (REPO_PATH, INTERNAL_REVIEW_MODEL, etc.)."""
     from pathlib import Path as _Path
     from workflows.change_delivery.workspace import make_workspace
 
@@ -538,9 +538,9 @@ def test_workspace_from_yaml_exposes_same_surface_as_legacy_json(tmp_path):
     assert ws.CODEX_MODEL_DEFAULT == "gpt-5.3-codex-spark/high"
     assert ws.CODEX_MODEL_HIGH_EFFORT == "gpt-5.4"
     assert ws.CODEX_MODEL_ESCALATED == "gpt-5.4"
-    assert ws.INTER_REVIEW_AGENT_MODEL == "claude-sonnet-4-6"
-    assert ws.INTER_REVIEW_AGENT_MAX_TURNS == 24
-    assert ws.INTER_REVIEW_AGENT_TIMEOUT_SECONDS == 1200
+    assert ws.INTERNAL_REVIEW_MODEL == "claude-sonnet-4-6"
+    assert ws.INTERNAL_REVIEW_MAX_TURNS == 24
+    assert ws.INTERNAL_REVIEW_TIMEOUT_SECONDS == 1200
     assert ws.CODEX_SESSION_FRESHNESS_SECONDS == 900
     assert ws.CODEX_SESSION_POKE_GRACE_SECONDS == 1800
     assert ws.CODEX_SESSION_NUDGE_COOLDOWN_SECONDS == 600

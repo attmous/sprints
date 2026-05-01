@@ -1,6 +1,6 @@
 """GitHub PR-comments external reviewer.
 
-Generalizes the Codex Cloud fetcher: configurable bot logins,
+Generalizes the external reviewer fetcher: configurable bot logins,
 clean/pending reactions, repo slug, cache TTL. Delegates to
 ``reviews.fetch_external_review`` /
 ``reviews.fetch_external_review_pr_body_signal`` for the actual work.

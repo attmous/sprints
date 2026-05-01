@@ -207,14 +207,14 @@ def test_ingest_legacy_status_uses_canonical_internal_review_for_active_request(
             },
             "externalReview": {"required": False, "status": "not_started"},
         },
-        "ledger": {"workflowState": "awaiting_claude_prepublish", "reviewState": "awaiting_claude_prepublish", "repairBrief": None},
+        "ledger": {"workflowState": "awaiting_pre_publish_review", "reviewState": "awaiting_pre_publish_review", "repairBrief": None},
         "derivedReviewLoopState": "awaiting_reviews",
         "derivedMergeBlocked": False,
         "derivedMergeBlockers": [],
         "openPr": None,
         "activeLaneError": None,
         "staleLaneReasons": [],
-        "nextAction": {"type": "run_internal_review", "reason": "prepublish-claude-required"},
+        "nextAction": {"type": "run_internal_review", "reason": "prepublish-review-required"},
     }
 
     runtime_module.ingest_legacy_status(
@@ -265,14 +265,14 @@ def test_ingest_legacy_status_ignores_old_review_status_keys(runtime_module, tmp
             "claudeCode": {"required": True, "status": "pending", "requestedHeadSha": "abc123"},
             "codexCloud": {"required": True, "status": "pending", "requestedHeadSha": "abc123"},
         },
-        "ledger": {"workflowState": "awaiting_claude_prepublish", "reviewState": "awaiting_claude_prepublish", "repairBrief": None},
+        "ledger": {"workflowState": "awaiting_pre_publish_review", "reviewState": "awaiting_pre_publish_review", "repairBrief": None},
         "derivedReviewLoopState": "awaiting_reviews",
         "derivedMergeBlocked": False,
         "derivedMergeBlockers": [],
         "openPr": None,
         "activeLaneError": None,
         "staleLaneReasons": [],
-        "nextAction": {"type": "run_internal_review", "reason": "prepublish-claude-required"},
+        "nextAction": {"type": "run_internal_review", "reason": "prepublish-review-required"},
     }
 
     runtime_module.ingest_legacy_status(
@@ -303,7 +303,7 @@ def test_derive_shadow_actions_requests_internal_review_without_review_row(runti
         lane_row={
             "lane_id": "lane:221",
             "issue_number": 221,
-            "workflow_state": "awaiting_claude_prepublish",
+            "workflow_state": "awaiting_pre_publish_review",
             "required_internal_review": 1,
             "active_pr_number": None,
             "current_head_sha": "abc123",
@@ -328,7 +328,7 @@ def test_derive_shadow_actions_dispatches_local_review_repair_handoff_when_sessi
         lane_row={
             "lane_id": "lane:221",
             "issue_number": 221,
-            "workflow_state": "claude_prepublish_findings",
+            "workflow_state": "pre_publish_review_findings",
             "active_pr_number": None,
             "current_head_sha": "abc123",
             "repair_brief_json": json.dumps(
@@ -373,7 +373,7 @@ def test_derive_shadow_actions_skips_duplicate_local_review_repair_handoff(runti
         lane_row={
             "lane_id": "lane:221",
             "issue_number": 221,
-            "workflow_state": "claude_prepublish_findings",
+            "workflow_state": "pre_publish_review_findings",
             "active_pr_number": None,
             "current_head_sha": "abc123",
             "repair_brief_json": json.dumps(
@@ -443,7 +443,7 @@ def test_persist_shadow_actions_returns_existing_action_on_idempotency_conflict(
                 "/tmp/repo",
                 "acpx-codex",
                 "active",
-                "claude_prepublish_findings",
+                "pre_publish_review_findings",
                 "findings_open",
                 "blocked",
                 "abc123",
@@ -557,7 +557,7 @@ def test_execute_requested_action_records_ambiguous_failure_without_name_error(r
                 "/tmp/repo",
                 "acpx-codex",
                 "active",
-                "awaiting_claude_prepublish",
+                "awaiting_pre_publish_review",
                 "awaiting_reviews",
                 "not_ready",
                 "actor:1",

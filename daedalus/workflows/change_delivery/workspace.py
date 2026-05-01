@@ -147,8 +147,8 @@ def _yaml_to_legacy_view(yaml_cfg: dict, workspace_root: "Path | None" = None) -
             "reviewHeadMissingMinutes": 20,
         },
         "reviewCache": {
-            "codexCloudSeconds": ext_reviewer.get("cache-seconds", 1800),
-            "claudeReviewRequestCooldownSeconds": internal_review_gate.get("request-cooldown-seconds", 1200),
+            "externalReviewSeconds": ext_reviewer.get("cache-seconds", 1800),
+            "internalReviewRequestCooldownSeconds": internal_review_gate.get("request-cooldown-seconds", 1200),
         },
         "sessionPolicy": {
             "codexModel": coder_default.get("model", "gpt-5.3-codex-spark/high"),
@@ -167,11 +167,11 @@ def _yaml_to_legacy_view(yaml_cfg: dict, workspace_root: "Path | None" = None) -
             "codexSessionNudgeCooldownSeconds": acpx.get("session-nudge-cooldown-seconds", 600),
         },
         "reviewPolicy": {
-            "interReviewAgentPassWithFindingsReviews": internal_review_gate.get("pass-with-findings-tolerance", 1),
+            "internalReviewPassWithFindingsReviews": internal_review_gate.get("pass-with-findings-tolerance", 1),
             "internalReviewerModel": int_reviewer.get("model", "claude-sonnet-4-6"),
-            "interReviewAgentMaxTurns": claude_cli.get("max-turns-per-invocation", 24),
-            "interReviewAgentTimeoutSeconds": claude_cli.get("timeout-seconds", 1200),
-            "freezeCoderWhileInterReviewAgentRunning": int_reviewer.get("freeze-coder-while-running", True),
+            "internalReviewMaxTurns": claude_cli.get("max-turns-per-invocation", 24),
+            "internalReviewTimeoutSeconds": claude_cli.get("timeout-seconds", 1200),
+            "freezeCoderWhileInternalReviewRunning": int_reviewer.get("freeze-coder-while-running", True),
         },
         "agentLabels": {
             "internalCoderAgent": coder_default.get("name", "Internal_Coder_Agent"),
@@ -459,8 +459,8 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
     review_head_missing_minutes = int(staleness.get("reviewHeadMissingMinutes", 20))
 
     review_cache = config.get("reviewCache", {}) or {}
-    codex_cloud_cache_seconds = int(review_cache.get("codexCloudSeconds", 1800))
-    claude_review_request_cooldown_seconds = int(review_cache.get("claudeReviewRequestCooldownSeconds", 1200))
+    external_review_cache_seconds = int(review_cache.get("externalReviewSeconds", 1800))
+    internal_review_request_cooldown_seconds = int(review_cache.get("internalReviewRequestCooldownSeconds", 1200))
     internal_review_job_name = str(job_names.get("internalReviewRunner") or "internal-review-runner")
     workflow_checker_job_name = str(job_names.get("workflowChecker") or "workflow-checker")
     workflow_watchdog_job_name = str(job_names.get("workflowWatchdog") or "workflow-watchdog")
@@ -487,34 +487,15 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
     codex_session_nudge_cooldown_seconds = int(session_policy.get("codexSessionNudgeCooldownSeconds", 600))
 
     review_policy = config.get("reviewPolicy", {}) or {}
-    inter_review_agent_pass_with_findings_reviews = int(
-        review_policy.get("interReviewAgentPassWithFindingsReviews")
-        or review_policy.get("internalReviewerAgentPassWithFindingsReviews")
-        or review_policy.get("claudePassWithFindingsReviews", 1)
-    )
-    inter_review_agent_model = str(
+    internal_review_pass_with_findings_reviews = int(review_policy.get("internalReviewPassWithFindingsReviews", 1))
+    internal_review_model = str(
         review_policy.get("internalReviewerModel")
         or "claude-sonnet-4-6"
     )
-    inter_review_agent_max_turns = int(
-        review_policy.get("interReviewAgentMaxTurns")
-        or review_policy.get("internalReviewerAgentMaxTurns")
-        or review_policy.get("claudeReviewMaxTurns", 12)
-    )
-    inter_review_agent_timeout_seconds = int(
-        review_policy.get("interReviewAgentTimeoutSeconds")
-        or review_policy.get("internalReviewerAgentTimeoutSeconds")
-        or review_policy.get("claudeReviewTimeoutSeconds", 1200)
-    )
-    inter_review_agent_freeze_coder_while_running = bool(
-        review_policy.get(
-            "freezeCoderWhileInterReviewAgentRunning",
-            review_policy.get(
-                "freezeCoderWhileInternalReviewAgentRunning",
-                review_policy.get("freezeCoderWhileClaudeReviewRunning", True),
-            ),
-        )
-    )
+    internal_review_max_turns = int(review_policy.get("internalReviewMaxTurns", 12))
+    internal_review_timeout_seconds = int(review_policy.get("internalReviewTimeoutSeconds", 1200))
+    freeze_internal_review = review_policy.get("freezeCoderWhileInternalReviewRunning")
+    internal_review_freeze_coder_while_running = bool(True if freeze_internal_review is None else freeze_internal_review)
 
     agent_labels = config.get("agentLabels", {}) or {}
     internal_coder_agent_name = str(agent_labels.get("internalCoderAgent", "Internal_Coder_Agent"))
@@ -665,14 +646,14 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
         MISS_MULTIPLIER=miss_multiplier,
         LANE_NO_PR_MINUTES=lane_no_pr_minutes,
         REVIEW_HEAD_MISSING_MINUTES=review_head_missing_minutes,
-        CLAUDE_REVIEW_JOB_NAME=internal_review_job_name,
+        INTERNAL_REVIEW_JOB_NAME=internal_review_job_name,
         WORKFLOW_CHECKER_JOB_NAME=workflow_checker_job_name,
         WORKFLOW_WATCHDOG_JOB_NAME=workflow_watchdog_job_name,
         CODEX_WATCHDOG_JOB_NAME=workflow_watchdog_job_name,
         TELEGRAM_JOB_NAME=milestone_notifier_job_name,
-        CLAUDE_TRIGGER_STATES={"under_review", "findings_open", "revalidating"},
-        CODEX_CLOUD_CACHE_SECONDS=codex_cloud_cache_seconds,
-        CLAUDE_REVIEW_REQUEST_COOLDOWN_SECONDS=claude_review_request_cooldown_seconds,
+        INTERNAL_REVIEW_TRIGGER_STATES={"under_review", "findings_open", "revalidating"},
+        EXTERNAL_REVIEW_CACHE_SECONDS=external_review_cache_seconds,
+        INTERNAL_REVIEW_REQUEST_COOLDOWN_SECONDS=internal_review_request_cooldown_seconds,
         CODEX_SESSION_POLICY=session_policy,
         CODEX_MODEL_DEFAULT=codex_model_default,
         CODEX_MODEL_HIGH_EFFORT=codex_model_high_effort,
@@ -690,17 +671,11 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
         CODEX_SESSION_POKE_GRACE_SECONDS=codex_session_poke_grace_seconds,
         CODEX_SESSION_NUDGE_COOLDOWN_SECONDS=codex_session_nudge_cooldown_seconds,
         REVIEW_POLICY=review_policy,
-        INTER_REVIEW_AGENT_PASS_WITH_FINDINGS_REVIEWS=inter_review_agent_pass_with_findings_reviews,
-        INTER_REVIEW_AGENT_MODEL=inter_review_agent_model,
-        INTER_REVIEW_AGENT_MAX_TURNS=inter_review_agent_max_turns,
-        INTER_REVIEW_AGENT_TIMEOUT_SECONDS=inter_review_agent_timeout_seconds,
-        INTER_REVIEW_AGENT_FREEZE_CODER_WHILE_RUNNING=inter_review_agent_freeze_coder_while_running,
-        # Back-compat aliases for older call-sites still using "CLAUDE" names.
-        CLAUDE_MODEL=inter_review_agent_model,
-        CLAUDE_REVIEW_MAX_TURNS=inter_review_agent_max_turns,
-        CLAUDE_REVIEW_TIMEOUT_SECONDS=inter_review_agent_timeout_seconds,
-        CLAUDE_REVIEW_FREEZE_CODER_WHILE_RUNNING=inter_review_agent_freeze_coder_while_running,
-        CLAUDE_PASS_WITH_FINDINGS_REVIEWS=inter_review_agent_pass_with_findings_reviews,
+        INTERNAL_REVIEW_PASS_WITH_FINDINGS_REVIEWS=internal_review_pass_with_findings_reviews,
+        INTERNAL_REVIEW_MODEL=internal_review_model,
+        INTERNAL_REVIEW_MAX_TURNS=internal_review_max_turns,
+        INTERNAL_REVIEW_TIMEOUT_SECONDS=internal_review_timeout_seconds,
+        INTERNAL_REVIEW_FREEZE_CODER_WHILE_RUNNING=internal_review_freeze_coder_while_running,
         AGENT_LABELS=agent_labels,
         INTERNAL_CODER_AGENT_NAME=internal_coder_agent_name,
         ESCALATION_CODER_AGENT_NAME=escalation_coder_agent_name,
@@ -765,14 +740,14 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
     ns.reviewer = build_reviewer(ext_reviewer_cfg, ws_context=reviewer_ctx)
 
     # -- runtimes -------------------------------------------------------
-    # Legacy JSON configs synthesize runtime profiles from session/review
-    # policy fields. Repo-owned WORKFLOW.md configs use their top-level
-    # runtimes block directly, so shared runtimes such as codex-app-server are
-    # configured in one place and selected by actors.*.runtime.
+    # Default runtime profiles are derived from workflow policy fields.
+    # Repo-owned WORKFLOW.md configs can override the top-level runtimes block
+    # directly, so shared runtimes are configured once and selected by
+    # actors.*.runtime.
     _session_policy = config.get("sessionPolicy", {}) or {}
     _review_policy = config.get("reviewPolicy", {}) or {}
 
-    _legacy_runtimes_cfg = {
+    _default_runtimes_cfg = {
         "acpx-codex": {
             "kind": "acpx-codex",
             "session-idle-freshness-seconds": int(
@@ -787,21 +762,13 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
         },
         "claude-cli": {
             "kind": "claude-cli",
-            "max-turns-per-invocation": int(
-                _review_policy.get("interReviewAgentMaxTurns")
-                or _review_policy.get("internalReviewerAgentMaxTurns")
-                or _review_policy.get("claudeReviewMaxTurns", 24)
-            ),
-            "timeout-seconds": int(
-                _review_policy.get("interReviewAgentTimeoutSeconds")
-                or _review_policy.get("internalReviewerAgentTimeoutSeconds")
-                or _review_policy.get("claudeReviewTimeoutSeconds", 1200)
-            ),
+            "max-turns-per-invocation": int(_review_policy.get("internalReviewMaxTurns", 24)),
+            "timeout-seconds": int(_review_policy.get("internalReviewTimeoutSeconds", 1200)),
         },
     }
     _runtimes_cfg = {
         str(name): dict(profile or {})
-        for name, profile in (((yaml_cfg or {}).get("runtimes") or _legacy_runtimes_cfg).items())
+        for name, profile in (((yaml_cfg or {}).get("runtimes") or _default_runtimes_cfg).items())
     }
 
     _runtimes = build_runtimes(_runtimes_cfg, run=ns._run, run_json=ns._run_json)
@@ -1048,7 +1015,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
 
     def _inter_review_agent_pending_seed():
         return ns._load_adapter_reviews_module().inter_review_agent_pending_seed(
-            model=ns.INTER_REVIEW_AGENT_MODEL,
+            model=ns.INTERNAL_REVIEW_MODEL,
         )
 
     def _session_record_files(session_name):
@@ -1120,9 +1087,6 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
 
     def dispatch_inter_review_agent_review():
         return ns._load_adapter_actions_module().dispatch_inter_review_agent_review(ns.WORKSPACE)
-
-    def dispatch_claude_review():
-        return ns._load_adapter_actions_module().dispatch_claude_review(ns.WORKSPACE)
 
     def dispatch_repair_handoff():
         return ns._load_adapter_actions_module().dispatch_repair_handoff(ns.WORKSPACE)
@@ -1571,7 +1535,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             internal_coder_agent_name=ns.INTERNAL_CODER_AGENT_NAME,
             escalation_coder_agent_name=ns.ESCALATION_CODER_AGENT_NAME,
             internal_reviewer_agent_name=ns.INTERNAL_REVIEWER_AGENT_NAME,
-            internal_reviewer_model=ns.INTER_REVIEW_AGENT_MODEL,
+            internal_reviewer_model=ns.INTERNAL_REVIEW_MODEL,
             external_reviewer_agent_name=ns.EXTERNAL_REVIEWER_AGENT_NAME,
             advisory_reviewer_agent_name=ns.ADVISORY_REVIEWER_AGENT_NAME,
         )
@@ -1623,7 +1587,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
 
     def _new_inter_review_agent_run_id():
         import uuid as _uuid
-        return f"inter-review-agent:{_uuid.uuid4()}"
+        return f"internal-review:{_uuid.uuid4()}"
 
     def _extract_inter_review_agent_payload(raw_output):
         return ns._load_adapter_reviews_module().extract_inter_review_agent_payload(
@@ -1646,7 +1610,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         adapter_reviews = ns._load_adapter_reviews_module()
         agent_cfg = {
             "name": ns.INTERNAL_REVIEWER_AGENT_NAME,
-            "model": ns.INTER_REVIEW_AGENT_MODEL,
+            "model": ns.INTERNAL_REVIEW_MODEL,
             "runtime": "claude-cli",
         }
         agent_cfg.update(
@@ -1751,12 +1715,12 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         epochs = [epoch for epoch in (ns._iso_to_epoch(value) for value in candidates if value) if epoch is not None]
         return max(epochs) if epochs else None
 
-    def _single_pass_local_claude_gate_satisfied(review, local_head_sha, lane_state=None):
-        return ns._load_adapter_reviews_module().single_pass_local_claude_gate_satisfied(
+    def _single_pass_local_internal_review_gate_satisfied(review, local_head_sha, lane_state=None):
+        return ns._load_adapter_reviews_module().single_pass_local_internal_review_gate_satisfied(
             review,
             local_head_sha,
             lane_state,
-            pass_with_findings_reviews=ns.CLAUDE_PASS_WITH_FINDINGS_REVIEWS,
+            pass_with_findings_reviews=ns.INTERNAL_REVIEW_PASS_WITH_FINDINGS_REVIEWS,
         )
 
     def _fetch_external_review_pr_body_signal(pr_number):
@@ -1803,8 +1767,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             review,
             local_head_sha=local_head_sha,
             now_iso=now_iso,
-            model=ns.INTER_REVIEW_AGENT_MODEL,
-            timeout_seconds=ns.INTER_REVIEW_AGENT_TIMEOUT_SECONDS,
+            model=ns.INTERNAL_REVIEW_MODEL,
+            timeout_seconds=ns.INTERNAL_REVIEW_TIMEOUT_SECONDS,
             target_head_fn=ns._inter_review_agent_target_head,
             started_epoch_fn=ns._inter_review_agent_started_epoch,
             now_epoch_fn=lambda: int(time.time()),
@@ -1876,8 +1840,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             write_json_fn=ns._write_json,
         )
 
-    def should_dispatch_claude_repair_handoff(*, lane_state, session_action, internal_review, repair_brief, workflow_state, current_head_sha, has_open_pr):
-        return ns._load_adapter_reviews_module().should_dispatch_claude_repair_handoff(
+    def should_dispatch_internal_review_repair_handoff(*, lane_state, session_action, internal_review, repair_brief, workflow_state, current_head_sha, has_open_pr):
+        return ns._load_adapter_reviews_module().should_dispatch_internal_review_repair_handoff(
             lane_state=lane_state,
             session_action=session_action,
             internal_review=internal_review,
@@ -1930,8 +1894,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             workflow_policy=ns.WORKFLOW_POLICY,
         )
 
-    def build_claude_repair_handoff_payload(*, session_action, issue, internal_review, repair_brief, lane_memo_path, lane_state_path, now_iso):
-        return ns._load_adapter_reviews_module().build_claude_repair_handoff_payload(
+    def build_internal_review_repair_handoff_payload(*, session_action, issue, internal_review, repair_brief, lane_memo_path, lane_state_path, now_iso):
+        return ns._load_adapter_reviews_module().build_internal_review_repair_handoff_payload(
             session_action=session_action,
             issue=issue,
             internal_review=internal_review,
@@ -1941,8 +1905,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             now_iso=now_iso,
         )
 
-    def record_claude_repair_handoff(*, worktree, payload):
-        return ns._load_adapter_reviews_module().record_claude_repair_handoff(
+    def record_internal_review_repair_handoff(*, worktree, payload):
+        return ns._load_adapter_reviews_module().record_internal_review_repair_handoff(
             worktree=worktree,
             payload=payload,
             lane_state_path_fn=ns._lane_state_path,
@@ -1950,8 +1914,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             write_json_fn=ns._write_json,
         )
 
-    def _render_claude_repair_handoff_prompt(*, issue, internal_review, repair_brief, lane_memo_path, lane_state_path):
-        return ns._load_adapter_prompts_module().render_claude_repair_handoff_prompt(
+    def _render_internal_review_repair_handoff_prompt(*, issue, internal_review, repair_brief, lane_memo_path, lane_state_path):
+        return ns._load_adapter_prompts_module().render_internal_review_repair_handoff_prompt(
             issue=issue,
             internal_review=internal_review,
             repair_brief=repair_brief,
@@ -2081,8 +2045,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             started_epoch_fn=ns._inter_review_agent_started_epoch,
             now_ms_fn=ns._now_ms,
             now_epoch_fn=lambda: int(time.time()),
-            timeout_seconds=ns.INTER_REVIEW_AGENT_TIMEOUT_SECONDS,
-            request_cooldown_seconds=ns.CLAUDE_REVIEW_REQUEST_COOLDOWN_SECONDS,
+            timeout_seconds=ns.INTERNAL_REVIEW_TIMEOUT_SECONDS,
+            request_cooldown_seconds=ns.INTERNAL_REVIEW_REQUEST_COOLDOWN_SECONDS,
         )
 
     def _derive_next_action(*, active_lane, open_pr, health, implementation, reviews, repair_brief, preflight, workflow_state, review_loop_state, merge_blocked):
@@ -2255,12 +2219,9 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             now_iso_fn=ns._now_iso,
             new_inter_review_agent_run_id_fn=ns._new_inter_review_agent_run_id,
             actor_labels_payload_fn=ns._actor_labels_payload,
-            inter_review_agent_model=ns.INTER_REVIEW_AGENT_MODEL,
+            inter_review_agent_model=ns.INTERNAL_REVIEW_MODEL,
             internal_reviewer_agent_name=ns.INTERNAL_REVIEWER_AGENT_NAME,
         )
-
-    def dispatch_claude_review_raw():
-        return ns.dispatch_inter_review_agent_review_raw()
 
     def _maybe_dispatch_repair_handoff(*, status, ledger, now_iso, codex_model, lane_state_override=None):
         return ns._load_adapter_reviews_module().maybe_dispatch_repair_handoff(
@@ -2383,9 +2344,6 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
     def dispatch_inter_review_agent_review():
         return ns.dispatch_inter_review_agent_review_raw()
 
-    def dispatch_claude_review():
-        return ns.dispatch_claude_review_raw()
-
     def dispatch_repair_handoff():
         return ns.dispatch_repair_handoff_raw()
 
@@ -2436,21 +2394,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
 
         return _normalize_status(ns.build_status_raw(), ns.WORKSPACE)
 
-    # Back-compat aliases ------------------------------------------------
-    # Reference local function variables directly — those are bound by `def`
-    # in the current scope; dereferencing via ``ns.`` would fail here because
-    # the ``setattr(ns, …)`` loop below hasn't run yet.
     _new_review_run_id = _new_inter_review_agent_run_id
-    _claude_review_target_head = _inter_review_agent_target_head
-    _claude_review_started_epoch = _inter_review_agent_started_epoch
-    _claude_review_is_running_on_head = _inter_review_agent_is_running_on_head
-    _classify_claude_review_failure_text = _classify_inter_review_agent_failure_text
-    _extract_claude_review_payload = _extract_inter_review_agent_payload
-    _claude_review_failure_message = _inter_review_agent_failure_message
-    _claude_review_failure_class = _inter_review_agent_failure_class
-    _render_claude_review_prompt = _render_inter_review_agent_prompt
-    _run_claude_change_delivery = _run_inter_review_agent_review
-    _audit_claude_review_transition = _audit_inter_review_agent_transition
 
     # Expose the InterReviewAgentError class so callers using
     # ``workspace.InterReviewAgentError`` can catch it. We bind lazily — if the
@@ -2459,7 +2403,6 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
     # call time via ``ns._load_adapter_reviews_module()`` instead.
     try:
         ns.InterReviewAgentError = ns._load_adapter_reviews_module().InterReviewAgentError
-        ns.ClaudeReviewError = ns.InterReviewAgentError
     except FileNotFoundError:
         pass
 

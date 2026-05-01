@@ -272,15 +272,15 @@ def classify_lane_failure(
     internal_review = get_review(reviews, "internalReview")
     if internal_review.get("status") in {"failed", "timed_out"}:
         detail = internal_review.get("failureClass") or internal_review.get("status")
-        return {"failureClass": f"claude_review_{internal_review.get('status')}", "detail": detail}
+        return {"failureClass": f"internal_review_{internal_review.get('status')}", "detail": detail}
     if internal_review.get("required") and internal_review.get("verdict") in {"PASS_WITH_FINDINGS", "REWORK"}:
-        return {"failureClass": "claude_findings_open", "detail": internal_review.get("verdict")}
+        return {"failureClass": "internal_review_findings_open", "detail": internal_review.get("verdict")}
     if external_review.get("required") and int(external_review.get("openFindingCount") or 0) > 0:
-        return {"failureClass": "codex_cloud_findings_open", "detail": external_review.get("verdict") or "open-findings"}
-    claude_preflight = preflight.get("claudeReview") or {}
-    reasons = list(claude_preflight.get("reasons") or [])
+        return {"failureClass": "external_review_findings_open", "detail": external_review.get("verdict") or "open-findings"}
+    pre_publish_review_preflight = preflight.get("prePublishReview") or {}
+    reasons = list(pre_publish_review_preflight.get("reasons") or [])
     if reasons:
-        return {"failureClass": "claude_preflight_blocked", "detail": reasons[0]}
+        return {"failureClass": "internal_review_preflight_blocked", "detail": reasons[0]}
     return {"failureClass": None, "detail": None}
 
 
@@ -354,7 +354,7 @@ def local_inter_review_agent_review_count(review: dict[str, Any] | None, lane_st
     return count
 
 
-def single_pass_local_claude_gate_satisfied(
+def single_pass_local_internal_review_gate_satisfied(
     review: dict[str, Any] | None,
     local_head_sha: str | None,
     lane_state: dict[str, Any] | None = None,
@@ -442,30 +442,30 @@ def inter_review_agent_preflight(
     if not active_lane:
         reasons.append("no-active-lane")
     if publish_ready:
-        reasons.append("postpublish-claude-disabled")
+        reasons.append("postpublish-internal-review-disabled")
     if not has_local_candidate_fn(local_head_sha, implementation_commits_ahead):
         reasons.append("no-local-head-candidate")
-    if workflow_state not in {"implementing_local", "awaiting_claude_prepublish", "claude_prepublish_findings", "ready_to_publish", "implementing"}:
-        reasons.append("workflow-not-awaiting-local-claude")
+    if workflow_state not in {"implementing_local", "awaiting_pre_publish_review", "pre_publish_review_findings", "ready_to_publish", "implementing"}:
+        reasons.append("workflow-not-awaiting-local-review")
     if not checks_acceptable:
         reasons.append("checks-not-acceptable")
     if single_pass_gate_satisfied:
-        reasons.append("single-pass-claude-already-satisfied")
+        reasons.append("single-pass-internal-review-already-satisfied")
 
     review_status = inter_review_agent_review.get("status")
     reviewed_head = inter_review_agent_review.get("reviewedHeadSha")
     requested_head = target_head_fn(inter_review_agent_review)
     requested_at = _iso_to_epoch(inter_review_agent_review.get("requestedAt"))
     if target_head_sha and review_status == "completed" and reviewed_head == target_head_sha and inter_review_agent_review.get("reviewScope") == review_scope:
-        reasons.append("claude-review-already-current")
+        reasons.append("internal-review-already-current")
     if target_head_sha and review_status == "running" and requested_head == target_head_sha:
         started_epoch = started_epoch_fn(inter_review_agent_review)
         if started_epoch is not None and (now_epoch - started_epoch) >= timeout_seconds:
-            reasons.append("claude-review-running-timed-out")
+            reasons.append("internal-review-running-timed-out")
         else:
-            reasons.append("claude-review-running-current-head")
+            reasons.append("internal-review-running-current-head")
             if requested_at is not None and (now_epoch - requested_at) < request_cooldown_seconds:
-                reasons.append("claude-review-request-recent")
+                reasons.append("internal-review-request-recent")
 
     should_run = not reasons
     next_run_at = (inter_review_agent_job or {}).get("nextRunAtMs")
@@ -1060,7 +1060,7 @@ def record_external_review_repair_handoff(
     return state
 
 
-def build_claude_repair_handoff_payload(
+def build_internal_review_repair_handoff_payload(
     *,
     session_action: dict[str, Any],
     issue: dict[str, Any] | None,
@@ -1088,7 +1088,7 @@ def build_claude_repair_handoff_payload(
     }
 
 
-def record_claude_repair_handoff(
+def record_internal_review_repair_handoff(
     *,
     worktree: Any,
     payload: dict[str, Any],
@@ -1206,7 +1206,7 @@ def normalize_local_inter_review_agent_seed(
     return inter_review_agent_pending_seed(model=model)
 
 
-def should_dispatch_claude_repair_handoff(
+def should_dispatch_internal_review_repair_handoff(
     *,
     lane_state: dict[str, Any] | None,
     session_action: dict[str, Any],
@@ -1219,7 +1219,7 @@ def should_dispatch_claude_repair_handoff(
     review = internal_review or {}
     if has_open_pr:
         return {"shouldDispatch": False, "reason": "published-pr-phase"}
-    if workflow_state != "claude_prepublish_findings":
+    if workflow_state != "pre_publish_review_findings":
         return {"shouldDispatch": False, "reason": "workflow-not-awaiting-local-repair"}
     if session_action.get("action") not in {"continue-session", "poke-session"}:
         return {"shouldDispatch": False, "reason": "session-not-routable"}
@@ -1228,9 +1228,9 @@ def should_dispatch_claude_repair_handoff(
     if review.get("reviewScope") != "local-prepublish":
         return {"shouldDispatch": False, "reason": "wrong-review-scope"}
     if review.get("status") != "completed":
-        return {"shouldDispatch": False, "reason": "claude-review-not-complete"}
+        return {"shouldDispatch": False, "reason": "internal-review-not-complete"}
     if review.get("verdict") not in {"PASS_WITH_FINDINGS", "REWORK"}:
-        return {"shouldDispatch": False, "reason": "claude-review-not-actionable"}
+        return {"shouldDispatch": False, "reason": "internal-review-not-actionable"}
     if not current_head_sha or review.get("reviewedHeadSha") != current_head_sha:
         return {"shouldDispatch": False, "reason": "review-head-mismatch"}
     if (repair_brief or {}).get("forHeadSha") != current_head_sha:
@@ -1269,9 +1269,9 @@ def should_dispatch_external_review_repair_handoff(
     if review.get("reviewScope") != "postpublish-pr":
         return {"shouldDispatch": False, "reason": "wrong-review-scope"}
     if review.get("status") != "completed":
-        return {"shouldDispatch": False, "reason": "codex-review-not-complete"}
+        return {"shouldDispatch": False, "reason": "external-review-not-complete"}
     if review.get("verdict") not in {"PASS_WITH_FINDINGS", "REWORK"}:
-        return {"shouldDispatch": False, "reason": "codex-review-not-actionable"}
+        return {"shouldDispatch": False, "reason": "external-review-not-actionable"}
     if not current_head_sha or review.get("reviewedHeadSha") != current_head_sha:
         return {"shouldDispatch": False, "reason": "review-head-mismatch"}
     if (repair_brief or {}).get("forHeadSha") != current_head_sha:
@@ -1337,7 +1337,7 @@ def maybe_dispatch_repair_handoff(
     from pathlib import Path as _Path
 
     from workflows.change_delivery.prompts import (
-        render_claude_repair_handoff_prompt,
+        render_internal_review_repair_handoff_prompt,
         render_external_reviewer_repair_handoff_prompt,
     )
 
@@ -1363,7 +1363,7 @@ def maybe_dispatch_repair_handoff(
     lane_memo_path_obj = _Path(lane_memo_path_str) if lane_memo_path_str else None
     lane_state_path_obj = _Path(lane_state_path_str) if lane_state_path_str else None
 
-    claude_decision = should_dispatch_claude_repair_handoff(
+    internal_review_decision = should_dispatch_internal_review_repair_handoff(
         lane_state=lane_state,
         session_action=session_action,
         internal_review=get_review(reviews, "internalReview"),
@@ -1372,8 +1372,8 @@ def maybe_dispatch_repair_handoff(
         current_head_sha=impl.get("localHeadSha"),
         has_open_pr=bool(open_pr),
     )
-    if claude_decision.get("shouldDispatch"):
-        repair_payload = build_claude_repair_handoff_payload(
+    if internal_review_decision.get("shouldDispatch"):
+        repair_payload = build_internal_review_repair_handoff_payload(
             session_action=session_action,
             issue=issue,
             internal_review=get_review(reviews, "internalReview"),
@@ -1382,7 +1382,7 @@ def maybe_dispatch_repair_handoff(
             lane_state_path=lane_state_path_str,
             now_iso=now_iso,
         )
-        repair_prompt = render_claude_repair_handoff_prompt(
+        repair_prompt = render_internal_review_repair_handoff_prompt(
             issue=issue,
             internal_review=get_review(reviews, "internalReview"),
             repair_brief=repair_brief,
@@ -1396,7 +1396,7 @@ def maybe_dispatch_repair_handoff(
             prompt=repair_prompt,
             codex_model=codex_model,
         )
-        record_claude_repair_handoff(
+        record_internal_review_repair_handoff(
             worktree=worktree,
             payload=repair_payload,
             lane_state_path_fn=lane_state_path_fn,
@@ -1423,7 +1423,7 @@ def maybe_dispatch_repair_handoff(
             "payload": repair_payload,
         }, True
 
-    codex_cloud_decision = should_dispatch_external_review_repair_handoff(
+    external_review_decision = should_dispatch_external_review_repair_handoff(
         lane_state=lane_state,
         session_action=session_action,
         external_review=get_review(reviews, "externalReview"),
@@ -1432,7 +1432,7 @@ def maybe_dispatch_repair_handoff(
         current_head_sha=open_pr.get("headRefOid") or impl.get("localHeadSha"),
         has_open_pr=bool(open_pr),
     )
-    if codex_cloud_decision.get("shouldDispatch"):
+    if external_review_decision.get("shouldDispatch"):
         repair_payload = build_external_review_repair_handoff_payload(
             session_action=session_action,
             issue=issue,
@@ -1487,15 +1487,15 @@ def maybe_dispatch_repair_handoff(
     return {
         "dispatched": False,
         "reason": "repair-handoff-not-needed",
-        "internalReviewReason": claude_decision.get("reason"),
-        "externalReviewReason": codex_cloud_decision.get("reason"),
+        "internalReviewReason": internal_review_decision.get("reason"),
+        "externalReviewReason": external_review_decision.get("reason"),
     }, False
 
 
 def build_reviews_block(
     *,
     existing_reviews: dict[str, Any],
-    codex_cloud: dict[str, Any],
+    external_review: dict[str, Any],
     publish_ready: bool,
     local_head_sha: str | None,
     local_candidate_exists: bool,
@@ -1504,12 +1504,12 @@ def build_reviews_block(
     external_reviewer_agent_name: str,
     advisory_reviewer_agent_name: str,
     now_iso: str,
-    claude_seed_fn: Callable[[dict[str, Any] | None, str | None, str], dict[str, Any]] | None = None,
+    internal_review_seed_fn: Callable[[dict[str, Any] | None, str | None, str], dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Assemble the ``reviews`` block exposed by ``build_status_raw``.
 
     Routes publish-ready vs pre-publish branches to the right normalized seeds,
-    using adapter-owned review normalizers. ``claude_seed_fn`` is optional; if
+    using adapter-owned review normalizers. ``internal_review_seed_fn`` is optional; if
     not provided, a minimal pre-publish seed with the given model is used.
     """
     existing_internal_review = get_review(existing_reviews, "internalReview")
@@ -1525,22 +1525,22 @@ def build_reviews_block(
             "internalReview": normalize_review(
                 {**(existing_internal_review or {}), "model": (existing_internal_review or {}).get("model") or inter_review_agent_model},
                 required=False,
-                pending_summary="Claude pre-publish gate already completed before publication.",
+                pending_summary="Internal pre-publish review already completed before publication.",
                 agent_name=internal_reviewer_agent_name,
                 agent_role="internal_reviewer_agent",
             ),
             "externalReview": {
-                **codex_cloud,
+                **external_review,
                 "required": True,
                 "reviewScope": "postpublish-pr",
-                "agentName": codex_cloud.get("agentName") or external_reviewer_agent_name,
-                "agentRole": codex_cloud.get("agentRole") or "external_reviewer_agent",
+                "agentName": external_review.get("agentName") or external_reviewer_agent_name,
+                "agentRole": external_review.get("agentRole") or "external_reviewer_agent",
             },
         }
-    if claude_seed_fn is not None:
-        claude_seed = claude_seed_fn(existing_internal_review, local_head_sha, now_iso)
+    if internal_review_seed_fn is not None:
+        internal_review_seed = internal_review_seed_fn(existing_internal_review, local_head_sha, now_iso)
     else:
-        claude_seed = inter_review_agent_pending_seed(model=inter_review_agent_model)
+        internal_review_seed = inter_review_agent_pending_seed(model=inter_review_agent_model)
     return {
         "rockClaw": normalize_review(
             existing_reviews.get("rockClaw"),
@@ -1550,16 +1550,16 @@ def build_reviews_block(
             agent_role="advisory_reviewer_agent",
         ),
         "internalReview": normalize_review(
-            claude_seed,
+            internal_review_seed,
             required=local_candidate_exists,
             pending_summary="Pending local unpublished branch review before publication.",
             agent_name=internal_reviewer_agent_name,
             agent_role="internal_reviewer_agent",
         ),
         "externalReview": {
-            **codex_cloud,
-            "agentName": codex_cloud.get("agentName") or external_reviewer_agent_name,
-            "agentRole": codex_cloud.get("agentRole") or "external_reviewer_agent",
+            **external_review,
+            "agentName": external_review.get("agentName") or external_reviewer_agent_name,
+            "agentRole": external_review.get("agentRole") or "external_reviewer_agent",
         },
     }
 
@@ -1589,7 +1589,7 @@ def audit_inter_review_agent_transition(
         or current_review.get("reviewScope") != previous_review.get("reviewScope")
     ):
         audit_fn(
-            "claude-review-requested",
+            "internal-review-requested",
             f"{internal_reviewer_agent_name} review requested for head {requested_head}",
             headSha=requested_head,
             status=current_review.get("status") or "pending",
@@ -1605,7 +1605,7 @@ def audit_inter_review_agent_transition(
         or current_review.get("verdict") != previous_review.get("verdict")
     ):
         audit_fn(
-            "claude-review-completed",
+            "internal-review-completed",
             f"{internal_reviewer_agent_name} {current_review.get('verdict') or 'completed'} for head {reviewed_head}",
             headSha=reviewed_head,
             verdict=current_review.get("verdict"),
@@ -1621,7 +1621,7 @@ def audit_inter_review_agent_transition(
     ):
         summary = current_review.get("failureSummary") or current_review.get("summary") or f"{terminal_status} local internal review"
         audit_fn(
-            f"claude-review-{terminal_status}",
+            f"internal-review-{terminal_status}",
             summary,
             headSha=target_head_fn(current_review),
             status=terminal_status,
@@ -1749,7 +1749,7 @@ def run_inter_review_agent_review(
     inter_review_agent_max_turns: int,
     error_cls: type = subprocess.CalledProcessError,
 ) -> dict[str, Any]:
-    """Run the Claude inter-review agent CLI and return its parsed verdict.
+    """Run the internal review agent CLI and return its parsed verdict.
 
     Callers inject the subprocess ``run_fn`` (wrapper's ``_run``), the
     CalledProcessError class raised by that runner, and the model/max-turns
