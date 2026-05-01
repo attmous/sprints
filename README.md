@@ -204,13 +204,16 @@ flowchart LR
 
 Stable public boundaries are tracked in [docs/public-contract.md](docs/public-contract.md).
 Readiness and generic-surface guardrails are tracked in
-[docs/harness-engineering.md](docs/harness-engineering.md).
+[docs/harness-engineering.md](docs/harness-engineering.md). For the product
+boundary between Daedalus, Hermes Agent, and Hermes Kanban, see
+[docs/positioning.md](docs/positioning.md).
 
 ## Documentation
 
 | Doc | Purpose |
 |---|---|
 | [Installation](docs/operator/installation.md) | Full install, bootstrap, service, and troubleshooting path. |
+| [Positioning](docs/positioning.md) | Daedalus vs. Hermes Agent vs. Hermes Kanban, and why Kanban is an optional tracker rather than the engine. |
 | [WORKFLOW.md guide](docs/workflows/workflow-contract.md) | Workflow contract structure and examples. |
 | [Bundled workflows](docs/workflows/README.md) | Workflow comparison and templates. |
 | [Architecture](docs/architecture.md) | Engine/workflow boundary and durable runtime model. |

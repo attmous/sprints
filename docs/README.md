@@ -5,6 +5,7 @@ Entry point for everything that won't fit on the [project landing page](../READM
 ## Start here
 
 - **[architecture.md](architecture.md)** — the big picture. What Daedalus is, what it isn't, how the pieces fit together.
+- **[positioning.md](positioning.md)** — Daedalus vs. Hermes Agent vs. Hermes Kanban, and where integration boundaries belong.
 - **[operator/installation.md](operator/installation.md)** — the supported install, scaffold, verify, and supervise flow.
 - **[workflows/README.md](workflows/README.md)** — the two bundled workflows, when to use each, and where their templates live.
 - **[public-contract.md](public-contract.md)** — the stability boundary for the first public release.
@@ -64,6 +65,7 @@ Day-2 commands and observability.
 docs/
 ├── README.md                this file
 ├── architecture.md          big picture
+├── positioning.md           product boundaries vs. Hermes Agent and Hermes Kanban
 ├── public-contract.md       stable public surfaces for the first release
 ├── symphony-conformance.md  current spec alignment vs. remaining gaps
 ├── harness-engineering.md   public-readiness checks and guardrails
