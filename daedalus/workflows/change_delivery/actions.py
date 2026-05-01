@@ -190,6 +190,124 @@ def run_merge_and_promote(
     }
 
 
+def run_ensure_active_lane(
+    *,
+    build_status_fn: Callable[[], dict[str, Any]],
+    reconcile_fn: Callable[..., dict[str, Any]],
+    audit_fn: Callable[..., Any],
+    issue_add_label_fn: Callable[[Any, str], Any],
+    issue_comment_fn: Callable[[Any, str], Any],
+    pick_next_lane_issue_fn: Callable[[], dict[str, Any] | None],
+    active_lane_label: str,
+) -> dict[str, Any]:
+    """Promote the first eligible issue when a fresh workflow has no active lane."""
+    try:
+        status = build_status_fn()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "promoted": False,
+            "reason": "status-build-failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    active_lane = status.get("activeLane")
+    if active_lane:
+        return {
+            "ok": True,
+            "promoted": False,
+            "reason": "active-lane-present",
+            "issueNumber": active_lane.get("number"),
+        }
+    active_lane_error = status.get("activeLaneError")
+    if active_lane_error:
+        return {
+            "ok": False,
+            "promoted": False,
+            "reason": active_lane_error.get("error") or "active-lane-error",
+            "activeLaneError": active_lane_error,
+        }
+    try:
+        next_issue = pick_next_lane_issue_fn()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "promoted": False,
+            "reason": "lane-selection-failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if not next_issue:
+        return {"ok": True, "promoted": False, "reason": "no-eligible-issue"}
+
+    issue_number = next_issue.get("number")
+    if issue_number in (None, ""):
+        return {
+            "ok": False,
+            "promoted": False,
+            "reason": "eligible-issue-missing-number",
+            "issue": next_issue,
+        }
+    try:
+        label_added = bool(issue_add_label_fn(issue_number, active_lane_label))
+    except Exception as exc:
+        return {
+            "ok": False,
+            "promoted": False,
+            "reason": "active-lane-label-failed",
+            "issueNumber": issue_number,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if not label_added:
+        return {
+            "ok": False,
+            "promoted": False,
+            "reason": "active-lane-label-not-applied",
+            "issueNumber": issue_number,
+        }
+
+    comment_posted = False
+    try:
+        comment_posted = bool(
+            issue_comment_fn(
+                issue_number,
+                "Promoted to active lane during Daedalus startup.",
+            )
+        )
+    except Exception:
+        comment_posted = False
+
+    audit_fn(
+        "bootstrap-active-lane",
+        "Promoted eligible issue to active lane during Daedalus startup",
+        issueNumber=issue_number,
+        activeLaneLabel=active_lane_label,
+    )
+    try:
+        after = reconcile_fn(fix_watchers=True)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "promoted": True,
+            "reason": "reconcile-after-promotion-failed",
+            "issueNumber": issue_number,
+            "commentPosted": comment_posted,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {
+        "ok": True,
+        "promoted": True,
+        "reason": "promoted",
+        "issueNumber": issue_number,
+        "issueTitle": next_issue.get("title"),
+        "issueUrl": next_issue.get("url"),
+        "commentPosted": comment_posted,
+        "after": {
+            "health": after.get("health"),
+            "activeLane": (after.get("activeLane") or {}).get("number"),
+            "nextAction": (after.get("nextAction") or {}).get("type"),
+        },
+    }
+
+
 def run_dispatch_lane_turn(
     *,
     status: dict[str, Any],

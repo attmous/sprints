@@ -1115,6 +1115,17 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             issue_number, comment, repo_path=ns.REPO_PATH, run=ns._run,
         )
 
+    def ensure_active_lane():
+        return ns._load_adapter_actions_module().run_ensure_active_lane(
+            build_status_fn=ns.build_status,
+            reconcile_fn=ns.reconcile,
+            audit_fn=ns.audit,
+            issue_add_label_fn=ns._issue_add_label,
+            issue_comment_fn=ns._issue_comment,
+            pick_next_lane_issue_fn=ns._pick_next_lane_issue,
+            active_lane_label=ns.ACTIVE_LANE_LABEL,
+        )
+
     def publish_ready_pr():
         return ns._load_adapter_actions_module().publish_ready_pr(ns.WORKSPACE)
 

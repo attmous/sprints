@@ -2,6 +2,7 @@ import importlib.util
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -284,6 +285,67 @@ def test_bootstrap_promotion_refuses_existing_named_target_even_with_force(tmp_p
     assert (repo_root / "WORKFLOW.md").exists()
     assert target_path.read_text(encoding="utf-8") == target_text
     assert not (repo_root / "WORKFLOW-issue-runner.md").exists()
+
+
+def test_change_delivery_service_up_promotes_eligible_lane_before_start(tmp_path, monkeypatch):
+    tools = _tools()
+    workflow_root = tmp_path / "workflow"
+    workflow_root.mkdir()
+    calls: list[tuple] = []
+
+    fake_daedalus = SimpleNamespace(
+        init_daedalus_db=lambda **kwargs: calls.append(("init", kwargs)) or {"ok": True},
+    )
+
+    monkeypatch.setattr(tools, "_validate_workflow_contract_preflight_for_service", lambda **_kwargs: {"ok": True, "workflow": "change-delivery"})
+    monkeypatch.setattr(tools, "_load_daedalus_module", lambda _workflow_root: fake_daedalus)
+    monkeypatch.setattr(tools, "_ensure_change_delivery_active_lane_for_start", lambda _workflow_root: calls.append(("lane", str(_workflow_root))) or {"ok": True, "promoted": True, "issueNumber": 7})
+    monkeypatch.setattr(tools, "install_supervised_service", lambda **kwargs: calls.append(("install", kwargs)) or {"installed": True, "unit_path": str(tmp_path / "unit.service")})
+    monkeypatch.setattr(tools, "service_control", lambda action, **kwargs: calls.append((action, kwargs)) or {"ok": True})
+    monkeypatch.setattr(tools, "service_status", lambda **kwargs: calls.append(("status", kwargs)) or {"service_name": "daedalus-active@test.service"})
+
+    result = tools.service_up(
+        workflow_root=workflow_root,
+        project_key="project",
+        instance_id="instance",
+        interval_seconds=30,
+        service_mode="active",
+    )
+
+    assert result["ok"] is True
+    assert result["lane_selection"] == {"ok": True, "promoted": True, "issueNumber": 7}
+    call_names = [call[0] for call in calls]
+    assert call_names.index("enable") < call_names.index("lane") < call_names.index("start")
+
+
+def test_change_delivery_active_service_loop_promotes_lane_before_running(tmp_path, monkeypatch):
+    tools = _tools()
+    workflow_root = tmp_path / "workflow"
+    workflow_root.mkdir()
+    calls: list[str] = []
+
+    fake_daedalus = SimpleNamespace(
+        _project_key_for=lambda _workflow_root: "project",
+        run_active_loop=lambda **kwargs: calls.append("run-active") or {"loop_status": "completed", "kwargs": kwargs},
+        run_shadow_loop=lambda **kwargs: calls.append("run-shadow") or {"loop_status": "completed", "kwargs": kwargs},
+    )
+
+    monkeypatch.setattr(tools, "_assert_service_mode_supported", lambda **_kwargs: "change-delivery")
+    monkeypatch.setattr(tools, "_load_daedalus_module", lambda _workflow_root: fake_daedalus)
+    monkeypatch.setattr(tools, "_ensure_change_delivery_active_lane_for_start", lambda _workflow_root: calls.append("lane") or {"ok": True, "promoted": True, "issueNumber": 8})
+
+    result = tools.service_loop(
+        workflow_root=workflow_root,
+        project_key=None,
+        instance_id="instance",
+        interval_seconds=1,
+        max_iterations=1,
+        service_mode="active",
+    )
+
+    assert result["loop_status"] == "completed"
+    assert result["lane_selection"] == {"ok": True, "promoted": True, "issueNumber": 8}
+    assert calls == ["lane", "run-active"]
 
 
 def test_bootstrap_workflow_requires_git_repo(tmp_path):

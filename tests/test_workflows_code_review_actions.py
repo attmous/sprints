@@ -249,6 +249,83 @@ def test_run_merge_and_promote_promotes_next_lane_after_merge():
     assert ("add", 225, "P0") in calls["issue"]
 
 
+def test_run_ensure_active_lane_promotes_first_eligible_issue():
+    actions_module = load_module("daedalus_workflows_change_delivery_actions_eal", "workflows/change_delivery/actions.py")
+    calls: list[tuple] = []
+
+    def fake_reconcile(*, fix_watchers=False):
+        calls.append(("reconcile", fix_watchers))
+        return {
+            "health": "healthy",
+            "activeLane": {"number": 225},
+            "nextAction": {"type": "dispatch_codex_turn"},
+        }
+
+    result = actions_module.run_ensure_active_lane(
+        build_status_fn=lambda: {"activeLane": None, "activeLaneError": None},
+        reconcile_fn=fake_reconcile,
+        audit_fn=lambda action, summary, **extra: calls.append(("audit", action, extra)),
+        issue_add_label_fn=lambda issue_number, label: calls.append(("add", issue_number, label)) or True,
+        issue_comment_fn=lambda issue_number, body: calls.append(("comment", issue_number, body)) or True,
+        pick_next_lane_issue_fn=lambda: {"number": 225, "title": "Next lane", "url": "https://example.test/issues/225"},
+        active_lane_label="active-lane",
+    )
+
+    assert result["ok"] is True
+    assert result["promoted"] is True
+    assert result["issueNumber"] == 225
+    assert result["after"] == {"health": "healthy", "activeLane": 225, "nextAction": "dispatch_codex_turn"}
+    assert ("add", 225, "active-lane") in calls
+    assert any(call[0] == "comment" and call[1] == 225 for call in calls)
+    assert ("reconcile", True) in calls
+
+
+def test_run_ensure_active_lane_skips_when_active_lane_already_exists():
+    actions_module = load_module("daedalus_workflows_change_delivery_actions_eal_skip", "workflows/change_delivery/actions.py")
+
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("selection should not run when an active lane already exists")
+
+    result = actions_module.run_ensure_active_lane(
+        build_status_fn=lambda: {"activeLane": {"number": 224}},
+        reconcile_fn=should_not_run,
+        audit_fn=should_not_run,
+        issue_add_label_fn=should_not_run,
+        issue_comment_fn=should_not_run,
+        pick_next_lane_issue_fn=should_not_run,
+        active_lane_label="active-lane",
+    )
+
+    assert result == {
+        "ok": True,
+        "promoted": False,
+        "reason": "active-lane-present",
+        "issueNumber": 224,
+    }
+
+
+def test_run_ensure_active_lane_reports_selection_failure_without_raising():
+    actions_module = load_module("daedalus_workflows_change_delivery_actions_eal_fail", "workflows/change_delivery/actions.py")
+
+    def broken_selection():
+        raise RuntimeError("gh unavailable")
+
+    result = actions_module.run_ensure_active_lane(
+        build_status_fn=lambda: {"activeLane": None},
+        reconcile_fn=lambda **_kwargs: {},
+        audit_fn=lambda *args, **kwargs: None,
+        issue_add_label_fn=lambda *_args: True,
+        issue_comment_fn=lambda *_args: True,
+        pick_next_lane_issue_fn=broken_selection,
+        active_lane_label="active-lane",
+    )
+
+    assert result["ok"] is False
+    assert result["promoted"] is False
+    assert result["reason"] == "lane-selection-failed"
+    assert "gh unavailable" in result["error"]
+
+
 def _dispatch_deps(tmp_path: Path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
