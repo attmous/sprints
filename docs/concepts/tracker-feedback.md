@@ -16,7 +16,7 @@ It is the shared replacement for workflow-specific GitHub comment settings.
 ```yaml
 tracker-feedback:
   enabled: true
-  comment-mode: append
+  comment-mode: append  # append | upsert
   include:
     - issue.selected
     - issue.running
@@ -32,12 +32,17 @@ tracker-feedback:
 `internal-review-completed`, `publish-ready-pr`, `push-pr-update`,
 `merge-and-promote`, and operator-attention events.
 
+`comment-mode: append` writes a new tracker comment for every included event.
+`comment-mode: upsert` keeps one current Daedalus comment per workflow event
+and updates it on later runs; the durable audit trail still lives in Daedalus
+SQLite/events.
+
 ## Tracker Behavior
 
 | Tracker | Feedback behavior |
 |---|---|
-| GitHub | Posts issue comments through `gh issue comment`; applies configured `open`/`closed` state updates and ignores other tracker states. |
-| `local-json` | Appends `comments[]`, updates `updated_at`, and applies configured state changes. |
+| GitHub | Posts issue comments through `gh issue comment`, or updates marked comments when `comment-mode: upsert`; applies configured `open`/`closed` state updates and ignores other tracker states. |
+| `local-json` | Appends or upserts `comments[]`, updates `updated_at`, and applies configured state changes. |
 | Linear | Adapter exists for reads; feedback publishing is deferred. |
 
 ## Failure Handling

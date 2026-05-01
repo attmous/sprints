@@ -2,9 +2,9 @@
 
 Use this only against a repository where temporary issues and comments are
 acceptable. The test creates one labeled issue, lets `issue-runner` select and
-dispatch it, forces one runtime failure, verifies retry recovery, writes tracker
-feedback comments, closes the issue through `tracker-feedback`, and verifies
-terminal cleanup.
+dispatch it, forces one runtime failure, verifies retry recovery, writes
+upserted tracker feedback comments, closes the issue through
+`tracker-feedback`, and verifies terminal cleanup.
 
 ## Prerequisites
 
@@ -45,6 +45,8 @@ to be a git checkout.
 - a supervised worker dispatches from the selected issue
 - tracker feedback writes issue comments for selected, dispatched, running,
   failed, retry scheduled, and completed stages
+- `tracker-feedback.comment-mode: upsert` avoids duplicate Daedalus comments
+  when selected/running stages repeat during retry recovery
 - scheduler state records failure retry/backoff and clears it after recovery
 - `tracker-feedback.state-updates.on-completed: closed` closes the GitHub issue
 - terminal GitHub state clears retry state and removes the issue workspace

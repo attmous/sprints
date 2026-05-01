@@ -136,7 +136,7 @@ def test_live_github_issue_runner_feedback_retry_recovery_and_cleanup(tmp_path):
             },
             "tracker-feedback": {
                 "enabled": True,
-                "comment-mode": "append",
+                "comment-mode": "upsert",
                 "include": [
                     "issue.selected",
                     "issue.dispatched",
@@ -219,6 +219,7 @@ def test_live_github_issue_runner_feedback_retry_recovery_and_cleanup(tmp_path):
             "issue.completed",
         ]:
             assert any(f"Daedalus update: {event}" in body for body in comment_bodies), event
+            assert sum(f"daedalus-feedback:issue-runner:{event}" in body for body in comment_bodies) == 1
 
         cleanup_result = None
         for _ in range(10):

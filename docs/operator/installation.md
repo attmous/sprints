@@ -213,6 +213,21 @@ flags during `install` or `up`, for example `--ws-token-file
 /absolute/path/to/token`. See [Codex app-server operations](codex-app-server.md)
 for external-mode diagnostics and troubleshooting.
 
+## Run the local demo issue
+
+The default `issue-runner` bootstrap seeds `config/issues.json` with one safe
+local issue. Before wiring GitHub or another tracker, run the service loop once
+in the foreground:
+
+```bash
+hermes daedalus service-loop --max-iterations 2 --interval-seconds 1 --json
+hermes daedalus status --format json
+```
+
+This exercises the same engine path as the user service: it selects the local
+issue, dispatches the configured runtime, appends tracker feedback comments,
+and marks the issue `done` after a successful run.
+
 ## Manual low-level path
 
 If you want to inspect or script each step separately, the lower-level commands

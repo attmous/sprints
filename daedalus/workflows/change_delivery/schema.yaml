@@ -328,7 +328,7 @@ definitions:
       enabled: {type: boolean}
       comment-mode:
         type: string
-        enum: [append]
+        enum: [append, upsert]
       include:
         type: array
         items: {type: string}

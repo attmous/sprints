@@ -98,7 +98,7 @@ Feedback configuration is tracker-neutral. GitHub receives issue comments.
 ```yaml
 tracker-feedback:
   enabled: true
-  comment-mode: append
+  comment-mode: append  # append | upsert
   include: [issue.selected, issue.running, issue.completed, issue.failed, issue.retry_scheduled]
   state-updates:
     enabled: true
@@ -106,6 +106,9 @@ tracker-feedback:
     on-completed: done
     on-failed: todo
 ```
+
+Use `comment-mode: upsert` for public tracker issues where you want one current
+Daedalus status comment per event instead of an append-only issue timeline.
 
 `issue-runner` composes the shared `trackers/` clients with workflow-specific
 eligibility, ordering, retry, and workspace policy.

@@ -40,6 +40,7 @@ class TrackerClient(Protocol):
         summary: str,
         state: str | None = None,
         metadata: dict[str, Any] | None = None,
+        comment_mode: str | None = None,
     ) -> dict[str, Any]: ...
 
 

@@ -48,7 +48,7 @@ comment objects and can update local issue state.
 ```yaml
 tracker-feedback:
   enabled: true
-  comment-mode: append
+  comment-mode: append  # use upsert to keep one current comment per event
   include:
     - dispatch-implementation-turn
     - internal-review-completed
