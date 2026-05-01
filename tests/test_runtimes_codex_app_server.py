@@ -528,6 +528,12 @@ def test_codex_app_server_runtime_filters_events_by_active_thread_and_turn():
     assert state.last_event is None
 
     assert (
+        runtime._consume_message({"method": "error", "params": {"message": "timed out"}}, state=state)
+        is False
+    )
+    assert state.last_event is None
+
+    assert (
         runtime._consume_message(
             {
                 "method": "turn/completed",
@@ -574,6 +580,21 @@ def test_codex_app_server_runtime_filters_events_by_active_thread_and_turn():
                 "params": {"threadId": "thread-current", "turnId": "turn-current", "message": "current failure"},
             },
             state=state,
+        )
+
+
+def test_codex_app_server_runtime_keeps_unscoped_startup_errors_fatal():
+    from runtimes.codex_app_server import CodexAppServerError, CodexAppServerRuntime, _RunState
+
+    runtime = CodexAppServerRuntime({"command": [sys.executable, "-c", ""]}, run=None)
+
+    with pytest.raises(CodexAppServerError, match="startup failed"):
+        runtime._consume_message({"method": "error", "params": {"message": "startup failed"}}, state=_RunState())
+
+    with pytest.raises(CodexAppServerError, match="turn start failed"):
+        runtime._consume_message(
+            {"method": "error", "params": {"message": "turn start failed"}},
+            state=_RunState(session_id="thread-current", thread_id="thread-current"),
         )
 
 

@@ -1019,6 +1019,10 @@ class CodexAppServerRuntime:
         thread_id = self._message_thread_id(params)
         turn_id = self._message_turn_id(params)
 
+        # Shared app-server endpoints can emit unscoped errors for other turns.
+        # Request/response errors are still handled by _AppServerClient.request.
+        if method == "error" and not thread_id and not turn_id and state.thread_id and state.turn_id:
+            return False
         if thread_id and state.thread_id and thread_id != state.thread_id:
             return False
         if turn_id and state.turn_id and turn_id != state.turn_id:
