@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -9,12 +10,17 @@ from .scheduler import build_scheduler_payload
 from .sqlite import connect_daedalus_db
 
 
-ENGINE_STATE_TABLES = (
+ENGINE_SCHEDULER_TABLES = (
     "engine_work_items",
     "engine_running_work",
     "engine_retry_queue",
     "engine_runtime_sessions",
     "engine_runtime_totals",
+)
+
+ENGINE_STATE_TABLES = (
+    *ENGINE_SCHEDULER_TABLES,
+    "engine_runs",
 )
 
 
@@ -134,12 +140,31 @@ def init_engine_state(conn: sqlite3.Connection) -> None:
           updated_at_epoch REAL NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS engine_runs (
+          workflow TEXT NOT NULL,
+          run_id TEXT PRIMARY KEY,
+          mode TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          started_at_epoch REAL NOT NULL,
+          completed_at TEXT,
+          completed_at_epoch REAL,
+          selected_count INTEGER NOT NULL DEFAULT 0,
+          completed_count INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          metadata_json TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_engine_running_workflow_status
           ON engine_running_work(workflow, worker_status);
         CREATE INDEX IF NOT EXISTS idx_engine_retry_workflow_due
           ON engine_retry_queue(workflow, due_at_epoch);
         CREATE INDEX IF NOT EXISTS idx_engine_runtime_sessions_thread
           ON engine_runtime_sessions(workflow, thread_id);
+        CREATE INDEX IF NOT EXISTS idx_engine_runs_workflow_started
+          ON engine_runs(workflow, started_at_epoch);
+        CREATE INDEX IF NOT EXISTS idx_engine_runs_workflow_status
+          ON engine_runs(workflow, status);
         """
     )
 
@@ -569,10 +594,218 @@ def read_engine_scheduler_state(
     except sqlite3.OperationalError:
         return None
     try:
-        if not engine_state_tables_exist(conn):
+        if not all(_table_exists(conn, name) for name in ENGINE_SCHEDULER_TABLES):
             return None
         return _scheduler_state_from_connection(conn, workflow=workflow, now_iso=now_iso, now_epoch=now_epoch)
     except sqlite3.OperationalError:
         return None
+    finally:
+        conn.close()
+
+
+def _run_row_to_dict(row: tuple[Any, ...]) -> dict[str, Any]:
+    (
+        workflow,
+        run_id,
+        mode,
+        status,
+        started_at,
+        started_at_epoch,
+        completed_at,
+        completed_at_epoch,
+        selected_count,
+        completed_count,
+        error,
+        metadata_json,
+    ) = row
+    return {
+        "workflow": workflow,
+        "run_id": run_id,
+        "mode": mode,
+        "status": status,
+        "started_at": started_at,
+        "started_at_epoch": float(started_at_epoch or 0),
+        "completed_at": completed_at,
+        "completed_at_epoch": None if completed_at_epoch is None else float(completed_at_epoch),
+        "selected_count": int(selected_count or 0),
+        "completed_count": int(completed_count or 0),
+        "error": error,
+        "metadata": _json_loads(metadata_json) or {},
+    }
+
+
+def start_engine_run_to_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    mode: str,
+    now_iso: str,
+    now_epoch: float,
+    run_id: str | None = None,
+    selected_count: int = 0,
+    completed_count: int = 0,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    init_engine_state(conn)
+    safe_mode = str(mode or "run").strip() or "run"
+    safe_run_id = str(run_id or "").strip() or (
+        f"{workflow}:{safe_mode}:{int(now_epoch * 1000)}:{uuid.uuid4().hex[:8]}"
+    )
+    conn.execute(
+        """
+        INSERT INTO engine_runs (
+          workflow, run_id, mode, status, started_at, started_at_epoch,
+          selected_count, completed_count, metadata_json
+        ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)
+        """,
+        (
+            workflow,
+            safe_run_id,
+            safe_mode,
+            now_iso,
+            float(now_epoch),
+            int(selected_count or 0),
+            int(completed_count or 0),
+            _json_dumps(metadata or {}),
+        ),
+    )
+    return {
+        "workflow": workflow,
+        "run_id": safe_run_id,
+        "mode": safe_mode,
+        "status": "running",
+        "started_at": now_iso,
+        "started_at_epoch": float(now_epoch),
+        "completed_at": None,
+        "completed_at_epoch": None,
+        "selected_count": int(selected_count or 0),
+        "completed_count": int(completed_count or 0),
+        "error": None,
+        "metadata": dict(metadata or {}),
+    }
+
+
+def finish_engine_run_to_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    run_id: str,
+    status: str,
+    now_iso: str,
+    now_epoch: float,
+    selected_count: int | None = None,
+    completed_count: int | None = None,
+    error: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    init_engine_state(conn)
+    row = conn.execute(
+        """
+        SELECT workflow, run_id, mode, status, started_at, started_at_epoch,
+               completed_at, completed_at_epoch, selected_count, completed_count,
+               error, metadata_json
+        FROM engine_runs
+        WHERE workflow=? AND run_id=?
+        """,
+        (workflow, run_id),
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown engine run: {run_id}")
+    current = _run_row_to_dict(row)
+    merged_metadata = dict(current.get("metadata") or {})
+    if metadata:
+        merged_metadata.update(metadata)
+    final_status = str(status or "completed").strip() or "completed"
+    final_selected_count = current["selected_count"] if selected_count is None else int(selected_count or 0)
+    final_completed_count = current["completed_count"] if completed_count is None else int(completed_count or 0)
+    final_error = error if error is not None else current.get("error")
+    conn.execute(
+        """
+        UPDATE engine_runs
+           SET status=?,
+               completed_at=?,
+               completed_at_epoch=?,
+               selected_count=?,
+               completed_count=?,
+               error=?,
+               metadata_json=?
+         WHERE workflow=? AND run_id=?
+        """,
+        (
+            final_status,
+            now_iso,
+            float(now_epoch),
+            final_selected_count,
+            final_completed_count,
+            final_error,
+            _json_dumps(merged_metadata),
+            workflow,
+            run_id,
+        ),
+    )
+    return {
+        **current,
+        "status": final_status,
+        "completed_at": now_iso,
+        "completed_at_epoch": float(now_epoch),
+        "selected_count": final_selected_count,
+        "completed_count": final_completed_count,
+        "error": final_error,
+        "metadata": merged_metadata,
+    }
+
+
+def latest_engine_runs_from_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    init_engine_state(conn)
+    rows = conn.execute(
+        """
+        SELECT workflow, run_id, mode, status, started_at, started_at_epoch,
+               completed_at, completed_at_epoch, selected_count, completed_count,
+               error, metadata_json
+        FROM engine_runs
+        WHERE workflow=?
+        ORDER BY started_at_epoch DESC, run_id DESC
+        LIMIT ?
+        """,
+        (workflow, max(int(limit or 10), 1)),
+    ).fetchall()
+    return [_run_row_to_dict(row) for row in rows]
+
+
+def read_engine_runs(
+    db_path: Path,
+    *,
+    workflow: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.OperationalError:
+        return []
+    try:
+        if not _table_exists(conn, "engine_runs"):
+            return []
+        rows = conn.execute(
+            """
+            SELECT workflow, run_id, mode, status, started_at, started_at_epoch,
+                   completed_at, completed_at_epoch, selected_count, completed_count,
+                   error, metadata_json
+            FROM engine_runs
+            WHERE workflow=?
+            ORDER BY started_at_epoch DESC, run_id DESC
+            LIMIT ?
+            """,
+            (workflow, max(int(limit or 10), 1)),
+        ).fetchall()
+        return [_run_row_to_dict(row) for row in rows]
+    except sqlite3.OperationalError:
+        return []
     finally:
         conn.close()

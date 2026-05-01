@@ -238,6 +238,9 @@ def test_issue_runner_tick_runs_selected_issue_and_writes_artifacts(tmp_path):
     result = workspace.tick()
 
     assert result["ok"] is True
+    assert result["engineRun"]["mode"] == "tick"
+    assert result["engineRun"]["status"] == "completed"
+    assert workspace.engine_store.latest_runs(limit=1)[0]["run_id"] == result["engineRun"]["run_id"]
     assert result["selectedIssue"]["id"] == "ISSUE-1"
     assert result["results"][0]["retry"]["delay_type"] == "continuation"
     assert result["results"][0]["retry"]["delay_ms"] == 1000
@@ -703,6 +706,8 @@ def test_issue_runner_supervise_once_dispatches_and_reconciles_worker(tmp_path):
 
     assert dispatched["ok"] is True
     assert dispatched["mode"] == "supervised"
+    assert dispatched["engineRun"]["mode"] == "supervised"
+    assert dispatched["engineRun"]["selected_count"] == 1
     assert dispatched["dispatchedWorkers"][0]["issue_id"] == "ISSUE-1"
     assert started.wait(timeout=2)
     running = workspace.build_status()["scheduler"]["running"]
@@ -719,6 +724,8 @@ def test_issue_runner_supervise_once_dispatches_and_reconciles_worker(tmp_path):
         time.sleep(0.01)
 
     assert completed is not None
+    assert completed["engineRun"]["mode"] == "supervised"
+    assert completed["engineRun"]["completed_count"] == 1
     assert completed["completedResults"][0]["ok"] is True
     assert workspace.build_status()["scheduler"]["running"] == []
     assert workspace.build_status()["scheduler"]["retry_queue"][0]["error"] == "continuation"

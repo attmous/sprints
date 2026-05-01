@@ -522,6 +522,49 @@ class IssueRunnerWorkspace(WorkflowDriver):
             ),
         )
 
+    def _finish_engine_run_for_status(
+        self,
+        engine_run: dict[str, Any],
+        status: dict[str, Any],
+        *,
+        selected_count: int | None = None,
+        completed_count: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        selected = status.get("selectedIssues") or []
+        completed = status.get("completedResults") or status.get("results") or []
+        final_selected_count = len(selected) if selected_count is None else selected_count
+        final_completed_count = len(completed) if completed_count is None else completed_count
+        run_metadata = {
+            "status_mode": status.get("mode") or "tick",
+            **(metadata or {}),
+        }
+        if status.get("message"):
+            run_metadata["message"] = status.get("message")
+        if status.get("ok"):
+            return self.engine_store.complete_run(
+                engine_run["run_id"],
+                selected_count=final_selected_count,
+                completed_count=final_completed_count,
+                metadata=run_metadata,
+            )
+        return self.engine_store.fail_run(
+            engine_run["run_id"],
+            error=str(status.get("error") or "workflow run reported failure"),
+            selected_count=final_selected_count,
+            completed_count=final_completed_count,
+            metadata=run_metadata,
+        )
+
+    def _fail_engine_run_after_exception(self, engine_run: dict[str, Any], exc: Exception) -> None:
+        try:
+            self.engine_store.fail_run(
+                engine_run["run_id"],
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        except Exception:
+            pass
+
     def _restore_scheduler_state(self) -> None:
         payload = self._load_scheduler_state()
         restored = restore_scheduler_state(payload, now_epoch=_now_epoch())
@@ -1210,6 +1253,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
         return dispatched
 
     def supervise_once(self) -> dict[str, Any]:
+        engine_run = self.engine_store.start_run(mode="supervised")
         status = {
             "ok": True,
             "workflow": "issue-runner",
@@ -1226,79 +1270,117 @@ class IssueRunnerWorkspace(WorkflowDriver):
             "cancellationRequests": [],
         }
         try:
-            issues = self.tracker_client.list_all()
-            terminal_issues = self.tracker_client.list_terminal()
-        except Exception as exc:
-            status["ok"] = False
-            status["error"] = f"{type(exc).__name__}: {exc}"
-            self._write_status(status, health="error")
-            self._emit_event(
-                "issue_runner.tick.failed",
-                {
-                    "error": status["error"],
-                    "reason": "tracker-load-failed",
+            try:
+                issues = self.tracker_client.list_all()
+                terminal_issues = self.tracker_client.list_terminal()
+            except Exception as exc:
+                status["ok"] = False
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                status["engineRun"] = self._finish_engine_run_for_status(
+                    engine_run,
+                    status,
+                    selected_count=0,
+                    completed_count=0,
+                    metadata={"reason": "tracker-load-failed"},
+                )
+                self._write_status(status, health="error")
+                self._emit_event(
+                    "issue_runner.tick.failed",
+                    {
+                        "error": status["error"],
+                        "reason": "tracker-load-failed",
+                    },
+                )
+                return status
+
+            status["cancellationRequests"] = self._request_terminal_cancellations(terminal_issues)
+            completed = self._reconcile_supervised_workers()
+            if completed:
+                status = self._status_from_results(base_status=status, results=completed)
+                status["completedResults"] = status.get("results") or []
+            cleanup = self._cleanup_terminal_workspaces(terminal_issues)
+            status["cleanup"] = cleanup
+
+            issues_by_id = {str(issue.get("id")): issue for issue in issues if str(issue.get("id") or "").strip()}
+            selections = self._select_issue_batch(issues=issues, issues_by_id=issues_by_id)
+            refreshed_selections: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+            for selected, retry_entry in selections:
+                issue_id = str(selected.get("id") or "").strip()
+                if issue_id:
+                    selected = self.tracker_client.refresh([issue_id]).get(issue_id, selected)
+                refreshed_selections.append((selected, retry_entry))
+            selections = refreshed_selections
+            status["selectedIssues"] = [issue for issue, _retry_entry in selections]
+            status["selectedIssue"] = selections[0][0] if selections else None
+            dispatched = self._dispatch_supervised_workers(selections)
+            status["dispatchedWorkers"] = dispatched
+            if not completed and not dispatched:
+                status["message"] = "no dispatchable issues"
+                self._emit_event("issue_runner.tick.noop", {"reason": "no-dispatchable-issues"})
+
+            if completed and not all(result.get("ok") or result.get("suppressRetry") for result in completed):
+                status["ok"] = False
+            status["engineRun"] = self._finish_engine_run_for_status(
+                engine_run,
+                status,
+                metadata={
+                    "dispatched_count": len(dispatched),
+                    "cancellation_count": len(status.get("cancellationRequests") or []),
                 },
             )
+            self._write_status(status, health="healthy" if status["ok"] else "error")
+            self._persist_scheduler_state()
             return status
-
-        status["cancellationRequests"] = self._request_terminal_cancellations(terminal_issues)
-        completed = self._reconcile_supervised_workers()
-        if completed:
-            status = self._status_from_results(base_status=status, results=completed)
-            status["completedResults"] = status.get("results") or []
-        cleanup = self._cleanup_terminal_workspaces(terminal_issues)
-        status["cleanup"] = cleanup
-
-        issues_by_id = {str(issue.get("id")): issue for issue in issues if str(issue.get("id") or "").strip()}
-        selections = self._select_issue_batch(issues=issues, issues_by_id=issues_by_id)
-        refreshed_selections: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
-        for selected, retry_entry in selections:
-            issue_id = str(selected.get("id") or "").strip()
-            if issue_id:
-                selected = self.tracker_client.refresh([issue_id]).get(issue_id, selected)
-            refreshed_selections.append((selected, retry_entry))
-        selections = refreshed_selections
-        status["selectedIssues"] = [issue for issue, _retry_entry in selections]
-        status["selectedIssue"] = selections[0][0] if selections else None
-        dispatched = self._dispatch_supervised_workers(selections)
-        status["dispatchedWorkers"] = dispatched
-        if not completed and not dispatched:
-            status["message"] = "no dispatchable issues"
-            self._emit_event("issue_runner.tick.noop", {"reason": "no-dispatchable-issues"})
-
-        if completed and not all(result.get("ok") or result.get("suppressRetry") for result in completed):
-            status["ok"] = False
-        self._write_status(status, health="healthy" if status["ok"] else "error")
-        self._persist_scheduler_state()
-        return status
+        except Exception as exc:
+            self._fail_engine_run_after_exception(engine_run, exc)
+            raise
 
     def _reconcile_before_loop_exit(self, last_result: dict[str, Any] | None) -> dict[str, Any] | None:
-        completed = self._reconcile_supervised_workers()
-        if not completed:
+        engine_run = self.engine_store.start_run(mode="supervised-exit-reconcile")
+        try:
+            completed = self._reconcile_supervised_workers()
+            if not completed:
+                self._persist_scheduler_state()
+                self.engine_store.complete_run(
+                    engine_run["run_id"],
+                    selected_count=0,
+                    completed_count=0,
+                    metadata={"changed": False},
+                )
+                return last_result
+            status = {
+                "ok": True,
+                "workflow": "issue-runner",
+                "mode": "supervised-exit-reconcile",
+                "updatedAt": _now_iso(),
+                "selectedIssue": None,
+                "selectedIssues": [],
+                "attempt": None,
+                "outputPath": None,
+                "metrics": {},
+                "results": [],
+                "completedResults": [],
+                "dispatchedWorkers": [],
+                "cancellationRequests": [],
+            }
+            status = self._status_from_results(base_status=status, results=completed)
+            status["completedResults"] = status.get("results") or []
+            status["engineRun"] = self._finish_engine_run_for_status(
+                engine_run,
+                status,
+                selected_count=0,
+                completed_count=len(completed),
+                metadata={"changed": True},
+            )
+            self._write_status(status, health="healthy" if status["ok"] else "error")
             self._persist_scheduler_state()
-            return last_result
-        status = {
-            "ok": True,
-            "workflow": "issue-runner",
-            "mode": "supervised-exit-reconcile",
-            "updatedAt": _now_iso(),
-            "selectedIssue": None,
-            "selectedIssues": [],
-            "attempt": None,
-            "outputPath": None,
-            "metrics": {},
-            "results": [],
-            "completedResults": [],
-            "dispatchedWorkers": [],
-            "cancellationRequests": [],
-        }
-        status = self._status_from_results(base_status=status, results=completed)
-        status["completedResults"] = status.get("results") or []
-        self._write_status(status, health="healthy" if status["ok"] else "error")
-        self._persist_scheduler_state()
-        return status
+            return status
+        except Exception as exc:
+            self._fail_engine_run_after_exception(engine_run, exc)
+            raise
 
     def tick(self) -> dict[str, Any]:
+        engine_run = self.engine_store.start_run(mode="tick")
         status = {
             "ok": False,
             "workflow": "issue-runner",
@@ -1309,62 +1391,85 @@ class IssueRunnerWorkspace(WorkflowDriver):
             "outputPath": None,
             "metrics": {},
         }
-        tracker_cfg = self.config.get("tracker") or {}
         try:
-            issues = self.tracker_client.list_all()
-            cleanup = self._cleanup_terminal_workspaces(self.tracker_client.list_terminal())
+            try:
+                issues = self.tracker_client.list_all()
+                cleanup = self._cleanup_terminal_workspaces(self.tracker_client.list_terminal())
+            except Exception as exc:
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                status["engineRun"] = self._finish_engine_run_for_status(
+                    engine_run,
+                    status,
+                    selected_count=0,
+                    completed_count=0,
+                    metadata={"reason": "tracker-load-failed"},
+                )
+                self._write_status(status, health="error")
+                self._emit_event(
+                    "issue_runner.tick.failed",
+                    {
+                        "error": status["error"],
+                        "reason": "tracker-load-failed",
+                    },
+                )
+                return status
+            issues_by_id = {str(issue.get("id")): issue for issue in issues if str(issue.get("id") or "").strip()}
+            selections = self._select_issue_batch(issues=issues, issues_by_id=issues_by_id)
+            refreshed_selections: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+            for selected, retry_entry in selections:
+                issue_id = str(selected.get("id") or "").strip()
+                if issue_id:
+                    selected = self.tracker_client.refresh([issue_id]).get(issue_id, selected)
+                refreshed_selections.append((selected, retry_entry))
+            selections = refreshed_selections
+            status["selectedIssues"] = [issue for issue, _retry_entry in selections]
+            status["selectedIssue"] = selections[0][0] if selections else None
+            status["cleanup"] = cleanup
+            if not selections:
+                status["ok"] = True
+                status["message"] = "no dispatchable issues"
+                status["engineRun"] = self._finish_engine_run_for_status(
+                    engine_run,
+                    status,
+                    selected_count=0,
+                    completed_count=0,
+                    metadata={"reason": "no-dispatchable-issues"},
+                )
+                self._write_status(status, health="healthy")
+                self._persist_scheduler_state()
+                self._emit_event("issue_runner.tick.noop", {"reason": "no-dispatchable-issues"})
+                return status
+
+            self._mark_running(selections)
+            results: list[dict[str, Any]] = []
+            try:
+                if len(selections) == 1:
+                    issue, retry_entry = selections[0]
+                    results = [self._execute_issue(issue=issue, retry_entry=retry_entry)]
+                else:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(selections)) as executor:
+                        future_map = {
+                            executor.submit(self._execute_issue, issue=issue, retry_entry=retry_entry): (issue, retry_entry)
+                            for issue, retry_entry in selections
+                        }
+                        for future in concurrent.futures.as_completed(future_map):
+                            results.append(future.result())
+
+                status = self._status_from_results(base_status=status, results=results)
+                status["engineRun"] = self._finish_engine_run_for_status(
+                    engine_run,
+                    status,
+                    selected_count=len(selections),
+                    completed_count=len(results),
+                )
+                self._write_status(status, health="healthy" if status["ok"] else "error")
+                return status
+            finally:
+                self._clear_running([str(issue.get("id") or "") for issue, _retry_entry in selections])
+                self._persist_scheduler_state()
         except Exception as exc:
-            status["error"] = f"{type(exc).__name__}: {exc}"
-            self._write_status(status, health="error")
-            self._emit_event(
-                "issue_runner.tick.failed",
-                {
-                    "error": status["error"],
-                    "reason": "tracker-load-failed",
-                },
-            )
-            return status
-        issues_by_id = {str(issue.get("id")): issue for issue in issues if str(issue.get("id") or "").strip()}
-        selections = self._select_issue_batch(issues=issues, issues_by_id=issues_by_id)
-        refreshed_selections: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
-        for selected, retry_entry in selections:
-            issue_id = str(selected.get("id") or "").strip()
-            if issue_id:
-                selected = self.tracker_client.refresh([issue_id]).get(issue_id, selected)
-            refreshed_selections.append((selected, retry_entry))
-        selections = refreshed_selections
-        status["selectedIssues"] = [issue for issue, _retry_entry in selections]
-        status["selectedIssue"] = selections[0][0] if selections else None
-        status["cleanup"] = cleanup
-        if not selections:
-            status["ok"] = True
-            status["message"] = "no dispatchable issues"
-            self._write_status(status, health="healthy")
-            self._persist_scheduler_state()
-            self._emit_event("issue_runner.tick.noop", {"reason": "no-dispatchable-issues"})
-            return status
-
-        self._mark_running(selections)
-        results: list[dict[str, Any]] = []
-        try:
-            if len(selections) == 1:
-                issue, retry_entry = selections[0]
-                results = [self._execute_issue(issue=issue, retry_entry=retry_entry)]
-            else:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=len(selections)) as executor:
-                    future_map = {
-                        executor.submit(self._execute_issue, issue=issue, retry_entry=retry_entry): (issue, retry_entry)
-                        for issue, retry_entry in selections
-                    }
-                    for future in concurrent.futures.as_completed(future_map):
-                        results.append(future.result())
-
-            status = self._status_from_results(base_status=status, results=results)
-            self._write_status(status, health="healthy" if status["ok"] else "error")
-            return status
-        finally:
-            self._clear_running([str(issue.get("id") or "") for issue, _retry_entry in selections])
-            self._persist_scheduler_state()
+            self._fail_engine_run_after_exception(engine_run, exc)
+            raise
 
     def _cleanup_terminal_workspaces(self, issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
         tracker_cfg = self.config.get("tracker") or {}

@@ -2321,7 +2321,35 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         return ns.dispatch_repair_handoff_raw()
 
     def tick():
-        return ns.tick_raw()
+        engine_run = ns.ENGINE_STORE.start_run(mode="tick")
+        try:
+            result = ns.tick_raw()
+            action = result.get("action") if isinstance(result, dict) else {}
+            executed = result.get("executed") if isinstance(result, dict) else None
+            action_type = (action or {}).get("type")
+            completed = 1 if executed is not None else 0
+            final_run = ns.ENGINE_STORE.complete_run(
+                engine_run["run_id"],
+                selected_count=1 if action_type and action_type != "noop" else 0,
+                completed_count=completed,
+                metadata={
+                    "action_type": action_type,
+                    "reason": (action or {}).get("reason"),
+                    "executed": executed is not None,
+                },
+            )
+            if isinstance(result, dict):
+                result["engineRun"] = final_run
+            return result
+        except Exception as exc:
+            try:
+                ns.ENGINE_STORE.fail_run(
+                    engine_run["run_id"],
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            except Exception:
+                pass
+            raise
 
     def dispatch_implementation_turn():
         return ns.dispatch_implementation_turn_raw()

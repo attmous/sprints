@@ -122,10 +122,12 @@ def test_read_alert_state_when_present(tmp_path):
 
 def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
     from engine.state import save_engine_scheduler_state
+    from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
 
     sources = _module()
     root = _make_workflow_root(tmp_path)
+    db_path = root / "runtime" / "state" / "daedalus" / "daedalus.db"
     (root / "WORKFLOW.md").write_text(
         render_workflow_markdown(
             config={
@@ -152,7 +154,7 @@ def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
         json.dumps({"workflow": "issue-runner", "health": "healthy", "lastRun": {"updatedAt": "2026-04-30T12:00:15Z"}})
     )
     save_engine_scheduler_state(
-        root / "runtime" / "state" / "daedalus" / "daedalus.db",
+        db_path,
         workflow="issue-runner",
         running_entries={"123": {"issue_id": "123", "identifier": "#123", "state": "open"}},
         retry_entries={"124": {"issue_id": "124", "identifier": "#124", "error": "x", "due_at_epoch": 1714478410.0}},
@@ -161,6 +163,14 @@ def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
         now_iso="2026-04-30T12:00:20Z",
         now_epoch=1714478400.0,
     )
+    engine_store = EngineStore(
+        db_path=db_path,
+        workflow="issue-runner",
+        now_iso=lambda: "2026-04-30T12:00:21Z",
+        now_epoch=lambda: 1714478421.0,
+    )
+    engine_run = engine_store.start_run(mode="tick")
+    engine_store.complete_run(engine_run["run_id"], selected_count=1, completed_count=1)
     (root / "memory" / "workflow-audit.jsonl").write_text(
         json.dumps({"at": "2026-04-30T12:00:20Z", "event": "issue_runner.tick.completed", "issue_id": "123"}) + "\n"
     )
@@ -177,14 +187,18 @@ def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
     assert workflow_status["running_count"] == 1
     assert workflow_status["retry_count"] == 1
     assert workflow_status["total_tokens"] == 18
+    assert workflow_status["latest_runs"][0]["mode"] == "tick"
+    assert workflow_status["latest_runs"][0]["selected_count"] == 1
 
 
 def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
     from engine.state import save_engine_scheduler_state
+    from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
 
     sources = _module()
     root = _make_workflow_root(tmp_path)
+    db_path = root / "runtime" / "state" / "daedalus" / "daedalus.db"
     (root / "WORKFLOW.md").write_text(
         render_workflow_markdown(
             config={
@@ -204,7 +218,7 @@ def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
     )
     (root / "memory").mkdir(exist_ok=True)
     save_engine_scheduler_state(
-        root / "runtime" / "state" / "daedalus" / "daedalus.db",
+        db_path,
         workflow="change-delivery",
         running_entries={},
         retry_entries={},
@@ -224,6 +238,14 @@ def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
         now_iso="2026-04-30T12:00:20Z",
         now_epoch=1714478420.0,
     )
+    engine_store = EngineStore(
+        db_path=db_path,
+        workflow="change-delivery",
+        now_iso=lambda: "2026-04-30T12:00:21Z",
+        now_epoch=lambda: 1714478421.0,
+    )
+    engine_run = engine_store.start_run(mode="active-iteration")
+    engine_store.complete_run(engine_run["run_id"], selected_count=1, completed_count=0)
 
     workflow_status = sources.workflow_status(root)
 
@@ -234,3 +256,4 @@ def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
     assert workflow_status["codex_turns"][0]["thread_id"] == "thread-42"
     assert workflow_status["codex_turns"][0]["turn_id"] == "turn-42"
     assert workflow_status["codex_turns"][0]["cancel_reason"] == "operator-interrupt"
+    assert workflow_status["latest_runs"][0]["mode"] == "active-iteration"

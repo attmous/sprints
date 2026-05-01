@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from engine.state import read_engine_scheduler_state
+from engine.state import read_engine_runs, read_engine_scheduler_state
 from workflows.contract import WorkflowContractError, load_workflow_contract
 from workflows.shared.paths import runtime_paths
 
@@ -212,6 +212,16 @@ def _engine_scheduler(workflow_root: Path | None, workflow: str) -> dict[str, An
     return payload or {}
 
 
+def _engine_runs(workflow_root: Path | None, workflow: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    if workflow_root is None:
+        return []
+    return read_engine_runs(
+        runtime_paths(Path(workflow_root))["db_path"],
+        workflow=workflow,
+        limit=limit,
+    )
+
+
 def _epoch_to_iso(value: Any) -> str | None:
     try:
         epoch = float(value)
@@ -337,6 +347,7 @@ def _issue_runner_state_view(workflow_root: Path, events_log_path: Path) -> dict
         "counts": {"running": len(running_rows), "retrying": len(retry_rows)},
         "running": running_rows,
         "retrying": retry_rows,
+        "latest_runs": _engine_runs(workflow_root, "issue-runner"),
         "codex_totals": totals,
         "rate_limits": rate_limits,
         "recent_events": recent_events,
@@ -417,6 +428,7 @@ def state_view(db_path: Path, events_log_path: Path, workflow_root: Path | None 
             "running": len([entry for entry in codex_turns if entry.get("status") == "running"]),
             "canceling": len([entry for entry in codex_turns if entry.get("status") == "canceling"]),
         },
+        "latest_runs": _engine_runs(workflow_root, "change-delivery"),
         "codex_totals": {
             "input_tokens": int(codex_totals.get("input_tokens") or 0),
             "output_tokens": int(codex_totals.get("output_tokens") or 0),

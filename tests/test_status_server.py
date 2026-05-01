@@ -109,6 +109,7 @@ def _make_events_log(events_path: Path, entries: list[dict]) -> None:
 
 def _make_issue_runner_root(root: Path) -> None:
     from engine.state import save_engine_scheduler_state
+    from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
     from workflows.shared.paths import runtime_paths
 
@@ -187,6 +188,14 @@ def _make_issue_runner_root(root: Path) -> None:
         now_iso="2026-04-30T12:00:20Z",
         now_epoch=1714478415.0,
     )
+    engine_store = EngineStore(
+        db_path=runtime_paths(root)["db_path"],
+        workflow="issue-runner",
+        now_iso=lambda: "2026-04-30T12:00:21Z",
+        now_epoch=lambda: 1714478421.0,
+    )
+    engine_run = engine_store.start_run(mode="tick")
+    engine_store.complete_run(engine_run["run_id"], selected_count=1, completed_count=1)
     _make_events_log(
         root / "memory" / "workflow-audit.jsonl",
         [
@@ -198,6 +207,7 @@ def _make_issue_runner_root(root: Path) -> None:
 
 def _make_change_delivery_root(root: Path) -> None:
     from engine.state import save_engine_scheduler_state
+    from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
     from workflows.shared.paths import runtime_paths
 
@@ -261,6 +271,14 @@ def _make_change_delivery_root(root: Path) -> None:
         now_iso="2026-04-30T12:00:20Z",
         now_epoch=1714478420.0,
     )
+    engine_store = EngineStore(
+        db_path=runtime_paths(root)["db_path"],
+        workflow="change-delivery",
+        now_iso=lambda: "2026-04-30T12:00:21Z",
+        now_epoch=lambda: 1714478421.0,
+    )
+    engine_run = engine_store.start_run(mode="active-iteration")
+    engine_store.complete_run(engine_run["run_id"], selected_count=1, completed_count=0)
 
 
 # --------------------------------------------------------------------- views
@@ -345,6 +363,7 @@ def test_issue_runner_state_view_reads_scheduler_and_audit_files(tmp_path: Path)
     assert view["counts"] == {"running": 1, "retrying": 1}
     assert view["running"][0]["issue_identifier"] == "#123"
     assert view["retrying"][0]["issue_identifier"] == "#124"
+    assert view["latest_runs"][0]["mode"] == "tick"
     assert view["codex_totals"]["total_tokens"] == 18
     assert view["rate_limits"] == {"requests_remaining": 88}
     assert view["recent_events"][0]["event"] == "issue_runner.tick.completed"
@@ -366,6 +385,7 @@ def test_change_delivery_state_view_reads_codex_scheduler_totals(tmp_path: Path)
     assert view["codex_turn_counts"] == {"running": 0, "canceling": 1}
     assert view["codex_totals"]["total_tokens"] == 18
     assert view["rate_limits"] == {"requests_remaining": 88}
+    assert view["latest_runs"][0]["mode"] == "active-iteration"
     assert view["codex_turns"][0]["issue_id"] == "lane:42"
     assert view["codex_turns"][0]["thread_id"] == "thread-42"
     assert view["codex_turns"][0]["turn_id"] == "turn-42"

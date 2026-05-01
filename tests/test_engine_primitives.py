@@ -281,7 +281,42 @@ def test_engine_store_wraps_scheduler_state_and_doctor(tmp_path):
     assert checks["engine-schema"]["status"] == "pass"
     assert checks["engine-running-work"]["status"] == "pass"
     assert checks["engine-retry-queue"]["detail"] == "0 queued retry item(s)"
+    assert checks["engine-runs"]["status"] == "pass"
     assert checks["engine-runtime-sessions"]["status"] == "pass"
+
+
+def test_engine_store_tracks_run_ledger_and_stale_runs(tmp_path):
+    from engine.store import EngineStore
+
+    clock = {"iso": "2026-04-30T00:00:00Z", "epoch": 100.0}
+    store = EngineStore(
+        db_path=tmp_path / "runtime" / "state" / "daedalus.db",
+        workflow="issue-runner",
+        now_iso=lambda: clock["iso"],
+        now_epoch=lambda: clock["epoch"],
+    )
+
+    first = store.start_run(mode="tick", metadata={"source": "test"})
+    clock.update({"iso": "2026-04-30T00:00:05Z", "epoch": 105.0})
+    completed = store.complete_run(
+        first["run_id"],
+        selected_count=2,
+        completed_count=2,
+        metadata={"result": "ok"},
+    )
+    stale = store.start_run(mode="supervised")
+    clock.update({"iso": "2026-04-30T00:20:00Z", "epoch": 1300.0})
+
+    latest = store.latest_runs(limit=5)
+    checks = {check["name"]: check for check in store.doctor(stale_running_seconds=60)}
+
+    assert completed["status"] == "completed"
+    assert completed["metadata"] == {"source": "test", "result": "ok"}
+    assert latest[0]["run_id"] == stale["run_id"]
+    assert latest[0]["status"] == "running"
+    assert latest[1]["completed_count"] == 2
+    assert checks["engine-runs"]["status"] == "warn"
+    assert stale["run_id"] in checks["engine-runs"]["items"]
 
 
 def test_engine_store_lease_lifecycle_and_stale_status(tmp_path):
