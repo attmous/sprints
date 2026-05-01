@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from workflows.change_delivery.migrations import get_lane_state_review_field, get_review
@@ -105,6 +107,37 @@ class InterReviewAgentError(RuntimeError):
         self.failure_class = failure_class
 
 
+def inter_review_agent_output_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "verdict": {"type": "string", "enum": ["PASS_CLEAN", "PASS_WITH_FINDINGS", "REWORK"]},
+            "summary": {"type": "string"},
+            "blockingFindings": {"type": "array", "items": {"type": "string"}},
+            "majorConcerns": {"type": "array", "items": {"type": "string"}},
+            "minorSuggestions": {"type": "array", "items": {"type": "string"}},
+            "requiredNextAction": {"type": ["string", "null"]},
+        },
+        "required": ["verdict", "summary", "blockingFindings", "majorConcerns", "minorSuggestions", "requiredNextAction"],
+        "additionalProperties": False,
+    }
+
+
+def inter_review_agent_output_schema_json() -> str:
+    return json.dumps(inter_review_agent_output_schema(), separators=(",", ":"))
+
+
+def normalize_inter_review_agent_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        'verdict': payload.get('verdict'),
+        'summary': payload.get('summary'),
+        'blockingFindings': list(payload.get('blockingFindings') or []),
+        'majorConcerns': list(payload.get('majorConcerns') or []),
+        'minorSuggestions': list(payload.get('minorSuggestions') or []),
+        'requiredNextAction': payload.get('requiredNextAction'),
+    }
+
+
 def classify_inter_review_agent_failure_text(text: str) -> str:
     lowered = (text or "").lower()
     if "error_max_turns" in lowered or "maximum number of turns" in lowered:
@@ -174,6 +207,37 @@ def inter_review_agent_failure_class(
 ) -> str:
     parts = [exc.stdout or "", exc.stderr or ""]
     return classify_failure_text_fn("\n".join(part for part in parts if part))
+
+
+def inter_review_agent_runtime_failure_message(exc: Exception) -> str:
+    parts = ["Internal review agent runtime failed"]
+    returncode = getattr(exc, "returncode", None)
+    if returncode is not None:
+        parts[0] = f"Internal review agent runtime failed with exit status {returncode}"
+    result = getattr(exc, "result", None)
+    for value in (
+        getattr(result, "last_message", None),
+        getattr(exc, "stderr", None),
+        getattr(exc, "stdout", None),
+        str(exc),
+    ):
+        text = str(value or "").strip()
+        if text:
+            parts.append(text)
+            break
+    return ": ".join(parts)
+
+
+def inter_review_agent_runtime_failure_class(exc: Exception) -> str:
+    result = getattr(exc, "result", None)
+    parts = [
+        getattr(result, "output", None),
+        getattr(result, "last_message", None),
+        getattr(exc, "stdout", None),
+        getattr(exc, "stderr", None),
+        str(exc),
+    ]
+    return classify_inter_review_agent_failure_text("\n".join(str(part) for part in parts if part))
 
 
 def classify_lane_failure(
@@ -1569,6 +1633,185 @@ def audit_inter_review_agent_transition(
         )
 
 
+def _runtime_prompt_command(*, agent_cfg: dict[str, Any], runtime_cfg: dict[str, Any]) -> list[str] | None:
+    command = agent_cfg.get("command")
+    if command:
+        return list(command)
+    runtime_kind = str(runtime_cfg.get("kind") or "")
+    command = runtime_cfg.get("command")
+    if runtime_kind != "codex-app-server" and isinstance(command, list):
+        return list(command)
+    return None
+
+
+def _materialize_inter_review_agent_prompt(*, worktree: Any, prompt: str) -> Path:
+    out_dir = Path(worktree) / ".daedalus" / "dispatch"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
+    out = out_dir / f"internal-reviewer-{digest}.txt"
+    out.write_text(prompt, encoding="utf-8")
+    return out
+
+
+def _substitute_command_placeholders(argv: list[str], values: dict[str, str]) -> list[str]:
+    resolved = []
+    for arg in argv:
+        text = str(arg)
+        for key, value in values.items():
+            text = text.replace("{" + key + "}", value)
+        resolved.append(text)
+    return resolved
+
+
+def _raw_output_from_runtime_result(result: Any) -> str:
+    if isinstance(result, str):
+        return result.strip()
+    output = getattr(result, "output", None)
+    if output is not None:
+        return str(output).strip()
+    stdout = getattr(result, "stdout", None)
+    if stdout is not None:
+        return str(stdout).strip()
+    return str(result or "").strip()
+
+
+def _parse_inter_review_agent_raw_output(raw_output: str, *, source_label: str) -> dict[str, Any]:
+    try:
+        payload = extract_inter_review_agent_payload(raw_output)
+    except Exception as exc:
+        raise InterReviewAgentError(
+            f"{source_label} returned invalid structured output: {str(exc).strip() or 'unknown parse error'}",
+            failure_class="invalid_structured_output",
+        ) from exc
+    return normalize_inter_review_agent_payload(payload)
+
+
+def _inter_review_agent_prompt_with_output_contract(prompt: str) -> str:
+    return "\n".join(
+        [
+            str(prompt).rstrip(),
+            "",
+            "Output contract for all runtimes:",
+            "Return only one JSON object, no markdown fences, matching this JSON Schema:",
+            inter_review_agent_output_schema_json(),
+            "",
+        ]
+    )
+
+
+def run_inter_review_agent_review_via_runtime(
+    *,
+    issue: dict[str, Any],
+    worktree: Any,
+    lane_memo_path: Any,
+    lane_state_path: Any,
+    head_sha: str,
+    runtime: Any,
+    runtime_cfg: dict[str, Any],
+    agent_cfg: dict[str, Any],
+    session_name: str,
+    render_prompt_fn: Callable[..., str],
+    error_cls: type = subprocess.CalledProcessError,
+) -> dict[str, Any]:
+    """Run the internal review role through its configured runtime profile.
+
+    The workflow owns the prompt and output contract; the runtime only owns
+    execution. This lets the same internal-review stage run through
+    codex-app-server, Hermes Agent, Claude CLI, or any future registered
+    runtime without workflow-specific subprocess wiring.
+    """
+    model = str(agent_cfg.get("model") or "")
+    prompt = _inter_review_agent_prompt_with_output_contract(
+        render_prompt_fn(
+            issue=issue,
+            worktree=worktree,
+            lane_memo_path=lane_memo_path,
+            lane_state_path=lane_state_path,
+            head_sha=head_sha,
+        )
+    )
+    command = _runtime_prompt_command(agent_cfg=agent_cfg, runtime_cfg=runtime_cfg)
+    try:
+        if command is not None:
+            prompt_path = _materialize_inter_review_agent_prompt(
+                worktree=worktree,
+                prompt=prompt,
+            )
+            argv = _substitute_command_placeholders(
+                command,
+                {
+                    "model": model,
+                    "prompt": prompt,
+                    "prompt_path": str(prompt_path),
+                    "worktree": str(worktree),
+                    "session_name": session_name,
+                    "head_sha": str(head_sha or ""),
+                    "issue_number": str((issue or {}).get("number") or ""),
+                },
+            )
+            raw_output = _raw_output_from_runtime_result(
+                runtime.run_command(worktree=Path(worktree), command_argv=argv)
+            )
+        else:
+            ensure_session = getattr(runtime, "ensure_session", None)
+            if callable(ensure_session):
+                ensure_session(
+                    worktree=Path(worktree),
+                    session_name=session_name,
+                    model=model,
+                    resume_session_id=None,
+                )
+            runner = getattr(runtime, "run_prompt_result", None)
+            if callable(runner):
+                result = runner(
+                    worktree=Path(worktree),
+                    session_name=session_name,
+                    prompt=prompt,
+                    model=model,
+                )
+            else:
+                result = runtime.run_prompt(
+                    worktree=Path(worktree),
+                    session_name=session_name,
+                    prompt=prompt,
+                    model=model,
+                )
+            raw_output = _raw_output_from_runtime_result(result)
+    except error_cls as exc:
+        raw_output = (getattr(exc, "stdout", "") or "").strip()
+        if raw_output:
+            try:
+                return _parse_inter_review_agent_raw_output(
+                    raw_output,
+                    source_label="Internal review agent runtime",
+                )
+            except InterReviewAgentError:
+                pass
+        raise InterReviewAgentError(
+            inter_review_agent_failure_message(exc),
+            failure_class=inter_review_agent_failure_class(exc),
+        ) from exc
+    except Exception as exc:
+        result = getattr(exc, "result", None)
+        raw_output = _raw_output_from_runtime_result(result)
+        if raw_output:
+            try:
+                return _parse_inter_review_agent_raw_output(
+                    raw_output,
+                    source_label="Internal review agent runtime",
+                )
+            except InterReviewAgentError:
+                pass
+        raise InterReviewAgentError(
+            inter_review_agent_runtime_failure_message(exc),
+            failure_class=inter_review_agent_runtime_failure_class(exc),
+        ) from exc
+    return _parse_inter_review_agent_raw_output(
+        raw_output,
+        source_label="Internal review agent runtime",
+    )
+
+
 def run_inter_review_agent_review(
     *,
     issue: dict[str, Any],
@@ -1597,19 +1840,7 @@ def run_inter_review_agent_review(
         lane_state_path=lane_state_path,
         head_sha=head_sha,
     )
-    review_schema = json.dumps({
-        "type": "object",
-        "properties": {
-            "verdict": {"type": "string", "enum": ["PASS_CLEAN", "PASS_WITH_FINDINGS", "REWORK"]},
-            "summary": {"type": "string"},
-            "blockingFindings": {"type": "array", "items": {"type": "string"}},
-            "majorConcerns": {"type": "array", "items": {"type": "string"}},
-            "minorSuggestions": {"type": "array", "items": {"type": "string"}},
-            "requiredNextAction": {"type": ["string", "null"]},
-        },
-        "required": ["verdict", "summary", "blockingFindings", "majorConcerns", "minorSuggestions", "requiredNextAction"],
-        "additionalProperties": False,
-    }, separators=(",", ":"))
+    review_schema = inter_review_agent_output_schema_json()
     command = [
         'claude',
         '--model',
@@ -1639,14 +1870,7 @@ def run_inter_review_agent_review(
                     failure_class=inter_review_agent_failure_class(exc),
                 ) from exc
             else:
-                return {
-                    'verdict': payload.get('verdict'),
-                    'summary': payload.get('summary'),
-                    'blockingFindings': list(payload.get('blockingFindings') or []),
-                    'majorConcerns': list(payload.get('majorConcerns') or []),
-                    'minorSuggestions': list(payload.get('minorSuggestions') or []),
-                    'requiredNextAction': payload.get('requiredNextAction'),
-                }
+                return normalize_inter_review_agent_payload(payload)
         raise InterReviewAgentError(
             inter_review_agent_failure_message(exc),
             failure_class=inter_review_agent_failure_class(exc),
@@ -1658,11 +1882,4 @@ def run_inter_review_agent_review(
             f"Internal review agent CLI returned invalid structured output: {str(exc).strip() or 'unknown parse error'}",
             failure_class="invalid_structured_output",
         ) from exc
-    return {
-        'verdict': payload.get('verdict'),
-        'summary': payload.get('summary'),
-        'blockingFindings': list(payload.get('blockingFindings') or []),
-        'majorConcerns': list(payload.get('majorConcerns') or []),
-        'minorSuggestions': list(payload.get('minorSuggestions') or []),
-        'requiredNextAction': payload.get('requiredNextAction'),
-    }
+    return normalize_inter_review_agent_payload(payload)

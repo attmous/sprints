@@ -556,6 +556,64 @@ def test_workspace_yaml_can_select_codex_app_server_coder_runtime(tmp_path):
     assert hasattr(ws.runtime("coder-runtime"), "run_prompt_result")
 
 
+def test_workspace_internal_review_uses_configured_runtime(tmp_path):
+    from workflows.change_delivery.workspace import make_workspace
+
+    cfg = _workflow_yaml_config(tmp_path)
+    cfg["workflow-policy"] = "Shared policy from WORKFLOW.md."
+    cfg["runtimes"] = {
+        "coder-runtime": {
+            "kind": "acpx-codex",
+            "session-idle-freshness-seconds": 900,
+            "session-idle-grace-seconds": 1800,
+            "session-nudge-cooldown-seconds": 600,
+        },
+        "reviewer-runtime": {
+            "kind": "hermes-agent",
+            "command": ["reviewer-bin", "--model", "{model}", "--prompt", "{prompt_path}", "--head", "{head_sha}"],
+        },
+    }
+    cfg["agents"]["coder"]["default"]["runtime"] = "coder-runtime"
+    cfg["agents"]["internal-reviewer"]["runtime"] = "reviewer-runtime"
+    cfg["agents"]["internal-reviewer"]["model"] = "review-model"
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+    ws = make_workspace(workspace_root=tmp_path, config=cfg)
+    captured = {}
+
+    class FakeRuntime:
+        def run_command(self, *, worktree, command_argv, env=None):
+            captured["worktree"] = worktree
+            captured["argv"] = command_argv
+            return json.dumps({
+                "verdict": "PASS_CLEAN",
+                "summary": "ready",
+                "blockingFindings": [],
+                "majorConcerns": [],
+                "minorSuggestions": [],
+                "requiredNextAction": None,
+            })
+
+    original_runtime = ws.runtime
+    ws.runtime = lambda name: FakeRuntime() if name == "reviewer-runtime" else original_runtime(name)
+    result = ws._run_inter_review_agent_review(
+        issue={"number": 224, "title": "Test", "url": "https://example.invalid/224"},
+        worktree=worktree,
+        lane_memo_path=None,
+        lane_state_path=None,
+        head_sha="abc123",
+    )
+
+    assert result["verdict"] == "PASS_CLEAN"
+    assert captured["argv"][0] == "reviewer-bin"
+    assert "claude" not in captured["argv"]
+    assert "review-model" in captured["argv"]
+    prompt_path = Path(captured["argv"][4])
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    assert "Shared policy from WORKFLOW.md." in prompt_text
+    assert "Target local head SHA: abc123" in prompt_text
+
+
 def test_workspace_records_change_delivery_codex_threads_and_totals(tmp_path):
     from workflows.change_delivery.workspace import make_workspace
 

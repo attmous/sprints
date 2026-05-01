@@ -1637,16 +1637,29 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
 
     def _run_inter_review_agent_review(*, issue, worktree, lane_memo_path, lane_state_path, head_sha):
         adapter_reviews = ns._load_adapter_reviews_module()
+        agent_cfg = {
+            "name": ns.INTERNAL_REVIEWER_AGENT_NAME,
+            "model": ns.INTER_REVIEW_AGENT_MODEL,
+            "runtime": "claude-cli",
+        }
+        agent_cfg.update(
+            (((getattr(ns, "WORKFLOW_YAML", {}) or {}).get("agents") or {}).get("internal-reviewer") or {})
+        )
+        runtime_name = str(agent_cfg.get("runtime") or "claude-cli")
+        runtime_cfg = dict(((getattr(ns, "RUNTIME_PROFILES", {}) or {}).get(runtime_name) or {}))
+        session_name = f"internal-review-{(issue or {}).get('number') or str(head_sha or '')[:12] or 'lane'}"
         try:
-            return adapter_reviews.run_inter_review_agent_review(
+            return adapter_reviews.run_inter_review_agent_review_via_runtime(
                 issue=issue,
                 worktree=worktree,
                 lane_memo_path=lane_memo_path,
                 lane_state_path=lane_state_path,
                 head_sha=head_sha,
-                run_fn=ns._run,
-                inter_review_agent_model=ns.INTER_REVIEW_AGENT_MODEL,
-                inter_review_agent_max_turns=ns.INTER_REVIEW_AGENT_MAX_TURNS,
+                runtime=ns.runtime(runtime_name),
+                runtime_cfg=runtime_cfg,
+                agent_cfg=agent_cfg,
+                session_name=session_name,
+                render_prompt_fn=ns._render_inter_review_agent_prompt,
                 error_cls=subprocess.CalledProcessError,
             )
         except adapter_reviews.InterReviewAgentError as exc:

@@ -1,6 +1,8 @@
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1] / "daedalus"
@@ -13,6 +15,88 @@ def load_module(module_name: str, relative_path: str):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def _review_json(**overrides):
+    payload = {
+        "verdict": "PASS_CLEAN",
+        "summary": "looks ready",
+        "blockingFindings": [],
+        "majorConcerns": [],
+        "minorSuggestions": [],
+        "requiredNextAction": None,
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def test_run_inter_review_agent_review_via_runtime_uses_command_runtime(tmp_path):
+    reviews_module = load_module("daedalus_workflows_change_delivery_reviews_runtime_command", "workflows/change_delivery/reviews.py")
+    calls = {}
+
+    class FakeRuntime:
+        def run_command(self, *, worktree, command_argv, env=None):
+            calls["worktree"] = worktree
+            calls["argv"] = command_argv
+            return _review_json(verdict="PASS_WITH_FINDINGS", minorSuggestions=["tighten docs"])
+
+    result = reviews_module.run_inter_review_agent_review_via_runtime(
+        issue={"number": 224, "title": "Test"},
+        worktree=tmp_path,
+        lane_memo_path=tmp_path / ".lane-memo.md",
+        lane_state_path=tmp_path / ".lane-state.json",
+        head_sha="abc123",
+        runtime=FakeRuntime(),
+        runtime_cfg={
+            "kind": "hermes-agent",
+            "command": ["hermes", "run", "--model", "{model}", "--prompt", "{prompt_path}", "--issue", "{issue_number}"],
+        },
+        agent_cfg={"name": "Reviewer", "model": "review-model", "runtime": "reviewer-runtime"},
+        session_name="internal-review-224",
+        render_prompt_fn=lambda **kwargs: f"review head {kwargs['head_sha']}",
+    )
+
+    assert result["verdict"] == "PASS_WITH_FINDINGS"
+    assert calls["argv"][:4] == ["hermes", "run", "--model", "review-model"]
+    assert calls["argv"][-1] == "224"
+    prompt_path = Path(calls["argv"][5])
+    assert prompt_path.exists()
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    assert "review head abc123" in prompt_text
+    assert "Output contract for all runtimes" in prompt_text
+
+
+def test_run_inter_review_agent_review_via_runtime_uses_prompt_runtime(tmp_path):
+    reviews_module = load_module("daedalus_workflows_change_delivery_reviews_runtime_prompt", "workflows/change_delivery/reviews.py")
+    calls = {}
+
+    class FakeRuntime:
+        def ensure_session(self, **kwargs):
+            calls["ensure"] = kwargs
+
+        def run_prompt_result(self, **kwargs):
+            calls["prompt"] = kwargs
+            return SimpleNamespace(output=_review_json(summary="codex reviewed"))
+
+    result = reviews_module.run_inter_review_agent_review_via_runtime(
+        issue={"number": 225, "title": "Test"},
+        worktree=tmp_path,
+        lane_memo_path=None,
+        lane_state_path=None,
+        head_sha="def456",
+        runtime=FakeRuntime(),
+        runtime_cfg={"kind": "codex-app-server", "command": "codex app-server"},
+        agent_cfg={"name": "Reviewer", "model": "gpt-review", "runtime": "codex-runtime"},
+        session_name="internal-review-225",
+        render_prompt_fn=lambda **kwargs: f"review {kwargs['issue']['number']}",
+    )
+
+    assert result["summary"] == "codex reviewed"
+    assert calls["ensure"]["session_name"] == "internal-review-225"
+    assert calls["ensure"]["model"] == "gpt-review"
+    assert calls["prompt"]["session_name"] == "internal-review-225"
+    assert calls["prompt"]["model"] == "gpt-review"
+    assert "Output contract for all runtimes" in calls["prompt"]["prompt"]
 
 
 def test_should_dispatch_claude_repair_handoff_when_local_review_is_actionable_and_routable():
