@@ -38,7 +38,12 @@ For each eligible tracker issue:
 - `hooks`: `after_create`, `before_run`, `after_run`, `before_remove`
 - `agent`: model/runtime plus scheduler-facing limits
 - `codex`: spec-shaped Codex runner settings; set `mode: external` and `endpoint: ws://127.0.0.1:<port>` to connect to an already-running app-server, and keep `ephemeral: false` if you want Codex threads to remain inspectable
-- `daedalus.runtimes`: shared runtime backend profiles used by the current implementation when you are not using the top-level `codex` block
+- `runtimes`: shared runtime backend profiles; `agent.runtime` selects one profile for the issue execution stage
+
+The issue execution stage uses the shared runtime stage dispatcher. Command
+runtimes such as `hermes-agent` receive a rendered `{prompt_path}`. Prompt-native
+runtimes such as `codex-app-server` receive the prompt through `run_prompt_result`
+and can persist thread/token metrics.
 
 External Codex app-server example:
 

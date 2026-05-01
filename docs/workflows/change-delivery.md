@@ -45,15 +45,20 @@ of the default generic `issue-runner` workflow.
 `change-delivery` composes shared `runtimes/`, `trackers/`, and `code_hosts/`
 backends with workflow-specific prompts, reviewers, and merge policy.
 
+Runtime-backed stages are dispatched through the same shared stage boundary used
+by `issue-runner`. The coder tiers and internal reviewer each select a runtime
+with `agents.*.runtime`; the workflow owns prompts and gates, while the runtime
+profile owns execution.
+
 ## Codex Runtime Options
 
-The default template uses `acpx-codex` for the coder role. To run the coder
-through Codex app-server instead, change only `runtimes` and
-`agents.coder.*.runtime` in `WORKFLOW.md`:
+The default template uses `acpx-codex` for the coder role and `claude-cli` for
+internal review. To run either role through Codex app-server instead, change
+only `runtimes` and the matching `agents.*.runtime` binding in `WORKFLOW.md`:
 
 ```yaml
 runtimes:
-  coder-runtime:
+  codex-runtime:
     kind: codex-app-server
     mode: external
     endpoint: ws://127.0.0.1:4500
@@ -68,7 +73,11 @@ agents:
     default:
       name: Internal_Coder_Agent
       model: gpt-5.5
-      runtime: coder-runtime
+      runtime: codex-runtime
+  internal-reviewer:
+    name: Internal_Reviewer_Agent
+    model: gpt-5.5
+    runtime: codex-runtime
 ```
 
 When `codex-app-server` is selected, Daedalus stores

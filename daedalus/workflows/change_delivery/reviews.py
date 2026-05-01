@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import subprocess
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable
 
+from runtimes.stages import raw_output_from_runtime_result, run_runtime_stage
 from workflows.change_delivery.migrations import get_lane_state_review_field, get_review
 
 
@@ -1633,48 +1632,6 @@ def audit_inter_review_agent_transition(
         )
 
 
-def _runtime_prompt_command(*, agent_cfg: dict[str, Any], runtime_cfg: dict[str, Any]) -> list[str] | None:
-    command = agent_cfg.get("command")
-    if command:
-        return list(command)
-    runtime_kind = str(runtime_cfg.get("kind") or "")
-    command = runtime_cfg.get("command")
-    if runtime_kind != "codex-app-server" and isinstance(command, list):
-        return list(command)
-    return None
-
-
-def _materialize_inter_review_agent_prompt(*, worktree: Any, prompt: str) -> Path:
-    out_dir = Path(worktree) / ".daedalus" / "dispatch"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
-    out = out_dir / f"internal-reviewer-{digest}.txt"
-    out.write_text(prompt, encoding="utf-8")
-    return out
-
-
-def _substitute_command_placeholders(argv: list[str], values: dict[str, str]) -> list[str]:
-    resolved = []
-    for arg in argv:
-        text = str(arg)
-        for key, value in values.items():
-            text = text.replace("{" + key + "}", value)
-        resolved.append(text)
-    return resolved
-
-
-def _raw_output_from_runtime_result(result: Any) -> str:
-    if isinstance(result, str):
-        return result.strip()
-    output = getattr(result, "output", None)
-    if output is not None:
-        return str(output).strip()
-    stdout = getattr(result, "stdout", None)
-    if stdout is not None:
-        return str(stdout).strip()
-    return str(result or "").strip()
-
-
 def _parse_inter_review_agent_raw_output(raw_output: str, *, source_label: str) -> dict[str, Any]:
     try:
         payload = extract_inter_review_agent_payload(raw_output)
@@ -1720,7 +1677,6 @@ def run_inter_review_agent_review_via_runtime(
     codex-app-server, Hermes Agent, Claude CLI, or any future registered
     runtime without workflow-specific subprocess wiring.
     """
-    model = str(agent_cfg.get("model") or "")
     prompt = _inter_review_agent_prompt_with_output_contract(
         render_prompt_fn(
             issue=issue,
@@ -1730,53 +1686,22 @@ def run_inter_review_agent_review_via_runtime(
             head_sha=head_sha,
         )
     )
-    command = _runtime_prompt_command(agent_cfg=agent_cfg, runtime_cfg=runtime_cfg)
     try:
-        if command is not None:
-            prompt_path = _materialize_inter_review_agent_prompt(
-                worktree=worktree,
-                prompt=prompt,
-            )
-            argv = _substitute_command_placeholders(
-                command,
-                {
-                    "model": model,
-                    "prompt": prompt,
-                    "prompt_path": str(prompt_path),
-                    "worktree": str(worktree),
-                    "session_name": session_name,
-                    "head_sha": str(head_sha or ""),
-                    "issue_number": str((issue or {}).get("number") or ""),
-                },
-            )
-            raw_output = _raw_output_from_runtime_result(
-                runtime.run_command(worktree=Path(worktree), command_argv=argv)
-            )
-        else:
-            ensure_session = getattr(runtime, "ensure_session", None)
-            if callable(ensure_session):
-                ensure_session(
-                    worktree=Path(worktree),
-                    session_name=session_name,
-                    model=model,
-                    resume_session_id=None,
-                )
-            runner = getattr(runtime, "run_prompt_result", None)
-            if callable(runner):
-                result = runner(
-                    worktree=Path(worktree),
-                    session_name=session_name,
-                    prompt=prompt,
-                    model=model,
-                )
-            else:
-                result = runtime.run_prompt(
-                    worktree=Path(worktree),
-                    session_name=session_name,
-                    prompt=prompt,
-                    model=model,
-                )
-            raw_output = _raw_output_from_runtime_result(result)
+        result = run_runtime_stage(
+            runtime=runtime,
+            runtime_cfg=runtime_cfg,
+            agent_cfg=agent_cfg,
+            stage_name="internal-reviewer",
+            worktree=worktree,
+            session_name=session_name,
+            prompt=prompt,
+            placeholders={
+                "head_sha": str(head_sha or ""),
+                "issue_number": str((issue or {}).get("number") or ""),
+                "issue_url": str((issue or {}).get("url") or ""),
+            },
+        )
+        raw_output = result.output.strip()
     except error_cls as exc:
         raw_output = (getattr(exc, "stdout", "") or "").strip()
         if raw_output:
@@ -1793,7 +1718,7 @@ def run_inter_review_agent_review_via_runtime(
         ) from exc
     except Exception as exc:
         result = getattr(exc, "result", None)
-        raw_output = _raw_output_from_runtime_result(result)
+        raw_output = raw_output_from_runtime_result(result).strip()
         if raw_output:
             try:
                 return _parse_inter_review_agent_raw_output(

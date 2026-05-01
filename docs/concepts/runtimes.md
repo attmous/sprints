@@ -22,6 +22,29 @@ class Runtime(Protocol):
 
 `last_activity_ts()` is the Symphony §8.5 hook that lets [stall detection](stalls.md) work. Runtimes without it are skipped by the reconciler — they opt out silently.
 
+## Runtime Stages
+
+Workflow code does not invoke runtime adapters directly. It runs named stages
+through `daedalus/runtimes/stages.py`. The shared stage dispatcher owns the
+execution boundary:
+
+- receives the workflow-selected runtime profile and agent config
+- ensures/resumes the runtime session before dispatch
+- chooses `agent.command` or runtime `command` for command-backed runtimes
+- renders `{prompt_path}`, `{worktree}`, `{session_name}`, `{model}`, and workflow-specific placeholders
+- calls `run_prompt_result()` / `run_prompt()` for prompt-native runtimes
+- wires cancellation/progress callbacks when the runtime supports them
+- normalizes command output into a `PromptRunResult`-shaped metrics source
+
+The workflow still owns state, prompts, gates, and tracker/code-host effects.
+This is what lets `issue-runner`, `change-delivery`, and future workflows bind
+Codex app-server or Hermes Agent to any runtime-backed stage without hard-coded
+runtime names in the workflow logic.
+
+Important: for `codex-app-server`, `runtime.command` starts or connects the
+app-server transport. It is not treated as a per-stage command. Use
+`agent.command` only when a role should run a command-backed adapter.
+
 ## Adapter shape comparison
 
 || | `claude-cli` | `acpx-codex` | `hermes-agent` | `codex-app-server` |
@@ -66,7 +89,7 @@ The `hermes-agent` runtime delegates turns to a local Hermes agent process. It i
 runtimes:
   my-agent-runtime:
     kind: hermes-agent
-    command: ["python3", "-m", "my_agent", "--workflow-root", "{{workflow_root}}"]
+    command: ["python3", "-m", "my_agent", "--workflow-root", "{workflow_root}"]
     timeout-seconds: 1200
 ```
 
@@ -188,6 +211,7 @@ surfaces without changing the shared runtime protocol.
 ## Where this lives in code
 
 - Protocol: `daedalus/runtimes/__init__.py`
+- Stage dispatcher: `daedalus/runtimes/stages.py`
 - Adapters: `daedalus/runtimes/{claude_cli,acpx_codex,hermes_agent,codex_app_server}.py`
 - Workflow compatibility shims: `daedalus/workflows/change_delivery/runtimes/`
 - Preflight: `daedalus/workflows/change_delivery/preflight.py`

@@ -36,6 +36,7 @@ from engine.storage import load_optional_json as _load_optional_json
 from engine.storage import write_json_atomic as _write_json
 from engine.work_items import work_item_from_issue
 from runtimes import PromptRunResult, Runtime, build_runtimes
+from runtimes.stages import prompt_result_from_stage, run_runtime_stage
 from workflows.contract import WORKFLOW_POLICY_KEY, WorkflowContractError, load_workflow_contract
 from workflows.shared.config_snapshot import AtomicRef, ConfigSnapshot
 from workflows.shared.paths import runtime_paths
@@ -972,7 +973,6 @@ class IssueRunnerWorkspace(WorkflowDriver):
         env: dict[str, str] | None = None
         created_workspace = False
         attempt = self._issue_attempt(issue=issue, retry_entry=retry_entry)
-        set_cancel_event_fn = None
 
         try:
             if cancel_event is not None and cancel_event.is_set():
@@ -1021,58 +1021,43 @@ class IssueRunnerWorkspace(WorkflowDriver):
                 runtime = self.runtime(runtime_name)
             else:
                 runtime = _build_runtimes_from_config(self.config, run=self._run, run_json=self._run_json)[runtime_name]
-            set_cancel_event_fn = getattr(runtime, "set_cancel_event", None)
-            if callable(set_cancel_event_fn) and cancel_event is not None:
-                set_cancel_event_fn(cancel_event)
             session_name = issue_session_name(issue)
-            model = str(agent_cfg.get("model") or "")
             resume_thread_id = None
             if str(runtime_cfg.get("kind") or "").strip() == "codex-app-server":
                 resume_thread_id = self._codex_thread_for_issue(issue)
-            runtime.ensure_session(
+            stage_result = run_runtime_stage(
+                runtime=runtime,
+                runtime_cfg=runtime_cfg,
+                agent_cfg=agent_cfg,
+                stage_name="issue-runner",
                 worktree=issue_workspace,
                 session_name=session_name,
-                model=model,
+                prompt=prompt,
+                prompt_path=prompt_path,
+                env=env,
                 resume_session_id=resume_thread_id,
-            )
-            self._publish_tracker_feedback(
-                issue=issue,
-                event="issue.running",
-                summary="Started the configured runtime for this issue.",
-                run_id=run_id,
-                metadata={
-                    "attempt": attempt,
-                    "runtime": runtime_name,
-                    "runtime_kind": runtime_cfg.get("kind"),
-                    "workspace": str(issue_workspace),
+                cancel_event=cancel_event,
+                placeholders={
+                    "issue_id": str(issue.get("id") or ""),
+                    "issue_identifier": str(issue.get("identifier") or ""),
+                    "issue_title": str(issue.get("title") or ""),
+                    "workflow_root": str(self.path),
                 },
-            )
-
-            command = agent_cfg.get("command")
-            if command is None:
-                runtime_command = runtime_cfg.get("command")
-                if isinstance(runtime_command, list):
-                    command = runtime_command
-            if command:
-                argv = self._render_command(
-                    command=command,
-                    worktree=issue_workspace,
-                    model=model,
-                    session_name=session_name,
-                    prompt_path=prompt_path,
+                on_session_ready=lambda _handle: self._publish_tracker_feedback(
                     issue=issue,
-                )
-                output = runtime.run_command(worktree=issue_workspace, command_argv=argv, env=env)
-                run_result = self._runtime_result_from_command_output(output)
-            else:
-                run_result = self._run_runtime_prompt(
-                    runtime=runtime,
-                    worktree=issue_workspace,
-                    session_name=session_name,
-                    prompt=prompt,
-                    model=model,
-                )
-                output = run_result.output
+                    event="issue.running",
+                    summary="Started the configured runtime for this issue.",
+                    run_id=run_id,
+                    metadata={
+                        "attempt": attempt,
+                        "runtime": runtime_name,
+                        "runtime_kind": runtime_cfg.get("kind"),
+                        "workspace": str(issue_workspace),
+                    },
+                ),
+            )
+            run_result = prompt_result_from_stage(stage_result)
+            output = stage_result.output
             output_path.write_text(output, encoding="utf-8")
             hook_results.append(self._run_hook("after_run", issue_workspace, env))
             return {
@@ -1105,10 +1090,6 @@ class IssueRunnerWorkspace(WorkflowDriver):
                 "runtime": runtime_name if runtime is not None else None,
                 "runtimeKind": runtime_cfg.get("kind") if runtime is not None else None,
             }
-        finally:
-            if callable(set_cancel_event_fn):
-                set_cancel_event_fn(None)
-
     def _apply_issue_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         applied: list[dict[str, Any]] = []
         for result in results:
@@ -1884,62 +1865,6 @@ class IssueRunnerWorkspace(WorkflowDriver):
             "ran": True,
             "returncode": getattr(completed, "returncode", 0),
         }
-
-    def _render_command(
-        self,
-        *,
-        command: Any,
-        worktree: Path,
-        model: str,
-        session_name: str,
-        prompt_path: Path,
-        issue: dict[str, Any],
-    ) -> list[str]:
-        if not isinstance(command, list) or not command:
-            raise RuntimeError("agent.command and runtime command must be a non-empty argv list")
-        fmt = {
-            "worktree": str(worktree),
-            "model": model,
-            "session_name": session_name,
-            "prompt_path": str(prompt_path),
-            "issue_id": str(issue.get("id") or ""),
-            "issue_identifier": str(issue.get("identifier") or ""),
-            "issue_title": str(issue.get("title") or ""),
-            "workflow_root": str(self.path),
-        }
-        return [str(part).format(**fmt) for part in command]
-
-    def _run_runtime_prompt(
-        self,
-        *,
-        runtime: Runtime,
-        worktree: Path,
-        session_name: str,
-        prompt: str,
-        model: str,
-    ) -> PromptRunResult:
-        runner = getattr(runtime, "run_prompt_result", None)
-        if callable(runner):
-            return runner(
-                worktree=worktree,
-                session_name=session_name,
-                prompt=prompt,
-                model=model,
-            )
-        output = runtime.run_prompt(
-            worktree=worktree,
-            session_name=session_name,
-            prompt=prompt,
-            model=model,
-        )
-        return self._runtime_result_from_command_output(output)
-
-    def _runtime_result_from_command_output(self, output: str) -> PromptRunResult:
-        return PromptRunResult(
-            output=output,
-            tokens={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-            rate_limits=None,
-        )
 
     def _metrics_payload(self, result: PromptRunResult) -> dict[str, Any]:
         return {
