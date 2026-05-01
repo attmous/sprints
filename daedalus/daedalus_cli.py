@@ -48,6 +48,7 @@ from workflows.runtime_presets import (
     runtime_binding_checks,
 )
 from workflows.runtime_matrix import build_runtime_matrix_report
+from workflows.change_delivery.storage import ensure_change_delivery_state_files
 from workflows.shared.paths import (
     derive_workflow_instance_name,
     plugin_runtime_path,
@@ -562,6 +563,42 @@ def _load_issue_runner_workspace(workflow_root: Path):
     return load_workspace_from_config(workspace_root=workflow_root)
 
 
+def _load_change_delivery_workspace(workflow_root: Path):
+    try:
+        from workflows.change_delivery.workspace import load_workspace_from_config
+    except ImportError:
+        path = PLUGIN_DIR / "workflows" / "change_delivery" / "workspace.py"
+        spec = importlib.util.spec_from_file_location("daedalus_change_delivery_workspace_for_tools", path)
+        if spec is None or spec.loader is None:
+            raise DaedalusCommandError(f"unable to load change-delivery workspace module from {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        load_workspace_from_config = module.load_workspace_from_config
+    return load_workspace_from_config(workspace_root=workflow_root)
+
+
+def _ensure_change_delivery_active_lane_for_start(workflow_root: Path) -> dict[str, Any]:
+    try:
+        workspace = _load_change_delivery_workspace(workflow_root)
+        ensure_active_lane = getattr(workspace, "ensure_active_lane")
+    except Exception as exc:
+        return {
+            "ok": False,
+            "promoted": False,
+            "reason": "workspace-load-failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    try:
+        return ensure_active_lane()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "promoted": False,
+            "reason": "active-lane-selection-failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def _build_issue_runner_status(workflow_root: Path) -> dict[str, Any]:
     return _load_issue_runner_workspace(workflow_root).build_status()
 
@@ -781,6 +818,11 @@ def service_loop(
         daedalus = _load_daedalus_module(workflow_root)
         resolved_project_key = project_key or daedalus._project_key_for(workflow_root)
         resolved_instance_id = instance_id or _instance_id_for(service_mode=service_mode, workspace=workflow_root.name)
+        lane_selection = (
+            _ensure_change_delivery_active_lane_for_start(workflow_root)
+            if service_mode == "active"
+            else None
+        )
         if service_mode == "shadow":
             return daedalus.run_shadow_loop(
                 workflow_root=workflow_root,
@@ -789,13 +831,15 @@ def service_loop(
                 interval_seconds=interval_seconds,
                 max_iterations=max_iterations,
             )
-        return daedalus.run_active_loop(
+        result = daedalus.run_active_loop(
             workflow_root=workflow_root,
             project_key=resolved_project_key,
             instance_id=resolved_instance_id,
             interval_seconds=interval_seconds,
             max_iterations=max_iterations,
         )
+        result["lane_selection"] = lane_selection
+        return result
     if workflow_name == "issue-runner":
         workspace = _load_issue_runner_workspace(workflow_root)
         payload = workspace.run_loop(
@@ -834,6 +878,7 @@ def service_up(
             "skipped": True,
             "reason": "workflow-managed runtime does not require daedalus.db bootstrap",
         }
+    lane_selection_result = None
 
     install_result = install_supervised_service(
         workflow_root=workflow_root,
@@ -863,6 +908,9 @@ def service_up(
             f"{enable_result.get('stderr') or enable_result.get('stdout') or enable_result.get('returncode')}"
         )
 
+    if workflow_name == "change-delivery" and service_mode == "active":
+        lane_selection_result = _ensure_change_delivery_active_lane_for_start(workflow_root)
+
     start_result = service_control(
         "start",
         workflow_root=workflow_root,
@@ -886,6 +934,7 @@ def service_up(
         "project_key": project_key,
         "service_mode": service_mode,
         "init": init_result,
+        "lane_selection": lane_selection_result,
         "preflight": preflight_result,
         "service_install": install_result,
         "service_enable": enable_result,
@@ -2717,6 +2766,9 @@ def scaffold_workflow_root(
         encoding="utf-8",
     )
     write_workflow_contract_pointer(root, contract_path)
+    state_files_result: dict[str, Any] | None = None
+    if workflow_name == "change-delivery":
+        state_files_result = ensure_change_delivery_state_files(root, config)
     if workflow_name == "issue-runner":
         issues_template = PLUGIN_DIR / "workflows" / "issue_runner" / "issues.template.json"
         issues_path = root / "config" / "issues.json"
@@ -2738,6 +2790,7 @@ def scaffold_workflow_root(
         "workflow_contract_pointer_path": str(workflow_contract_pointer_path(root)),
         "renamed_contract_paths": renamed_contract_paths,
         "renamed_contract_source_paths": renamed_contract_source_paths,
+        "state_files": state_files_result,
     }
 
 
@@ -3727,18 +3780,32 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             "gate": daedalus.evaluate_active_execution_gate(workflow_root=workflow_root, legacy_status=legacy_status),
         }
     if args.daedalus_command == "iterate-active":
-        return daedalus.run_active_iteration(
+        lane_selection = (
+            _ensure_change_delivery_active_lane_for_start(workflow_root)
+            if _workflow_name_for_root(workflow_root) == "change-delivery"
+            else None
+        )
+        result = daedalus.run_active_iteration(
             workflow_root=workflow_root,
             instance_id=args.instance_id,
         )
+        result["lane_selection"] = lane_selection
+        return result
     if args.daedalus_command == "run-active":
-        return daedalus.run_active_loop(
+        lane_selection = (
+            _ensure_change_delivery_active_lane_for_start(workflow_root)
+            if _workflow_name_for_root(workflow_root) == "change-delivery"
+            else None
+        )
+        result = daedalus.run_active_loop(
             workflow_root=workflow_root,
             project_key=resolved_project_key,
             instance_id=args.instance_id,
             interval_seconds=args.interval_seconds,
             max_iterations=args.max_iterations,
         )
+        result["lane_selection"] = lane_selection
+        return result
     if args.daedalus_command == "request-active-actions":
         return daedalus.request_active_actions_for_lane(
             workflow_root=workflow_root,

@@ -17,6 +17,7 @@ from engine.storage import load_optional_json as _load_optional_json
 from engine.storage import write_json_atomic as _write_json
 from engine.storage import write_text_atomic as _write_text
 from workflows.change_delivery.migrations import get_ledger_field
+from workflows.change_delivery.storage import ensure_change_delivery_state_files
 from workflows.change_delivery.runtimes import build_runtimes
 from workflows.shared.paths import runtime_paths
 from code_hosts import build_code_host_client
@@ -428,6 +429,15 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
     hermes_cron_jobs_path = Path(config.get("hermesCronJobsPath") or (Path.home() / ".hermes/cron/jobs.json"))
     ledger_path = Path(config["ledgerPath"])
     from workflows.change_delivery.migrations import migrate_persisted_ledger
+    fallback_storage_config = {
+        "storage": {
+            "ledger": str(ledger_path),
+            "health": str(config["healthPath"]),
+            "audit-log": str(config["auditLogPath"]),
+            "scheduler": str(config.get("schedulerPath") or (workspace_root / "memory/workflow-scheduler.json")),
+        }
+    }
+    ensure_change_delivery_state_files(workspace_root, yaml_cfg or fallback_storage_config)
     migrate_persisted_ledger(ledger_path)
     health_path = Path(config["healthPath"])
     audit_log_path = Path(config["auditLogPath"])
@@ -527,7 +537,10 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
         return hermes_cron_jobs_path if engine_owner == "hermes" else cron_jobs_path
 
     def load_jobs() -> dict[str, Any]:
-        return _load_json(_jobs_store_path())
+        try:
+            return _load_json(_jobs_store_path())
+        except FileNotFoundError:
+            return {"jobs": []}
 
     def load_ledger() -> dict[str, Any]:
         return _load_json(ledger_path)
@@ -1100,6 +1113,17 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
     def _issue_close(issue_number, comment=None):
         return ns._load_adapter_github_module().issue_close(
             issue_number, comment, repo_path=ns.REPO_PATH, run=ns._run,
+        )
+
+    def ensure_active_lane():
+        return ns._load_adapter_actions_module().run_ensure_active_lane(
+            build_status_fn=ns.build_status,
+            reconcile_fn=ns.reconcile,
+            audit_fn=ns.audit,
+            issue_add_label_fn=ns._issue_add_label,
+            issue_comment_fn=ns._issue_comment,
+            pick_next_lane_issue_fn=ns._pick_next_lane_issue,
+            active_lane_label=ns.ACTIVE_LANE_LABEL,
         )
 
     def publish_ready_pr():
