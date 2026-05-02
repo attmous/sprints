@@ -1,35 +1,10 @@
 # Sprints
 
-<div align="center">
+Hermes Sprints is a Hermes plugin for durable agentic workflow execution.
 
-**Hermes Sprints: durable SDLC automation for Hermes Agent.**
-
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-4CAF50?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)]()
-
-</div>
-
-Sprints is a control plane for agentic software work. It turns issues into
-supervised workflow runs, dispatches agents through runtime adapters, persists
-state, reconciles failures, and gives operators a live surface for the loop.
-
-During bootstrap, the Sprints plugin generates a `WORKFLOW.md` file in the
-repository you want Sprints to operate on. That file is your repo-local
-workflow contract: it defines policy and configuration, but it is not the
-scheduler. The scheduler is the plugin, workflow package, state store, leases, tracker clients, runtime adapters, and observability around it.
-
-## What You Get
-
-| Capability | What it means |
-|---|---|
-| Issue-based automation | Turns selected issues into supervised workflow runs with explicit lifecycle policy. |
-| Repo-owned workflow contracts | Generates `WORKFLOW.md` into your target repo so config and policy live beside the code being automated. |
-| Durable runtime state | Persists leases, running work, retries, thread mappings, audit history, status, and health in SQLite, JSON, and JSONL. |
-| Workflow loop | Runs workflow ticks, reconciles stalled work, and resumes eligible runs. |
-| Runtime flexibility | Dispatches through runtime profiles for hosted agents, CLI agents, Codex app-server, or custom commands. |
-| Operator surface | Exposes `/sprints`, `/workflow`, watch output, and optional HTTP status. |
-| Bundled workflow engine | Ships `issue-runner` and `change-delivery`, with shared tracker, runtime, config, and observability primitives. |
+Sprints writes a repo-owned `WORKFLOW.md`, dispatches actors through configured
+runtimes, stores state, and exposes operator commands. Policy belongs in
+`WORKFLOW.md`; Python owns mechanics.
 
 ## Quick Start
 
@@ -37,187 +12,84 @@ scheduler. The scheduler is the plugin, workflow package, state store, leases, t
 sudo apt install python3-yaml python3-jsonschema
 hermes plugins install attmous/sprints --enable
 
-cd /path/to/your/repo
+cd /path/to/repo
 hermes sprints bootstrap
 $EDITOR WORKFLOW.md
 hermes sprints codex-app-server up
 hermes sprints validate
+hermes sprints doctor
 hermes
 ```
 
-`agentic` is the default public bootstrap path.
-Bootstrap creates the workflow root, writes the workflow contract into your
-repo, commits it on a bootstrap branch, and stores a repo-local pointer so later
-commands can resolve the workflow instance. The bundled templates default
-runtime-backed actors to `codex-app-server`; use `configure-runtime` if you want
-a Hermes runtime profile for a role instead.
+Inside Hermes:
 
-Bundled workflow policy templates live under `sprints/workflows/templates/`:
+```text
+/sprints status
+/sprints doctor
+/sprints watch
+/workflow agentic status
+/workflow agentic validate
+/workflow agentic tick
+```
+
+## What Sprints Owns
+
+| Area | Meaning |
+| --- | --- |
+| Workflow contract | `WORKFLOW.md` front matter plus orchestrator/actor policy sections. |
+| Runtime dispatch | Actor turns through Codex app-server, Hermes Agent, Claude, ACPX, or command-backed runtime profiles. |
+| Durable state | SQLite runs, events, leases, retries, runtime sessions, and status projections. |
+| Operator surface | `/sprints`, `/workflow agentic`, watch output, and runtime diagnostics. |
+| Trackers | GitHub and Linear client boundaries. |
+
+## Workflow Model
+
+The public workflow implementation is `agentic`.
+
+Each contract defines:
+
+- orchestrator actor
+- runtime profiles
+- actors
+- stages
+- gates
+- actions
+- storage paths
+
+Bundled policy templates live under `sprints/workflows/templates/`:
 
 - `issue-runner.md`
 - `change-delivery.md`
 - `release.md`
 - `triage.md`
 
-For manual scaffold paths, pip installs, and every lower-level command,
-use the full install guide:
-[docs/operator/installation.md](docs/operator/installation.md).
+They are templates for `workflow: agentic`, not separate Python workflow
+packages.
 
-## Operate It
+## Package Layout
 
-After installing the plugin, run Hermes from your target repo:
-
-```bash
-cd /path/to/your/repo
-hermes
+```text
+sprints/
+|-- cli/          # command surface
+|-- engine/       # SQLite-backed state
+|-- observe/      # read-only operator views
+|-- runtimes/     # runtime adapters and turn dispatch
+|-- trackers/     # GitHub and Linear trackers
+`-- workflows/    # WORKFLOW.md loader and agentic runner
 ```
 
-Inside Hermes Agent:
-
-```bash
-# Sprints engine commands
-/sprints status                            # show workflow state, workflow root, and important paths
-/sprints doctor                            # run health checks across config, state, and integrations
-/sprints validate                          # validate WORKFLOW.md, schema, and preflight
-/sprints watch                             # render a live operator view
-/sprints events --limit 20                 # inspect the durable engine event ledger
-
-# Workflow package commands
-/workflow agentic status                    # show workflow state
-/workflow agentic validate                  # validate the active WORKFLOW.md contract
-/workflow agentic tick                      # run one orchestrator tick
-```
-
-The operator surfaces read persisted state for you. You should not need to
-inspect SQLite, generated scheduler snapshots, JSONL logs, or systemd journals
-by hand during normal operation.
-
-## Configure The Workflow
-
-Edit the generated contract in your target repo:
-
-- `WORKFLOW.md` when the repo carries one workflow
-- `WORKFLOW-issue-runner.md` / `WORKFLOW-change-delivery.md` when it carries more than one
-
-Common knobs live in the YAML front matter:
-
-- `repository` / `tracker` / `code-host`: checkout path, issue source, PR host
-- `runtimes`: runtime profiles such as Codex app-server, CLI agents, or custom commands
-- `agent` or `actors`: model/runtime bindings for workflow executors
-- `stages` / `hooks` / `gates`: workflow-specific lifecycle policy
-- `tracker-feedback` / `webhooks` / `server`: tracker updates, outbound notifications, HTTP status
-
-The Markdown body is the workflow policy prompt. The workflow package decides
-how to use it. See the full [WORKFLOW.md guide](docs/workflows/workflow-contract.md).
-
-## Mental Model
-
-| Term | Meaning |
-|---|---|
-| Target repo | The user repository where work should happen. Bootstrap writes `WORKFLOW.md` here. |
-| Workflow contract | `WORKFLOW.md` or `WORKFLOW-<name>.md`; YAML front matter plus Markdown policy text. |
-| Workflow root | Durable instance data under `~/.hermes/workflows/<owner>-<repo>-<workflow-type>`. |
-| Workflow package | The installed Python implementation that decides the lifecycle for a selected issue. |
-| Tracker | The system Sprints reads issues from and writes status back to. |
-| Code host | The system Sprints uses for branches, pull requests, review threads, checks, and merge operations. |
-| Issue | The unit of work selected from a tracker. Workflows should model issues, not one tracker vendor. |
-| Runtime | The adapter that runs an agent or command against a workspace. |
-| Workspace | The isolated checkout/path where the agent does work for an issue. |
-| State store | SQLite, JSON, and JSONL files that preserve current state, history, retries, leases, and metrics. |
-| Operator surface | Hermes commands, service controls, watch output, and optional HTTP status. |
-
-## Bundled Workflows
-
-### `issue-runner`
-
-<div align="center">
-
-```mermaid
-%%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#0B3D4C', 'primaryTextColor': '#22D3EE', 'primaryBorderColor': '#22D3EE', 'lineColor': '#22D3EE', 'secondaryColor': '#0F172A', 'tertiaryColor': '#1E293B'}}}%%
-flowchart LR
-    A[Tracker] -->|query| B[Filter]
-    B -->|eligible| D[Runtime]
-    D -->|dispatch| E[Agent]
-    E -->|result| F[State]
-    style A fill:#0B3D4C,stroke:#22D3EE,color:#22D3EE
-    style B fill:#0B3D4C,stroke:#22D3EE,color:#22D3EE
-    style D fill:#0B3D4C,stroke:#22D3EE,color:#22D3EE
-    style E fill:#0B3D4C,stroke:#22D3EE,color:#22D3EE
-    style F fill:#0B3D4C,stroke:#22D3EE,color:#22D3EE
-```
-
-</div>
-
-| Stage | Action | Guarantees |
-|---|---|---|
-| Select | Tracker query → issue filter → eligibility check | Label-scoped, state-aware |
-| Dispatch | Runtime adapter → agent prompt → bounded execution | Timeout, token limit, retry bound |
-| Record | Result capture → state persistence → terminal cleanup | JSONL audit, workspace teardown |
-
-**Surface:** Symphony-compatible. **State:** JSON/JSONL. **Gates:** None.
-
-
-
-### `change-delivery`
-
-<div align="center">
-
-```mermaid
-%%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#4C1D0B', 'primaryTextColor': '#FB923C', 'primaryBorderColor': '#FB923C', 'lineColor': '#FB923C', 'secondaryColor': '#0F172A', 'tertiaryColor': '#1E293B'}}}%%
-flowchart LR
-    A[Issue] -->|select| B[Lane]
-    B -->|assign| C[Implement]
-    C -->|review| D[PR]
-    D -->|gate| E[Merge]
-    E -->|hook| F[Promote]
-    style A fill:#4C1D0B,stroke:#FB923C,color:#FB923C
-    style B fill:#4C1D0B,stroke:#FB923C,color:#FB923C
-    style C fill:#4C1D0B,stroke:#FB923C,color:#FB923C
-    style D fill:#4C1D0B,stroke:#FB923C,color:#FB923C
-    style E fill:#4C1D0B,stroke:#FB923C,color:#FB923C
-    style F fill:#4C1D0B,stroke:#FB923C,color:#FB923C
-```
-
-</div>
-
-| Stage | Action | Guarantees |
-|---|---|---|
-| Select | GitHub issue → label filter → lane assignment | SQLite lease, exactly-once |
-| Implement | Agent dispatch → code generation → internal review | Actor isolation, thread mapping |
-| Publish | PR creation → CI gate → external review | Idempotent push, status linkback |
-| Merge | Approval check → merge commit → promotion hook | Branch protection, cleanup hook |
-
-**Surface:** SDLC-native. **State:** SQLite + JSONL. **Gates:** Internal review, external review, CI, approval.
-
----
-
-## Supported Surfaces
-
-| Area | Status | Notes |
-|---|---|---|
-| GitHub tracker | First-class tracker | Public supported path through authenticated `gh`. |
-| `local-json` tracker | Development and fixtures | Useful for local tests and examples. |
-| Linear tracker | Experimental | Deferred until after the GitHub path is hardened. |
-| Supervision | Supported | `systemd --user`. |
-| Runtime adapters | Supported | Codex app-server, ACPX Codex, Claude CLI, Hermes agent, custom commands. |
-
-Stable public boundaries are tracked in [docs/public-contract.md](docs/public-contract.md).
-For the product boundary between Sprints, Hermes Agent, and Hermes Kanban, see
-[docs/positioning.md](docs/positioning.md).
-
-## Documentation
+## Docs
 
 | Doc | Purpose |
-|---|---|
-| [Installation](docs/operator/installation.md) | Full install, bootstrap, service, and troubleshooting path. |
-| [Positioning](docs/positioning.md) | Sprints vs. Hermes Agent vs. Hermes Kanban, and why Kanban is an optional tracker rather than the engine. |
-| [WORKFLOW.md guide](docs/workflows/workflow-contract.md) | Workflow contract structure and examples. |
-| [Bundled workflows](docs/workflows/README.md) | Workflow comparison and templates. |
-| [Architecture](docs/architecture.md) | Engine/workflow boundary and durable runtime model. |
-| [Operator cheat sheet](docs/operator/cheat-sheet.md) | Day-2 commands and debugging. |
-| [Symphony conformance](docs/symphony-conformance.md) | Symphony alignment and remaining gaps. |
-| [Security](docs/security.md) | Trust model, shell/runtime posture, and secrets. |
+| --- | --- |
+| [Installation](docs/operator/installation.md) | Install, bootstrap, validate, run. |
+| [Architecture](docs/architecture.md) | Current package boundaries. |
+| [Workflow Contract](docs/workflows/workflow-contract.md) | `WORKFLOW.md` structure. |
+| [Runtimes](docs/concepts/runtimes.md) | Actor/runtime execution path. |
+| [Engine](docs/concepts/engine.md) | Durable state model. |
+| [Slash Commands](docs/operator/slash-commands.md) | Command reference. |
+| [Security](docs/security.md) | Trust model and execution risk. |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

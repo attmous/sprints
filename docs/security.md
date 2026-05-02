@@ -1,35 +1,45 @@
-# Security Posture
+# Security
 
-Sprints is built for a **trusted local operator** running on a **trusted host**. It is not a hardened multi-tenant control plane.
+Sprints is for a trusted local operator on a trusted host.
 
-## Trust Model
+It is not a multi-tenant sandbox.
 
-- The operator controls the workflow root, runtime binaries, hooks, and host credentials.
-- The target repository may be buggy or malicious. Sprints does **not** assume repo contents are safe to execute.
-- Runtime adapters and hooks are allowed to run shell commands. Treat them as code execution surfaces.
+## Execution Risk
 
-## Filesystem and Process Scope
+Actors run through configured runtimes. Those runtimes may execute shell
+commands, edit files, call network services, and use local credentials.
 
-- Plugin code lives under `~/.hermes/plugins/sprints`.
-- Workflow config and mutable state live under `~/.hermes/workflows/<owner>-<repo>-<workflow-type>`.
-- Agent turns are intended to operate inside the configured repo/worktree, but Sprints does not enforce a universal filesystem sandbox.
-- Hooks can execute arbitrary shell and can escape the worktree if you configure them to.
+Treat these as code execution surfaces:
 
-## Network and External Side Effects
+- `WORKFLOW.md`
+- runtime `command:` overrides
+- hook/action commands
+- target repository scripts
+- runtime CLIs
 
-- GitHub mutations happen through the configured runtime/tooling and inherit that runtime's credentials.
-- Sprints may post comments, push branches, open PRs, or merge when the workflow and runtime are configured to do so.
-- There is no global approval gate enforced by Sprints itself. Approval and sandbox behavior are runtime-specific.
+## Files
 
-## Secrets and Logging
+- Plugin code: `~/.hermes/plugins/sprints`
+- Workflow roots: `~/.hermes/workflows/<owner>-<repo>-agentic`
+- Target checkout: `repository.local-path`
+- Engine DB: `<workflow-root>/runtime/state/sprints/sprints.db`
 
-- Keep secrets in environment variables, host credential stores, or runtime-specific auth surfaces.
-- Do not commit secrets into `WORKFLOW.md`, workflow prompts, or hook scripts.
-- Sprints writes structured status/events/audit data for observability. It does not guarantee universal secret redaction across operator-configured prompts, hook output, or third-party runtime stderr/stdout.
+Sprints does not enforce a universal filesystem sandbox. Use runtime-specific
+sandbox/approval settings when needed.
 
-## Safe Deployment Guidance
+## Secrets
 
-- Run Sprints only on machines where shell execution by the selected runtimes is acceptable.
-- Prefer dedicated credentials scoped to the target repository.
-- Review hook scripts as carefully as application code.
-- Treat `WORKFLOW.md` and prompt changes as security-sensitive configuration changes.
+Do not commit secrets into:
+
+- `WORKFLOW.md`
+- actor policy text
+- command arguments
+- generated state files
+
+Prefer environment variables, host credential stores, or runtime-specific auth
+files.
+
+## Network
+
+Sprints may talk to trackers, code hosts, runtime services, and configured
+webhooks. Scope credentials to the target repo where possible.

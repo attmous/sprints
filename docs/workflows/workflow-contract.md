@@ -1,138 +1,166 @@
-# WORKFLOW.md Guide
+# WORKFLOW.md Contract
 
-Sprints uses a repo-owned workflow contract to keep workflow policy close to
-the code being automated. Bootstrap writes this file into the target repository,
-not into the Sprints plugin repository.
+`WORKFLOW.md` is the repo-owned contract for `workflow: agentic`.
 
-## Where It Lives
+It has two parts:
 
-When a repository has one workflow:
-
-```text
-/path/to/target-repo/WORKFLOW.md
-```
-
-When a repository has more than one workflow:
-
-```text
-/path/to/target-repo/WORKFLOW-issue-runner.md
-/path/to/target-repo/WORKFLOW-change-delivery.md
-```
-
-The workflow root stores runtime data separately under:
-
-```text
-~/.hermes/workflows/<owner>-<repo>-<workflow-type>/
-```
-
-Bootstrap writes a pointer at `./.hermes/sprints/workflow-root` in the target
-repo so Hermes commands can find the workflow root from that checkout.
-
-## File Shape
-
-`WORKFLOW.md` has YAML front matter followed by Markdown policy text:
-
-```markdown
----
-workflow: issue-runner
-schema-version: 1
-
-instance:
-  name: your-org-your-repo-issue-runner
-
-tracker:
-  kind: github
-
-agent:
-  name: Issue_Runner_Agent
-  model: gpt-5.5
-  runtime: codex-app-server
-
-runtimes:
-  codex-app-server:
-    kind: codex-app-server
-    stage-command: false
-    mode: external
-    endpoint: ws://127.0.0.1:4500
----
-
-# Workflow Policy
-
-Only work on the selected issue. Keep changes narrow and report validation.
-```
+1. YAML front matter for typed config.
+2. Markdown policy sections for the orchestrator and actors.
 
 ## Front Matter
 
-The YAML front matter is structured operator configuration:
+Minimal shape:
 
-- `workflow` selects the workflow package.
-- `instance` names the workflow instance.
-- `repository` identifies the target checkout, `tracker` selects the issue source,
-  and workflows that publish PRs use `code-host` for branch/PR/merge operations.
-- `tracker-feedback` controls tracker-facing comments and optional state updates.
-- `runtimes` and `agent` / `actors` bind workflow roles to execution backends.
-- `hooks`, `gates`, `webhooks`, and `server` configure workflow-specific behavior.
+```yaml
+---
+workflow: agentic
+schema-version: 1
 
-Each workflow validates this section against its own schema before dispatch.
+repository:
+  local-path: /absolute/path/to/repo
 
-Validate it explicitly after every config edit:
+orchestrator:
+  actor: orchestrator
 
-```bash
-hermes sprints validate
-hermes sprints validate --service-mode active --format json
+runtimes:
+  codex:
+    kind: codex-app-server
+    mode: external
+    endpoint: ws://127.0.0.1:4500
+    ephemeral: false
+    keep_alive: true
+
+actors:
+  orchestrator:
+    runtime: codex
+  implementer:
+    runtime: codex
+
+stages:
+  entry:
+    actors: [implementer]
+    actions: []
+    gates: [entry-complete]
+    next: done
+
+gates:
+  entry-complete:
+    type: orchestrator-evaluated
+
+actions: {}
+
+storage:
+  state: .sprints/agentic-state.json
+  audit-log: .sprints/agentic-audit.jsonl
+---
 ```
 
-The validator checks:
+## Required Sections
 
-| Check | What it catches |
-|---|---|
-| Contract file | Missing file, parse errors, unsupported format |
-| Workflow package | Unknown workflow names or broken workflow packages |
-| Schema | Missing fields, wrong types, unsupported enum values |
-| Schema version | Contract versions not supported by the installed plugin |
-| Service mode | Invalid modes, such as `shadow` for `issue-runner` |
-| Instance name | `instance.name` not matching the workflow root directory |
-| Repository path | Missing or non-directory `repository.local-path` |
-| Workflow preflight | Tracker/runtime references that cannot dispatch safely |
+### `repository`
 
-## Runtime Presets
+`repository.local-path` must point to an existing checkout. Runtime turns use it
+as the worktree.
 
-Use `configure-runtime` when you want the plugin to update the YAML front matter
-for a known runtime shape instead of editing role bindings by hand:
+### `runtimes`
 
-```bash
-hermes sprints configure-runtime --runtime hermes-final --role agent
-hermes sprints configure-runtime --runtime hermes-chat --role reviewer
-hermes sprints configure-runtime --runtime codex-app-server --role implementer
+Named runtime profiles. Supported `kind` values:
+
+- `codex-app-server`
+- `hermes-agent`
+- `claude-cli`
+- `acpx-codex`
+
+### `actors`
+
+Each actor names a runtime profile. There is no implicit runtime.
+
+### `stages`
+
+Stages declare the actors, actions, gates, and next stage. `next: done` marks a
+terminal transition.
+
+### `gates`
+
+Current engine gate type:
+
+```yaml
+type: orchestrator-evaluated
 ```
 
-Built-in presets are `codex-app-server`, `hermes-final`, and `hermes-chat`.
-`issue-runner` supports `agent`; `change-delivery` supports the actor names in
-`actors:` such as `implementer`, `implementer-high-effort`, `reviewer`, and
-`all`.
-Run `hermes sprints validate` and `hermes sprints doctor` after changing a
-binding. Doctor reports each role-to-runtime binding and whether the required
-CLI or external Codex service appears reachable. Use
-`hermes sprints runtime-matrix --execute` when you want to run a tiny prompt
-through the configured role runtimes without touching trackers or code hosts.
+The orchestrator decides whether the gate passes by returning a JSON decision.
 
-## Markdown Body
+## Policy Sections
 
-The Markdown body is policy text. Workflows decide how to use it:
+### Orchestrator
 
-- `issue-runner` renders it as the issue prompt template.
-- `change-delivery` composes it into workflow-specific actor prompts.
+```md
+# Orchestrator Policy
 
-Treat edits to the body like prompt changes: review them carefully and rely on
-hot reload to keep the last known good config if a bad edit lands.
+Decide the next transition from the current workflow state.
 
-## Examples
+Return JSON only:
 
-| Example | Use it when |
-|---|---|
-| [`docs/examples/issue-runner.workflow.md`](../examples/issue-runner.workflow.md) | You want the default generic issue-runner contract. |
-| [`docs/examples/change-delivery.workflow.md`](../examples/change-delivery.workflow.md) | You want the opinionated issue-to-PR-to-merge contract. |
+{
+  "decision": "run_actor",
+  "stage": "entry",
+  "target": "implementer",
+  "reason": "why this transition is valid",
+  "inputs": {},
+  "operator_message": null
+}
+```
 
-For production, start from the bundled templates and fill in real runtime
-profiles, retention limits, gates, and operator-attention policy before running
-`hermes sprints validate`.
+Allowed decisions:
+
+- `run_actor`
+- `run_action`
+- `advance`
+- `retry`
+- `complete`
+- `operator_attention`
+
+### Actor
+
+```md
+# Actor: implementer
+
+## Input
+
+Issue:
+{{ issue }}
+
+Workflow state:
+{{ workflow }}
+
+## Policy
+
+Do the work described by the orchestrator input.
+
+## Output
+
+Return JSON only:
+
+{
+  "status": "done",
+  "summary": "what changed or why no change was needed",
+  "artifacts": [],
+  "validation": [],
+  "blockers": [],
+  "next_recommendation": "complete"
+}
+```
+
+Actor output is handed back to the orchestrator through workflow state.
+
+## Multiple Workflows
+
+One repo can carry multiple contracts by naming them:
+
+```text
+WORKFLOW-release.md
+WORKFLOW-triage.md
+```
+
+The engine still uses the same `agentic` implementation. The file name only
+selects which contract to load.

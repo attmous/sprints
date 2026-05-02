@@ -1,64 +1,65 @@
-# Codex app-server Operations
+# Codex App-Server
 
-Sprints can use Codex app-server in two service shapes.
+Use this when actors run through `kind: codex-app-server`.
 
-## Managed Mode
-
-Managed mode means Sprints owns a systemd user unit for the shared listener.
-Use this when the workflow host should start the listener automatically.
+## Managed Listener
 
 ```bash
 hermes sprints codex-app-server up
+hermes sprints codex-app-server status
 hermes sprints codex-app-server doctor
 ```
 
-The default listener is `ws://127.0.0.1:4500`. If the unit was installed with a
-different `--listen` value, `doctor` reads it from the unit file.
+Default endpoint:
 
-Use logs when the service is installed but not active:
+```text
+ws://127.0.0.1:4500
+```
+
+Logs:
 
 ```bash
 hermes sprints codex-app-server logs --lines 100
 ```
 
-## External Mode
-
-External mode means another process owns the listener. Sprints only connects
-to its WebSocket endpoint.
+Stop:
 
 ```bash
-hermes sprints codex-app-server doctor \
-  --mode external \
-  --endpoint ws://127.0.0.1:4500
+hermes sprints codex-app-server down
 ```
 
-External mode skips systemd checks and validates endpoint shape, `GET /readyz`,
-WebSocket auth posture, and durable thread mappings.
+## Workflow Config
 
-## Auth Checks
+```yaml
+runtimes:
+  codex:
+    kind: codex-app-server
+    mode: external
+    endpoint: ws://127.0.0.1:4500
+    ephemeral: false
+    keep_alive: true
+```
 
-Loopback listeners do not require WebSocket auth. Non-loopback listeners should
-declare one auth mode:
+`mode: external` means Sprints connects to an existing listener. `keep_alive:
+true` keeps the WebSocket connection open for reuse.
+
+## Auth
+
+Loopback listeners usually do not need WebSocket auth. Non-loopback listeners
+should use a token:
 
 ```bash
 hermes sprints codex-app-server up \
   --ws-token-file /absolute/path/to/codex-app-server.token
 ```
 
-`doctor` fails if a non-loopback endpoint has no declared auth, or if the
-configured token/shared-secret file is missing.
+Then reference the token in the runtime profile:
 
-## Thread Mapping Checks
-
-Sprints persists Codex thread mappings in the shared engine SQLite state:
-`issue-runner` stores `issue_id -> thread_id`, and `change-delivery` stores
-`lane:<issue-number> -> thread_id`. The generated scheduler snapshot is:
-
-```text
-<workflow-root>/memory/workflow-scheduler.json
+```yaml
+runtimes:
+  codex:
+    kind: codex-app-server
+    mode: external
+    endpoint: ws://127.0.0.1:4500
+    ws_token_file: /absolute/path/to/codex-app-server.token
 ```
-
-`doctor --json` surfaces the SQLite mappings with issue id, identifier, session
-name, thread id, turn id, status, cancellation state, and update time. Missing
-thread ids are treated as broken state because future ticks cannot resume the
-right Codex thread.

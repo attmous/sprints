@@ -1,72 +1,45 @@
-# Sprints docs
+# Sprints Docs
 
-Entry point for everything that won't fit on the [project landing page](../README.md).
+Current docs for Hermes Sprints.
 
-## Start here
+Sprints has one workflow engine: `agentic`. Policy lives in repo-owned
+`WORKFLOW.md`; Python owns loading, validation, runtime dispatch, state, and
+operator commands.
 
-- **[architecture.md](architecture.md)** — the big picture. What Sprints is, what it isn't, how the pieces fit together.
-- **[positioning.md](positioning.md)** — Sprints vs. Hermes Agent vs. Hermes Kanban, and where integration boundaries belong.
-- **[operator/installation.md](operator/installation.md)** — the supported install, scaffold, verify, and supervise flow.
-- **[workflows/README.md](workflows/README.md)** — the bundled agentic workflow templates and where they live.
-- **[public-contract.md](public-contract.md)** — the stability boundary for the first public release.
-- **[symphony-conformance.md](symphony-conformance.md)** — where Sprints matches the current Symphony draft, and where it still differs.
-- **[release-readiness.md](release-readiness.md)** — public-beta scorecard, launch gates, and next hardening slice.
-- **[security.md](security.md)** — the trust model, shell/network posture, and secret-handling expectations.
+## Read First
 
-## How to read these docs
+| Doc | Use it for |
+| --- | --- |
+| [Architecture](architecture.md) | Package shape and ownership boundaries. |
+| [Workflow Contract](workflows/workflow-contract.md) | `WORKFLOW.md` front matter and policy sections. |
+| [Runtimes](concepts/runtimes.md) | Runtime profiles, actors, and turn execution. |
+| [Engine](concepts/engine.md) | SQLite-backed state, leases, runs, and events. |
+| [Installation](operator/installation.md) | Install, bootstrap, validate, and run. |
+| [Slash Commands](operator/slash-commands.md) | `/sprints` and `/workflow agentic` commands. |
+| [Codex App-Server](operator/codex-app-server.md) | Shared Codex listener setup and checks. |
+| [Public Contract](public-contract.md) | Compatibility-sensitive surfaces. |
+| [Security](security.md) | Trust model and execution risk. |
 
-- Generic docs describe the plugin engine: contracts, state stores, runtimes, trackers, service supervision, and observability.
-- Workflow docs describe lifecycle policy. `issue-runner` is the generic tracker-driven path; `change-delivery` is the opinionated issue-to-merge path with GitHub as the first-class tracker/code-host pair.
-- Operator docs describe installed deployments. SQL examples often focus on `change-delivery`, but shared engine execution state is SQLite-backed for both workflows.
+## Source Layout
 
-## Concepts
-
-What each abstraction *means* — read these before reading code.
-
-| | |
-|---|---|
-| [Engine](concepts/engine.md) | Shared durable mechanics: tick, service loop, state stores, scheduler, audit, SQLite. |
-| [Lanes](concepts/lanes.md) | The unit of work. State machine, lifecycle, terminal states. |
-| [Leases & heartbeats](concepts/leases.md) | How a single owner stays responsible for a lane. |
-| [Runtimes](concepts/runtimes.md) | The shared execution backends: `claude-cli`, `acpx-codex`, `hermes-agent`, `codex-app-server`. |
-| [Events](concepts/events.md) | Runtime JSONL events plus workflow audit files. Symphony §10.4 taxonomy + `sprints.*` namespace. |
-| [Stalls](concepts/stalls.md) | `last_activity_ts()` + `stall.timeout_ms` (Symphony §8.5). |
-| [Hot-reload & preflight](concepts/hot-reload.md) | Repo-owned `WORKFLOW.md` / `WORKFLOW-<name>.md` reload + per-tick preflight (Symphony §6.2 + §6.3). |
-| [Shadow → active](concepts/shadow-active.md) | The promotion gate from observation to execution. |
-
-## Operator surface
-
-Day-2 commands and observability.
-
-- [Cheat sheet](operator/cheat-sheet.md) — quickest path to a useful answer
-- [Slash commands](operator/slash-commands.md) — every `/sprints` and `/workflow` form
-- [Codex app-server operations](operator/codex-app-server.md) — managed/external listener diagnostics
-- [HTTP status surface](operator/http-status.md) — workflow-scoped JSON + HTML endpoints
-
-## Workflow docs
-
-- [Bundled workflows](workflows/README.md) — overview of `change-delivery` and `issue-runner`
-- [WORKFLOW.md guide](workflows/workflow-contract.md) — repo-owned contract location, front matter, and Markdown body
-- [change-delivery](workflows/change-delivery.md) — opinionated issue-to-PR SDLC workflow
-- [change-delivery contract spec](workflows/change-delivery-contract.md) — actor/stage/gate contract and engine mapping
-- [issue-runner](workflows/issue-runner.md) — generic tracker-driven reference workflow
-- [examples/issue-runner.workflow.md](examples/issue-runner.workflow.md) — copyable default generic tracker-driven contract
-- [examples/change-delivery.workflow.md](examples/change-delivery.workflow.md) — copyable GitHub-first SDLC contract
-
-## How these docs are organized
-
+```text
+sprints/
+|-- cli/          # command parsing and rendering
+|-- engine/       # durable SQLite mechanics
+|-- observe/      # watch/status read side
+|-- runtimes/     # Codex, Hermes Agent, Claude, ACPX adapters
+|-- trackers/     # GitHub and Linear tracker clients
+`-- workflows/    # agentic WORKFLOW.md loader, runner, actors, actions
 ```
-docs/
-├── README.md                this file
-├── architecture.md          big picture
-├── positioning.md           product boundaries vs. Hermes Agent and Hermes Kanban
-├── public-contract.md       stable public surfaces for the first release
-├── symphony-conformance.md  current spec alignment vs. remaining gaps
-├── release-readiness.md     launch scorecard and hardening gates
-├── security.md              trust model + execution posture
-│
-├── concepts/                "what does X mean" — one file per abstraction
-├── examples/                copyable config baselines
-├── workflows/               bundled workflow-specific docs and templates
-└── operator/                install + day-2 surface — cheat sheets, commands, endpoints
-```
+
+## Workflow Templates
+
+Bundled policy templates live in `sprints/workflows/templates/`:
+
+- `issue-runner.md`
+- `change-delivery.md`
+- `release.md`
+- `triage.md`
+
+They are templates for the same `workflow: agentic` engine. They are not
+separate Python workflow packages.

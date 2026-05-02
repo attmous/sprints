@@ -1,121 +1,19 @@
-# Sprints Operator Guide
+# Operator Docs
 
-> **Day-to-day operations, installation, and troubleshooting for humans who run Sprints.**
->
-> This section is for the person staring at a terminal wondering why a lane hasn't moved in three hours.
+Use these when installing or running Sprints.
 
----
+| Doc | Purpose |
+| --- | --- |
+| [Installation](installation.md) | Install, bootstrap, validate, and run. |
+| [Slash Commands](slash-commands.md) | `/sprints` and `/workflow agentic` commands. |
+| [Codex App-Server](codex-app-server.md) | Shared Codex listener operations. |
 
-## Operator Map
+Normal loop:
 
+```bash
+hermes sprints bootstrap
+hermes sprints codex-app-server up
+hermes sprints validate
+hermes sprints doctor
+hermes
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                       SPRINTS OPERATOR MAP                                │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                                                            │
-│  ┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐  │
-│  │  INSTALLATION    │─────►│  DAY-TO-DAY      │─────►│  TROUBLESHOOTING │  │
-│  │                  │      │  OPERATIONS      │      │                  │  │
-│  │  • Install       │      │                  │      │  • Cheat Sheet   │  │
-│  │  • Configure     │      │ • Slash Commands │      │  • HTTP Status   │  │
-│  │  • Verify        │      │ • Watch TUI      │      │  • Logs          │  │
-│  │                  │      │ • Service Control│      │                  │  │
-│  └──────────────────┘      └──────────────────┘      └──────────────────┘  │
-│                                                                            │
-│  New box ──► Running ──► Monitoring ──► Debugging ──► Fixing ──► Shipping  │
-│                                                                            │
-└────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Installation
-
-**First time setting up Sprints?** Start here.
-
-| Doc | What It Covers | Read This If... |
-|:---|:---|:---|
-| [**Installation**](./installation.md) | Community install path, prerequisites, plugin setup, systemd service registration, first-run verification. | ...you are installing Sprints on a new machine or rebuilding after a migration. |
-
-**The narrative arc:** *Install* → *Configure* → *Verify* → *Start service* → *Confirm health*.
-
----
-
-## Day-to-Day Operations
-
-**Running Sprints daily?** These are your tools.
-
-| Doc | What It Covers | Read This If... |
-|:---|:---|:---|
-| [**Slash Commands**](./slash-commands.md) | Complete catalog of `/sprints` commands plus workflow-specific `/workflow <name> ...` surfaces for both bundled workflows. | ...you need to check what's happening or poke the system into action. |
-| [**HTTP Status Surface**](./http-status.md) | Optional localhost HTTP server (`:8765`) exposing JSON health snapshots for dashboards and external monitoring. | ...you want to monitor Sprints without SSHing into the box. |
-
-**The narrative arc:** *Check status* → *Watch live* → *Diagnose* → *Fix* → *Confirm*.
-
----
-
-## Troubleshooting
-
-**Something is wrong?** These docs get you unstuck.
-
-| Doc | What It Covers | Read This If... |
-|:---|:---|:---|
-| [**Cheat Sheet**](./cheat-sheet.md) | Quick-reference commands, SQL queries for direct DB inspection, common failure patterns, and recovery procedures for the managed `change-delivery` workflow. | ...you need to debug a stuck lane, find a failed action, or verify lease health. |
-
-SQL examples focus on `change-delivery` lanes/actions, but shared engine
-execution state for both workflows also lives in SQLite. The JSON files under
-`memory/` are status, health, audit, and scheduler projections.
-
-**The narrative arc:** *Observe symptoms* → *Query state* → *Identify root cause* → *Apply fix* → *Verify recovery*.
-
----
-
-## Start Here
-
-**Installing Sprints for the first time?**
-
-1. [**Installation**](./installation.md) — get it running
-2. [**Slash Commands**](./slash-commands.md) — learn the basics
-3. [**Cheat Sheet**](./cheat-sheet.md) — bookmark for emergencies
-
-**Operating Sprints day-to-day?**
-
-- [**Slash Commands**](./slash-commands.md) — your primary interface
-- [**Cheat Sheet**](./cheat-sheet.md) — keep open for quick SQL and debugging
-- [**HTTP Status Surface**](./http-status.md) — set up monitoring once, check forever
-
-**Debugging a stuck or broken lane?**
-
-1. [**Cheat Sheet**](./cheat-sheet.md) — run diagnostic SQL, check common patterns
-2. [**Slash Commands**](./slash-commands.md) — use `doctor` and `watch` for live state
-3. [**HTTP Status Surface**](./http-status.md) — pull JSON state for programmatic analysis
-
----
-
-## How These Connect
-
-```
-[Installation] ──► Sprints is running
-       │
-       ▼
-[Slash Commands] ──► /sprints status / doctor / watch
-       │
-       ▼
-[HTTP Status] ──► localhost:8765 for dashboards
-       │
-       ▼
-[Cheat Sheet] ──► SQL queries, recovery procedures, common fixes
-       │
-       ▼
-Workflow run is healthy again, operator goes back to sleep
-```
-
----
-
-## See Also
-
-| Doc | What It Covers |
-|---|---|
-| [Architecture Overview](../architecture.md) | The big picture — how Sprints works internally |
-| [Concepts](../concepts/README.md) | The mental model — leases, lanes, actions, failures, etc. |
-| [Contributing](../contributing.md) | How to contribute to Sprints |
