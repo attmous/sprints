@@ -9,8 +9,8 @@ from typing import Any
 class RestoredSchedulerState:
     retry_entries: dict[str, dict[str, Any]]
     recovered_running: list[dict[str, Any]]
-    codex_totals: dict[str, Any]
-    codex_threads: dict[str, dict[str, Any]]
+    runtime_totals: dict[str, Any]
+    runtime_sessions: dict[str, dict[str, Any]]
 
 
 def _value_or_default(value: Any, default: Any) -> Any:
@@ -35,8 +35,6 @@ def retry_due_at(
         return float(payload.get("due_at_monotonic") or 0.0)
     if payload.get("due_at_epoch") is not None:
         return float(payload.get("due_at_epoch") or 0.0)
-    if payload.get("dueAtEpoch") is not None:
-        return float(payload.get("dueAtEpoch") or 0.0)
     if default is not None:
         return float(default)
     return float(now_epoch if now_epoch is not None else time.time())
@@ -44,10 +42,10 @@ def retry_due_at(
 
 def restore_scheduler_state(payload: dict[str, Any], *, now_epoch: float) -> RestoredSchedulerState:
     retry_entries: dict[str, dict[str, Any]] = {}
-    for item in payload.get("retry_queue") or payload.get("retryQueue") or []:
+    for item in payload.get("retry_queue") or []:
         if not isinstance(item, dict):
             continue
-        issue_id = str(item.get("issue_id") or item.get("issueId") or "").strip()
+        issue_id = str(item.get("issue_id") or "").strip()
         if not issue_id:
             continue
         retry_entries[issue_id] = {
@@ -55,48 +53,47 @@ def restore_scheduler_state(payload: dict[str, Any], *, now_epoch: float) -> Res
             "identifier": item.get("identifier"),
             "attempt": int(item.get("attempt") or 0),
             "error": item.get("error"),
-            "due_at_epoch": float(_first_value_or_default(now_epoch, item.get("due_at_epoch"), item.get("dueAtEpoch"))),
-            "current_attempt": item.get("current_attempt") or item.get("currentAttempt"),
-            "run_id": item.get("run_id") or item.get("runId"),
+            "due_at_epoch": float(_first_value_or_default(now_epoch, item.get("due_at_epoch"))),
+            "current_attempt": item.get("current_attempt"),
+            "run_id": item.get("run_id"),
         }
 
     recovered_running: list[dict[str, Any]] = []
     for item in payload.get("running") or []:
         if not isinstance(item, dict):
             continue
-        issue_id = str(item.get("issue_id") or item.get("issueId") or "").strip()
+        issue_id = str(item.get("issue_id") or "").strip()
         if not issue_id:
             continue
         started_at_epoch = float(
-            _first_value_or_default(now_epoch, item.get("started_at_epoch"), item.get("startedAtEpoch"))
+            _first_value_or_default(now_epoch, item.get("started_at_epoch"))
         )
         recovered_running.append(
             {
                 "issue_id": issue_id,
-                "worker_id": item.get("worker_id") or item.get("workerId") or f"worker:{issue_id}:recovered",
+                "worker_id": item.get("worker_id") or f"worker:{issue_id}:recovered",
                 "identifier": item.get("identifier"),
                 "attempt": int(item.get("attempt") or 0),
                 "state": item.get("state"),
-                "worker_status": item.get("worker_status") or item.get("workerStatus") or "recovered",
+                "worker_status": item.get("worker_status") or "recovered",
                 "started_at_epoch": started_at_epoch,
                 "heartbeat_at_epoch": float(
                     _first_value_or_default(
                         started_at_epoch,
                         item.get("heartbeat_at_epoch"),
-                        item.get("heartbeatAtEpoch"),
                     )
                 ),
-                "cancel_requested": bool(item.get("cancel_requested") or item.get("cancelRequested") or False),
-                "cancel_reason": item.get("cancel_reason") or item.get("cancelReason"),
-                "run_id": item.get("run_id") or item.get("runId"),
+                "cancel_requested": bool(item.get("cancel_requested") or False),
+                "cancel_reason": item.get("cancel_reason"),
+                "run_id": item.get("run_id"),
             }
         )
 
     return RestoredSchedulerState(
         retry_entries=retry_entries,
         recovered_running=recovered_running,
-        codex_totals=dict(payload.get("codex_totals") or payload.get("codexTotals") or {}),
-        codex_threads=restore_codex_threads(payload.get("codex_threads") or payload.get("codexThreads") or {}),
+        runtime_totals=dict(payload.get("runtime_totals") or {}),
+        runtime_sessions=restore_runtime_sessions(payload.get("runtime_sessions") or {}),
     )
 
 
@@ -125,7 +122,7 @@ def running_snapshot(
                 "cancel_reason": entry.get("cancel_reason"),
                 "thread_id": entry.get("thread_id"),
                 "turn_id": entry.get("turn_id"),
-                "run_id": entry.get("run_id") or entry.get("runId"),
+                "run_id": entry.get("run_id"),
             }
         )
     running.sort(key=lambda item: (item["state"] or "", item["identifier"] or item["issue_id"]))
@@ -148,14 +145,14 @@ def retry_queue_snapshot(
                 "error": entry.get("error"),
                 "due_at_epoch": due_at,
                 "due_in_ms": max(int((due_at - now_epoch) * 1000), 0),
-                "run_id": entry.get("run_id") or entry.get("runId"),
+                "run_id": entry.get("run_id"),
             }
         )
     entries.sort(key=lambda item: (item["due_in_ms"], item["attempt"], item["identifier"] or item["issue_id"]))
     return entries
 
 
-def restore_codex_threads(raw: Any) -> dict[str, dict[str, Any]]:
+def restore_runtime_sessions(raw: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(raw, dict):
         return {}
     restored: dict[str, dict[str, Any]] = {}
@@ -172,16 +169,16 @@ def restore_codex_threads(raw: Any) -> dict[str, dict[str, Any]]:
             "session_name": item.get("session_name"),
             "thread_id": thread_id,
             "turn_id": item.get("turn_id"),
-            "run_id": item.get("run_id") or item.get("runId"),
+            "run_id": item.get("run_id"),
             "updated_at": item.get("updated_at"),
         }
     return restored
 
 
-def codex_threads_snapshot(codex_threads: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def runtime_sessions_snapshot(runtime_sessions: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {
         issue_id: dict(entry)
-        for issue_id, entry in sorted(codex_threads.items(), key=lambda item: item[0])
+        for issue_id, entry in sorted(runtime_sessions.items(), key=lambda item: item[0])
     }
 
 
@@ -190,16 +187,16 @@ def build_scheduler_payload(
     workflow: str,
     retry_entries: dict[str, dict[str, Any]],
     running_entries: dict[str, dict[str, Any]],
-    codex_totals: dict[str, Any] | None,
-    codex_threads: dict[str, dict[str, Any]],
+    runtime_totals: dict[str, Any] | None,
+    runtime_sessions: dict[str, dict[str, Any]],
     now_iso: str,
     now_epoch: float,
 ) -> dict[str, Any]:
     return {
         "workflow": workflow,
-        "updatedAt": now_iso,
+        "updated_at": now_iso,
         "retry_queue": retry_queue_snapshot(retry_entries, now_epoch=now_epoch),
         "running": running_snapshot(running_entries, now_epoch=now_epoch),
-        "codex_totals": dict(codex_totals or {}),
-        "codex_threads": codex_threads_snapshot(codex_threads),
+        "runtime_totals": dict(runtime_totals or {}),
+        "runtime_sessions": runtime_sessions_snapshot(runtime_sessions),
     }

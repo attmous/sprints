@@ -112,6 +112,8 @@ def runtime_profile_capabilities(runtime_cfg: Mapping[str, Any] | None) -> Runti
         mode = str(cfg.get("mode") or ("external" if cfg.get("endpoint") else "managed")).strip()
         if mode == "external":
             capabilities.add(CAP_SERVICE_REQUIRED)
+    if cfg.get("stage-command") is False or cfg.get("stage_command") is False:
+        capabilities.discard(CAP_COMMAND_STAGE)
     return RuntimeCapabilityProfile(
         kind=profile.kind,
         capabilities=frozenset(capabilities),

@@ -96,13 +96,15 @@ def resolve_stage_command(*, agent_cfg: dict[str, Any], runtime_cfg: dict[str, A
     if command:
         return _ensure_argv(command)
 
-    command = runtime_cfg.get("command")
-    if not command:
+    if runtime_cfg.get("stage-command") is False or runtime_cfg.get("stage_command") is False:
         return None
 
-    # For codex-app-server, runtime.command starts/connects the app-server
-    # transport. It is not a per-stage agent command.
-    if str(runtime_cfg.get("kind") or "") == "codex-app-server":
+    command_role = str(runtime_cfg.get("command-role") or runtime_cfg.get("command_role") or "stage").strip()
+    if command_role != "stage":
+        return None
+
+    command = runtime_cfg.get("command")
+    if not command:
         return None
     return _ensure_argv(command)
 

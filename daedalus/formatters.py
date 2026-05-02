@@ -238,7 +238,7 @@ def format_status(
         last_run = result.get("lastRun") or {}
         metrics = result.get("metrics") or {}
         tokens = metrics.get("tokens") or {}
-        totals = scheduler.get("codex_totals") or {}
+        totals = scheduler.get("runtime_totals") or {}
         tracker_rows = [
             Row(label="workflow", value=str(result.get("workflow") or EMPTY_VALUE)),
             Row(label="health", value=str(result.get("health") or EMPTY_VALUE)),

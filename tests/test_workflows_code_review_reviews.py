@@ -85,7 +85,7 @@ def test_run_inter_review_agent_review_via_runtime_uses_prompt_runtime(tmp_path)
         lane_state_path=None,
         head_sha="def456",
         runtime=FakeRuntime(),
-        runtime_cfg={"kind": "codex-app-server", "command": "codex app-server"},
+        runtime_cfg={"kind": "codex-app-server", "stage-command": False, "command": "codex app-server"},
         agent_cfg={"name": "Reviewer", "model": "gpt-review", "runtime": "codex-runtime"},
         session_name="internal-review-225",
         render_prompt_fn=lambda **kwargs: f"review {kwargs['issue']['number']}",
@@ -714,7 +714,7 @@ def test_external_review_review_shaping_helpers_cover_thread_mapping_findings_pe
     assert "lingering open thread(s) were superseded" in clean["summary"]
 
 
-def test_synthesize_repair_brief_collects_required_codex_threads_and_local_findings():
+def test_synthesize_repair_brief_collects_required_runtime_sessions_and_local_findings():
     reviews_module = load_module("daedalus_workflows_change_delivery_reviews_test", "workflows/change_delivery/reviews.py")
 
     result = reviews_module.synthesize_repair_brief(

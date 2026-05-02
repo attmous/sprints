@@ -25,31 +25,31 @@ def test_engine_storage_writes_json_and_jsonl(tmp_path):
     assert json.loads(log_path.read_text(encoding="utf-8")) == {"at": "now", "event": "b"}
 
 
-def test_engine_scheduler_restores_legacy_shapes_and_snapshots():
+def test_engine_scheduler_restores_current_shapes_and_snapshots():
     from engine.scheduler import build_scheduler_payload, restore_scheduler_state, retry_due_at
 
     restored = restore_scheduler_state(
         {
-            "retryQueue": [
-                {
-                    "issueId": "42",
-                    "identifier": "#42",
-                    "attempt": 2,
-                    "dueAtEpoch": 125.0,
-                    "currentAttempt": 1,
-                }
-            ],
-            "running": [
-                {
-                    "issueId": "43",
-                    "workerId": "worker:43",
-                    "startedAtEpoch": 100.0,
-                    "heartbeatAtEpoch": 110.0,
-                    "cancelRequested": True,
-                }
-            ],
-            "codexTotals": {"total_tokens": 5},
-            "codexThreads": {"42": {"thread_id": "thread-1", "turn_id": "turn-1"}},
+                "retry_queue": [
+                    {
+                        "issue_id": "42",
+                        "identifier": "#42",
+                        "attempt": 2,
+                        "due_at_epoch": 125.0,
+                        "current_attempt": 1,
+                    }
+                ],
+                "running": [
+                    {
+                        "issue_id": "43",
+                        "worker_id": "worker:43",
+                        "started_at_epoch": 100.0,
+                        "heartbeat_at_epoch": 110.0,
+                        "cancel_requested": True,
+                    }
+                ],
+                "runtime_totals": {"total_tokens": 5},
+                "runtime_sessions": {"42": {"thread_id": "thread-1", "turn_id": "turn-1"}},
         },
         now_epoch=200.0,
     )
@@ -57,16 +57,16 @@ def test_engine_scheduler_restores_legacy_shapes_and_snapshots():
     assert restored.retry_entries["42"]["due_at_epoch"] == 125.0
     assert restored.recovered_running[0]["issue_id"] == "43"
     assert restored.recovered_running[0]["cancel_requested"] is True
-    assert restored.codex_totals == {"total_tokens": 5}
-    assert restored.codex_threads["42"]["thread_id"] == "thread-1"
+    assert restored.runtime_totals == {"total_tokens": 5}
+    assert restored.runtime_sessions["42"]["thread_id"] == "thread-1"
     assert retry_due_at(restored.retry_entries["42"], default=999.0) == 125.0
 
     payload = build_scheduler_payload(
         workflow="issue-runner",
         retry_entries=restored.retry_entries,
         running_entries={"43": restored.recovered_running[0]},
-        codex_totals=restored.codex_totals,
-        codex_threads=restored.codex_threads,
+        runtime_totals=restored.runtime_totals,
+        runtime_sessions=restored.runtime_sessions,
         now_iso="2026-04-30T00:00:00Z",
         now_epoch=200.0,
     )
@@ -74,12 +74,12 @@ def test_engine_scheduler_restores_legacy_shapes_and_snapshots():
     assert payload["workflow"] == "issue-runner"
     assert payload["retry_queue"][0]["due_in_ms"] == 0
     assert payload["running"][0]["running_for_ms"] == 100000
-    assert payload["codex_threads"]["42"]["thread_id"] == "thread-1"
+    assert payload["runtime_sessions"]["42"]["thread_id"] == "thread-1"
 
     restored_zero = restore_scheduler_state(
         {
-            "retryQueue": [{"issueId": "zero-retry", "dueAtEpoch": 0.0}],
-            "running": [{"issueId": "zero-running", "startedAtEpoch": 0.0, "heartbeatAtEpoch": 0.0}],
+            "retry_queue": [{"issue_id": "zero-retry", "due_at_epoch": 0.0}],
+            "running": [{"issue_id": "zero-running", "started_at_epoch": 0.0, "heartbeat_at_epoch": 0.0}],
         },
         now_epoch=200.0,
     )
@@ -90,7 +90,8 @@ def test_engine_scheduler_restores_legacy_shapes_and_snapshots():
 
 def test_engine_work_items_and_lifecycle_helpers():
     from engine.lifecycle import clear_work_entries, mark_running_work, recover_running_as_retry, schedule_retry_entry
-    from engine.work_items import work_item_from_change_delivery_lane, work_item_from_issue
+    from engine.work_items import work_item_from_issue
+    from workflows.change_delivery.work_items import lane_to_work_item_ref
 
     issue_work = work_item_from_issue(
         {
@@ -126,7 +127,7 @@ def test_engine_work_items_and_lifecycle_helpers():
     assert recovered["ISSUE-1"]["error"] == "scheduler restarted while issue was running"
     assert recovered["ISSUE-1"]["due_at_epoch"] == 200.0
 
-    lane_work = work_item_from_change_delivery_lane(
+    lane_work = lane_to_work_item_ref(
         {
             "lane_id": "lane-42",
             "issue_number": 42,
@@ -223,7 +224,7 @@ def test_engine_state_persists_scheduler_snapshot_in_sqlite(tmp_path):
                 "run_id": "run-1",
             }
         },
-        codex_threads={
+        runtime_sessions={
             "ISSUE-1": {
                 "issue_id": "ISSUE-1",
                 "identifier": "DAE-1",
@@ -235,7 +236,7 @@ def test_engine_state_persists_scheduler_snapshot_in_sqlite(tmp_path):
                 "updated_at": "2026-04-30T00:00:00Z",
             }
         },
-        codex_totals={"input_tokens": 3, "output_tokens": 4, "total_tokens": 7, "turn_count": 1},
+        runtime_totals={"input_tokens": 3, "output_tokens": 4, "total_tokens": 7, "turn_count": 1},
         now_iso="2026-04-30T00:00:00Z",
         now_epoch=120.0,
     )
@@ -259,9 +260,9 @@ def test_engine_state_persists_scheduler_snapshot_in_sqlite(tmp_path):
     assert loaded["retry_queue"][0]["issue_id"] == "ISSUE-2"
     assert loaded["retry_queue"][0]["run_id"] == "run-1"
     assert loaded["retry_queue"][0]["due_in_ms"] == 5000
-    assert loaded["codex_threads"]["ISSUE-1"]["thread_id"] == "thread-1"
-    assert loaded["codex_threads"]["ISSUE-1"]["run_id"] == "run-1"
-    assert loaded["codex_totals"]["total_tokens"] == 7
+    assert loaded["runtime_sessions"]["ISSUE-1"]["thread_id"] == "thread-1"
+    assert loaded["runtime_sessions"]["ISSUE-1"]["run_id"] == "run-1"
+    assert loaded["runtime_totals"]["total_tokens"] == 7
     assert readonly == loaded
 
 
@@ -288,8 +289,8 @@ def test_engine_state_preserves_zero_epoch_scheduler_values(tmp_path):
                 "error": "immediate retry",
             }
         },
-        codex_threads={},
-        codex_totals={},
+        runtime_sessions={},
+        runtime_totals={},
         now_iso="2026-04-30T00:00:00Z",
         now_epoch=120.0,
     )
@@ -331,21 +332,21 @@ def test_engine_store_wraps_scheduler_state_and_doctor(tmp_path):
             }
         },
         retry_entries={},
-        codex_threads={
+        runtime_sessions={
             "ISSUE-1": {
                 "issue_id": "ISSUE-1",
                 "identifier": "DAE-1",
                 "thread_id": "thread-1",
             }
         },
-        codex_totals={"total_tokens": 3},
+        runtime_totals={"total_tokens": 3},
     )
 
     snapshot = store.load_scheduler()
     checks = {check["name"]: check for check in store.doctor(stale_running_seconds=60)}
 
     assert snapshot["running"][0]["issue_id"] == "ISSUE-1"
-    assert snapshot["codex_threads"]["ISSUE-1"]["thread_id"] == "thread-1"
+    assert snapshot["runtime_sessions"]["ISSUE-1"]["thread_id"] == "thread-1"
     assert checks["engine-schema"]["status"] == "pass"
     assert checks["engine-running-work"]["status"] == "pass"
     assert checks["engine-retry-queue"]["detail"] == "0 queued retry item(s)"

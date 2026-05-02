@@ -138,43 +138,6 @@ properties:
         type: integer
         minimum: 1
 
-  codex:
-    type: object
-    properties:
-      command: {type: string}
-      mode:
-        type: string
-        enum: [managed, external]
-      endpoint: {type: string}
-      healthcheck_path: {type: string}
-      ws_token_env: {type: string}
-      ws_token_file: {type: string}
-      ephemeral: {type: boolean}
-      keep_alive: {type: boolean}
-      keep-alive: {type: boolean}
-      approval_policy:
-        oneOf:
-          - type: string
-            enum: [untrusted, on-failure, on-request, never]
-          - type: object
-      thread_sandbox:
-        type: string
-        enum: [read-only, workspace-write, danger-full-access]
-      turn_sandbox_policy:
-        oneOf:
-          - type: string
-            enum: [read-only, workspace-write, danger-full-access]
-          - type: object
-      turn_timeout_ms:
-        type: integer
-        minimum: 1
-      read_timeout_ms:
-        type: integer
-        minimum: 1
-      stall_timeout_ms:
-        type: integer
-        minimum: 0
-
   daedalus:
     type: object
     properties:
@@ -336,6 +299,8 @@ definitions:
     properties:
       kind:
         const: codex-app-server
+      stage-command: {type: boolean}
+      stage_command: {type: boolean}
       command:
         oneOf:
           - type: string

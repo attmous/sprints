@@ -122,7 +122,7 @@ def test_runtime_stage_reads_structured_command_result(tmp_path):
     assert metrics_source.rate_limits == {"requests_remaining": 42}
 
 
-def test_runtime_stage_runs_prompt_runtime_and_ignores_codex_transport_command(tmp_path):
+def test_runtime_stage_respects_transport_command_profile_flag(tmp_path):
     from runtimes.stages import prompt_result_from_stage, run_runtime_stage
 
     calls = {}
@@ -150,7 +150,7 @@ def test_runtime_stage_runs_prompt_runtime_and_ignores_codex_transport_command(t
 
     result = run_runtime_stage(
         runtime=FakeCodexRuntime(),
-        runtime_cfg={"kind": "codex-app-server", "command": ["codex", "app-server"]},
+        runtime_cfg={"kind": "codex-app-server", "stage-command": False, "command": ["codex", "app-server"]},
         agent_cfg={"model": "gpt-test", "runtime": "codex"},
         stage_name="coder",
         worktree=tmp_path,

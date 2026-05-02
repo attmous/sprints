@@ -141,6 +141,7 @@ def test_configure_runtime_uses_workflow_root_pointer_for_change_delivery(tmp_pa
     assert cfg["actors"]["implementer-high-effort"]["runtime"] == "coder-runtime"
     assert cfg["runtimes"]["codex"] == {
         "kind": "codex-app-server",
+        "stage-command": False,
         "mode": "external",
         "endpoint": "ws://127.0.0.1:4500",
         "ephemeral": False,

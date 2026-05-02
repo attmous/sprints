@@ -55,18 +55,18 @@ Conforms to Symphony §13.7 / Daedalus spec §6.4:
   "counts":   { "running": 3, "retrying": 0 },
   "running":  [ { "issue_id": "01HF…", "issue_identifier": "#42", "state": "coding_dispatched", "session_id": "claude-coder-1", "turn_count": 0, "last_event": "turn_started", "started_at": "…", "last_event_at": "…", "tokens": { "input_tokens": 1200, "output_tokens": 480, "total_tokens": 1680 } } ],
   "retrying": [],
-  "codex_totals": { "input_tokens": 1200, "output_tokens": 480, "total_tokens": 1680, "seconds_running": 43 },
+  "runtime_totals": { "input_tokens": 1200, "output_tokens": 480, "total_tokens": 1680, "seconds_running": 43 },
   "rate_limits": { "requests_remaining": 47 },
   "recent_events": [ /* up to 20, newest first */ ]
 }
 ```
 
-Both bundled workflows report aggregate Codex token totals and latest
-rate-limit data from shared engine state when their active runtime is
-`codex-app-server`. `change-delivery` still derives running lane rows from its
-SQLite lane model; `issue-runner` derives running and retrying rows from the
-shared engine tables. `change-delivery` also includes `codex_turns` so
-operators can inspect active or canceling Codex `thread_id` / `turn_id` pairs.
+Both bundled workflows report aggregate runtime token totals and latest
+rate-limit data from shared engine state when the active runtime provides them.
+`change-delivery` derives running lane rows from its SQLite lane model;
+`issue-runner` derives running and retrying rows from the shared engine tables.
+`change-delivery` also includes `runtime_sessions` so operators can inspect
+active or canceling runtime session identifiers such as `thread_id` / `turn_id`.
 
 ### `GET /api/v1/events`
 

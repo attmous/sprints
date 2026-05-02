@@ -457,6 +457,8 @@ definitions:
     required: [kind]
     properties:
       kind: {const: codex-app-server}
+      stage-command: {type: boolean}
+      stage_command: {type: boolean}
       command:
         oneOf:
           - type: string

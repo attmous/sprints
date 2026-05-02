@@ -109,8 +109,8 @@ class EngineStore:
         *,
         retry_entries: dict[str, dict[str, Any]],
         running_entries: dict[str, dict[str, Any]],
-        codex_totals: dict[str, Any] | None,
-        codex_threads: dict[str, dict[str, Any]],
+        runtime_totals: dict[str, Any] | None,
+        runtime_sessions: dict[str, dict[str, Any]],
         now_iso: str | None = None,
         now_epoch: float | None = None,
     ) -> None:
@@ -120,8 +120,8 @@ class EngineStore:
                 workflow=self.workflow,
                 retry_entries=retry_entries,
                 running_entries=running_entries,
-                codex_totals=codex_totals,
-                codex_threads=codex_threads,
+                runtime_totals=runtime_totals,
+                runtime_sessions=runtime_sessions,
                 now_iso=now_iso or self._now_iso(),
                 now_epoch=self._now_epoch() if now_epoch is None else now_epoch,
             )
@@ -311,15 +311,13 @@ class EngineStore:
     ) -> dict[str, Any]:
         event_payload = dict(payload or {})
         nested_payload = event_payload.get("payload") if isinstance(event_payload.get("payload"), dict) else {}
-        resolved_run_id = run_id or _payload_value(event_payload, "run_id", "runId") or _payload_value(
-            nested_payload, "run_id", "runId"
-        )
+        resolved_run_id = run_id or _payload_value(event_payload, "run_id") or _payload_value(nested_payload, "run_id")
         resolved_work_id = (
             work_id
-            or _payload_value(event_payload, "work_id", "workId", "issue_id", "issueId", "lane_id", "laneId")
-            or _payload_value(nested_payload, "work_id", "workId", "issue_id", "issueId", "lane_id", "laneId")
+            or _payload_value(event_payload, "work_id", "issue_id", "lane_id")
+            or _payload_value(nested_payload, "work_id", "issue_id", "lane_id")
         )
-        resolved_event_id = event_id or _payload_value(event_payload, "event_id", "eventId")
+        resolved_event_id = event_id or _payload_value(event_payload, "event_id")
         resolved_event_type = event_type or _payload_value(
             event_payload, "event_type", "event", "action", "type"
         ) or _payload_value(nested_payload, "event_type", "event", "action", "type") or "event"

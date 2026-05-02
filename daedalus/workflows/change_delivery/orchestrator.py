@@ -475,23 +475,23 @@ def reconcile(workspace: Any, *, write_health: bool = True, fix_watchers: bool =
                 headSha=pre_publish_review_preflight.get("currentHeadSha"),
             )
 
-    resolved_codex_threads = ws._resolve_codex_superseded_threads(
+    resolved_runtime_sessions = ws._resolve_codex_superseded_threads(
         get_review(reviews, "externalReview"),
         current_head_sha=(open_pr or {}).get("headRefOid"),
     )
-    if resolved_codex_threads:
+    if resolved_runtime_sessions:
         resolution_event = {
             "at": now_iso,
             "headSha": (open_pr or {}).get("headRefOid"),
             "prNumber": (open_pr or {}).get("number"),
             "signal": (get_review(reviews, "externalReview").get("prBodySignal") or {}).get("content"),
-            "threadIds": resolved_codex_threads,
+            "threadIds": resolved_runtime_sessions,
         }
         ledger["externalReviewAutoResolved"] = resolution_event
         ws.audit(
             "reconcile",
             "Resolved superseded external review threads after clean PR-body signal",
-            threadIds=resolved_codex_threads,
+            threadIds=resolved_runtime_sessions,
             activeLane=(active_lane or {}).get("number"),
             prNumber=(open_pr or {}).get("number"),
             headSha=(open_pr or {}).get("headRefOid"),

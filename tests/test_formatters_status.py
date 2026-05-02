@@ -102,7 +102,7 @@ def test_format_status_issue_runner_renders_scheduler_and_tokens():
             "max_concurrent_agents": 2,
             "running": [{"issue_id": "123"}],
             "retry_queue": [{"issue_id": "124"}],
-            "codex_totals": {
+            "runtime_totals": {
                 "input_tokens": 11,
                 "output_tokens": 7,
                 "total_tokens": 18,

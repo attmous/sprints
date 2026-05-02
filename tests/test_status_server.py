@@ -179,13 +179,13 @@ def _make_issue_runner_root(root: Path) -> None:
                 "due_at_epoch": 1714478410.0,
             }
         },
-        codex_totals={
+        runtime_totals={
             "input_tokens": 11,
             "output_tokens": 7,
             "total_tokens": 18,
             "rate_limits": {"requests_remaining": 88},
         },
-        codex_threads={},
+        runtime_sessions={},
         now_iso="2026-04-30T12:00:20Z",
         now_epoch=1714478415.0,
     )
@@ -224,7 +224,7 @@ def _make_change_delivery_root(root: Path) -> None:
                 "tracker": {"kind": "github", "github_slug": "attmous/daedalus", "active_states": ["open"], "terminal_states": ["closed"]},
                 "code-host": {"kind": "github", "github_slug": "attmous/daedalus"},
                 "runtimes": {
-                    "coder-runtime": {"kind": "codex-app-server", "command": "codex app-server"},
+                    "coder-runtime": {"kind": "codex-app-server", "stage-command": False, "command": "codex app-server"},
                     "reviewer-runtime": {"kind": "claude-cli", "max-turns-per-invocation": 24, "timeout-seconds": 1200},
                 },
                 "actors": {
@@ -254,7 +254,7 @@ def _make_change_delivery_root(root: Path) -> None:
         workflow="change-delivery",
         running_entries={},
         retry_entries={},
-        codex_threads={
+        runtime_sessions={
             "lane:42": {
                 "issue_id": "lane:42",
                 "issue_number": 42,
@@ -269,7 +269,7 @@ def _make_change_delivery_root(root: Path) -> None:
                 "updated_at": "2026-04-30T12:00:20Z",
             }
         },
-        codex_totals={
+        runtime_totals={
             "input_tokens": 11,
             "output_tokens": 7,
             "total_tokens": 18,
@@ -297,7 +297,7 @@ def test_state_view_empty_when_no_db(tmp_path: Path) -> None:
     assert view["counts"] == {"running": 0, "retrying": 0}
     assert view["running"] == []
     assert view["retrying"] == []
-    assert view["codex_totals"]["total_tokens"] == 0
+    assert view["runtime_totals"]["total_tokens"] == 0
     assert view["rate_limits"] is None
     assert "generated_at" in view
 
@@ -371,12 +371,12 @@ def test_issue_runner_state_view_reads_scheduler_and_audit_files(tmp_path: Path)
     assert view["running"][0]["issue_identifier"] == "#123"
     assert view["retrying"][0]["issue_identifier"] == "#124"
     assert view["latest_runs"][0]["mode"] == "tick"
-    assert view["codex_totals"]["total_tokens"] == 18
+    assert view["runtime_totals"]["total_tokens"] == 18
     assert view["rate_limits"] == {"requests_remaining": 88}
     assert view["recent_events"][0]["event"] == "issue_runner.tick.completed"
 
 
-def test_change_delivery_state_view_reads_codex_scheduler_totals(tmp_path: Path) -> None:
+def test_change_delivery_state_view_reads_runtime_scheduler_totals(tmp_path: Path) -> None:
     from workflows.change_delivery.server.views import state_view
 
     root = tmp_path / "change_delivery_root"
@@ -389,14 +389,14 @@ def test_change_delivery_state_view_reads_codex_scheduler_totals(tmp_path: Path)
     view = state_view(db, events, workflow_root=root)
 
     assert view["counts"] == {"running": 1, "retrying": 0}
-    assert view["codex_turn_counts"] == {"running": 0, "canceling": 1}
-    assert view["codex_totals"]["total_tokens"] == 18
+    assert view["runtime_session_counts"] == {"running": 0, "canceling": 1}
+    assert view["runtime_totals"]["total_tokens"] == 18
     assert view["rate_limits"] == {"requests_remaining": 88}
     assert view["latest_runs"][0]["mode"] == "active-iteration"
-    assert view["codex_turns"][0]["issue_id"] == "lane:42"
-    assert view["codex_turns"][0]["thread_id"] == "thread-42"
-    assert view["codex_turns"][0]["turn_id"] == "turn-42"
-    assert view["codex_turns"][0]["cancel_reason"] == "operator-interrupt"
+    assert view["runtime_sessions"][0]["issue_id"] == "lane:42"
+    assert view["runtime_sessions"][0]["thread_id"] == "thread-42"
+    assert view["runtime_sessions"][0]["turn_id"] == "turn-42"
+    assert view["runtime_sessions"][0]["cancel_reason"] == "operator-interrupt"
 
 
 def test_issue_runner_issue_view_resolves_running_and_retry_entries(tmp_path: Path) -> None:
@@ -488,7 +488,7 @@ def test_render_dashboard_escapes_html(tmp_path: Path) -> None:
             }
         ],
         "retrying": [],
-        "codex_totals": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "seconds_running": 0},
+        "runtime_totals": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "seconds_running": 0},
         "rate_limits": None,
         "recent_events": [],
     }

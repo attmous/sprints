@@ -427,8 +427,8 @@ def save_engine_scheduler_state_to_connection(
     workflow: str,
     retry_entries: dict[str, dict[str, Any]],
     running_entries: dict[str, dict[str, Any]],
-    codex_totals: dict[str, Any] | None,
-    codex_threads: dict[str, dict[str, Any]],
+    runtime_totals: dict[str, Any] | None,
+    runtime_sessions: dict[str, dict[str, Any]],
     now_iso: str,
     now_epoch: float,
 ) -> None:
@@ -467,7 +467,7 @@ def save_engine_scheduler_state_to_connection(
                 entry.get("cancel_reason"),
                 entry.get("thread_id"),
                 entry.get("turn_id"),
-                entry.get("run_id") or entry.get("runId"),
+                entry.get("run_id"),
                 now_iso,
                 now_epoch,
             ),
@@ -492,13 +492,13 @@ def save_engine_scheduler_state_to_connection(
                 entry.get("error"),
                 entry.get("current_attempt"),
                 entry.get("delay_type") or "failure",
-                entry.get("run_id") or entry.get("runId"),
+                entry.get("run_id"),
                 now_iso,
                 now_epoch,
             ),
         )
 
-    for work_id, entry in sorted(codex_threads.items(), key=lambda item: str(item[0])):
+    for work_id, entry in sorted(runtime_sessions.items(), key=lambda item: str(item[0])):
         if not isinstance(entry, dict):
             continue
         work_id = str(entry.get("issue_id") or work_id or "").strip()
@@ -523,9 +523,7 @@ def save_engine_scheduler_state_to_connection(
                 "cancel_requested",
                 "cancel_reason",
                 "run_id",
-                "runId",
                 "updated_at",
-                "updatedAt",
             }
         }
         conn.execute(
@@ -538,23 +536,23 @@ def save_engine_scheduler_state_to_connection(
             (
                 workflow,
                 work_id,
-                entry.get("session_name") or entry.get("sessionName"),
-                entry.get("runtime_name") or entry.get("runtimeName"),
-                entry.get("runtime_kind") or entry.get("runtimeKind"),
-                entry.get("session_id") or entry.get("sessionId"),
+                entry.get("session_name"),
+                entry.get("runtime_name"),
+                entry.get("runtime_kind"),
+                entry.get("session_id"),
                 thread_id,
-                entry.get("turn_id") or entry.get("turnId"),
+                entry.get("turn_id"),
                 entry.get("status"),
-                1 if (entry.get("cancel_requested") or entry.get("cancelRequested")) else 0,
-                entry.get("cancel_reason") or entry.get("cancelReason"),
-                entry.get("run_id") or entry.get("runId"),
+                1 if entry.get("cancel_requested") else 0,
+                entry.get("cancel_reason"),
+                entry.get("run_id"),
                 _json_dumps(metadata),
-                entry.get("updated_at") or entry.get("updatedAt") or now_iso,
+                entry.get("updated_at") or now_iso,
                 now_epoch,
             ),
         )
 
-    totals = dict(codex_totals or {})
+    totals = dict(runtime_totals or {})
     conn.execute(
         """
         INSERT INTO engine_runtime_totals (
@@ -588,8 +586,8 @@ def save_engine_scheduler_state(
     workflow: str,
     retry_entries: dict[str, dict[str, Any]],
     running_entries: dict[str, dict[str, Any]],
-    codex_totals: dict[str, Any] | None,
-    codex_threads: dict[str, dict[str, Any]],
+    runtime_totals: dict[str, Any] | None,
+    runtime_sessions: dict[str, dict[str, Any]],
     now_iso: str,
     now_epoch: float,
 ) -> None:
@@ -600,8 +598,8 @@ def save_engine_scheduler_state(
             workflow=workflow,
             retry_entries=retry_entries,
             running_entries=running_entries,
-            codex_totals=codex_totals,
-            codex_threads=codex_threads,
+            runtime_totals=runtime_totals,
+            runtime_sessions=runtime_sessions,
             now_iso=now_iso,
             now_epoch=now_epoch,
         )
@@ -684,7 +682,7 @@ def _scheduler_state_from_connection(
             "run_id": run_id,
         }
 
-    codex_threads: dict[str, dict[str, Any]] = {}
+    runtime_sessions: dict[str, dict[str, Any]] = {}
     session_run_id_expr = "s.run_id" if _column_exists(conn, "engine_runtime_sessions", "run_id") else "NULL"
     for row in conn.execute(
         f"""
@@ -729,7 +727,7 @@ def _scheduler_state_from_connection(
             "run_id": run_id,
             "updated_at": updated_at,
         }
-        codex_threads[str(work_id)] = {key: value for key, value in entry.items() if value is not None}
+        runtime_sessions[str(work_id)] = {key: value for key, value in entry.items() if value is not None}
 
     totals_row = conn.execute(
         """
@@ -739,10 +737,10 @@ def _scheduler_state_from_connection(
         """,
         (workflow,),
     ).fetchone()
-    codex_totals: dict[str, Any] = {}
+    runtime_totals: dict[str, Any] = {}
     if totals_row is not None:
         input_tokens, output_tokens, total_tokens, turn_count, rate_limits_json = totals_row
-        codex_totals = {
+        runtime_totals = {
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "total_tokens": int(total_tokens or 0),
@@ -750,14 +748,14 @@ def _scheduler_state_from_connection(
         }
         rate_limits = _json_loads(rate_limits_json)
         if rate_limits is not None:
-            codex_totals["rate_limits"] = rate_limits
+            runtime_totals["rate_limits"] = rate_limits
 
     return build_scheduler_payload(
         workflow=workflow,
         retry_entries=retry_entries,
         running_entries=running_entries,
-        codex_totals=codex_totals,
-        codex_threads=codex_threads,
+        runtime_totals=runtime_totals,
+        runtime_sessions=runtime_sessions,
         now_iso=now_iso,
         now_epoch=now_epoch,
     )

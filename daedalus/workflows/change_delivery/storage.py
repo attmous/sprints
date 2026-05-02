@@ -76,8 +76,8 @@ def default_scheduler_payload(*, now_iso: str | None = None) -> dict[str, Any]:
         "updatedAt": now_iso,
         "running": [],
         "retry_queue": [],
-        "codex_threads": {},
-        "codex_totals": {},
+        "runtime_sessions": {},
+        "runtime_totals": {},
     }
 
 

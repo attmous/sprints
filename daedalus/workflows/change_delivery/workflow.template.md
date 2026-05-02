@@ -26,6 +26,7 @@ code-host:
 runtimes:
   codex-app-server:
     kind: codex-app-server
+    stage-command: false
     mode: external
     endpoint: ws://127.0.0.1:4500
     healthcheck_path: /readyz

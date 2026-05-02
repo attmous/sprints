@@ -627,6 +627,15 @@ def _workflow_root_from_event_log_path(event_log_path: Path) -> Path:
     return base_dir.parent if base_dir.name == "runtime" else base_dir
 
 
+def _workflow_name_from_root(workflow_root: Path) -> str | None:
+    try:
+        contract = load_workflow_contract(workflow_root)
+    except (FileNotFoundError, WorkflowContractError, OSError, UnicodeDecodeError):
+        return None
+    workflow = str(contract.config.get("workflow") or "").strip()
+    return workflow or None
+
+
 def _event_payload_value(event: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         value = event.get(key)
@@ -647,7 +656,7 @@ def append_daedalus_event(*, event_log_path: Path, event: dict[str, Any]) -> dic
         handle.write(json.dumps(event, sort_keys=True) + "\n")
     try:
         workflow_root = _workflow_root_from_event_log_path(event_log_path)
-        workflow = str(_event_payload_value(event, "workflow") or "change-delivery")
+        workflow = str(_event_payload_value(event, "workflow") or _workflow_name_from_root(workflow_root) or "unknown")
         EngineStore(
             db_path=runtime_paths(workflow_root)["db_path"],
             workflow=workflow,
@@ -4041,7 +4050,7 @@ def _active_loop_cancel_reason(
     return "no-active-lane" if current_lane_id is None else "active-lane-changed"
 
 
-def _interrupt_active_loop_codex_turn(
+def _interrupt_active_loop_runtime_turn(
     *,
     workflow_root: Path,
     supervised_iteration: dict[str, Any],
@@ -4073,7 +4082,7 @@ def _request_active_loop_cancel(
     future = supervised_iteration.get("future")
     if isinstance(future, concurrent.futures.Future):
         future.cancel()
-    interrupt_result = _interrupt_active_loop_codex_turn(
+    interrupt_result = _interrupt_active_loop_runtime_turn(
         workflow_root=workflow_root,
         supervised_iteration=supervised_iteration,
         reason=reason,

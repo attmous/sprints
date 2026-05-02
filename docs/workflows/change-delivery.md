@@ -65,6 +65,7 @@ change only `runtimes` and the matching `actors.*.runtime` binding in
 runtimes:
   codex-app-server:
     kind: codex-app-server
+    stage-command: false
     mode: external
     endpoint: ws://127.0.0.1:4500
     ephemeral: false
@@ -96,7 +97,7 @@ During supervised active service runs, Daedalus also records the active `turn_id
 If the active lane disappears, changes, the lease is lost, or the service is
 interrupted, the runtime requests `turn/interrupt` and marks the scheduler
 thread entry as `canceling`. Operators can see those entries in `/daedalus
-watch` and the HTTP state payload under `codex_turns`.
+watch` and the HTTP state payload under `runtime_sessions`.
 
 ## Operator path
 

@@ -37,7 +37,7 @@ def test_render_frame_with_one_lane():
     watch = _module()
     out = watch.render_frame_to_string({
         "active_lanes": [
-            {"lane_id": "329", "state": "under_review", "github_issue_number": 329}
+            {"lane_id": "329", "state": "under_review", "issue_identifier": "#329"}
         ],
         "alert_state": {},
         "recent_events": [
@@ -98,7 +98,7 @@ def test_render_frame_includes_issue_runner_workflow_status():
     assert "run=tick:completed selected=1 completed=1" in out
 
 
-def test_render_frame_includes_canceling_codex_turns():
+def test_render_frame_includes_canceling_runtime_sessions():
     watch = _module()
     out = watch.render_frame_to_string({
         "active_lanes": [],
@@ -108,7 +108,7 @@ def test_render_frame_includes_canceling_codex_turns():
             "retry_count": 0,
             "canceling_count": 1,
             "total_tokens": 18,
-            "codex_turns": [
+            "runtime_sessions": [
                 {
                     "issue_id": "lane:42",
                     "issue_identifier": "#42",
@@ -123,7 +123,7 @@ def test_render_frame_includes_canceling_codex_turns():
         "recent_events": [],
     })
     assert "canceling=1" in out
-    assert "codex_canceling=#42" in out
+    assert "runtime_canceling=#42" in out
     assert "thread=thread-42" in out
     assert "reason=operator-interrupt" in out
 
@@ -141,9 +141,34 @@ def _make_workflow_root(tmp_path):
     return root
 
 
+def _write_change_delivery_contract(root: Path):
+    from workflows.contract import render_workflow_markdown
+
+    (root / "WORKFLOW.md").write_text(
+        render_workflow_markdown(
+            config={
+                "workflow": "change-delivery",
+                "schema-version": 1,
+                "instance": {"name": "attmous-daedalus-change-delivery", "engine-owner": "hermes"},
+                "repository": {"local-path": "/tmp/repo", "slug": "attmous/daedalus", "active-lane-label": "active-lane"},
+                "tracker": {"kind": "github", "github_slug": "attmous/daedalus"},
+                "code-host": {"kind": "github", "github_slug": "attmous/daedalus"},
+                "runtimes": {"coder-runtime": {"kind": "codex-app-server", "stage-command": False, "command": "codex app-server"}},
+                "actors": {"implementer": {"name": "coder", "model": "gpt-5.5", "runtime": "coder-runtime"}},
+                "stages": {"implement": {"actor": "implementer"}},
+                "gates": {"ci-green": {"type": "code-host-checks"}},
+                "triggers": {"lane-selector": {"type": "github-label", "label": "active-lane"}},
+            },
+            prompt_template="Deliver the active change.",
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_build_snapshot_combines_all_sources(tmp_path):
     watch = _module()
     root = _make_workflow_root(tmp_path)
+    _write_change_delivery_contract(root)
 
     # Seed daedalus-events
     (root / "runtime" / "memory" / "daedalus-events.jsonl").write_text(
@@ -261,8 +286,8 @@ def test_build_snapshot_includes_issue_runner_workflow_status(tmp_path):
         workflow="issue-runner",
         running_entries={"123": {"issue_id": "123", "identifier": "#123", "state": "open"}},
         retry_entries={},
-        codex_totals={"total_tokens": 18},
-        codex_threads={},
+        runtime_totals={"total_tokens": 18},
+        runtime_sessions={},
         now_iso="2026-04-30T12:00:20Z",
         now_epoch=1714478420.0,
     )

@@ -2,7 +2,6 @@ import importlib.util
 import json
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -293,13 +292,16 @@ def test_change_delivery_service_up_promotes_eligible_lane_before_start(tmp_path
     workflow_root.mkdir()
     calls: list[tuple] = []
 
-    fake_daedalus = SimpleNamespace(
-        init_daedalus_db=lambda **kwargs: calls.append(("init", kwargs)) or {"ok": True},
-    )
+    class FakeWorkflowModule:
+        @staticmethod
+        def service_prepare(*, workflow_root, project_key, service_mode):
+            return {
+                "init": calls.append(("init", {"workflow_root": workflow_root, "project_key": project_key, "service_mode": service_mode})) or {"ok": True},
+                "lane_selection": calls.append(("lane", str(workflow_root))) or {"ok": True, "promoted": True, "issueNumber": 7},
+            }
 
     monkeypatch.setattr(tools, "_validate_workflow_contract_preflight_for_service", lambda **_kwargs: {"ok": True, "workflow": "change-delivery"})
-    monkeypatch.setattr(tools, "_load_daedalus_module", lambda _workflow_root: fake_daedalus)
-    monkeypatch.setattr(tools, "_ensure_change_delivery_active_lane_for_start", lambda _workflow_root: calls.append(("lane", str(_workflow_root))) or {"ok": True, "promoted": True, "issueNumber": 7})
+    monkeypatch.setattr(tools, "_load_workflow_module_for_root", lambda _workflow_root: FakeWorkflowModule)
     monkeypatch.setattr(tools, "install_supervised_service", lambda **kwargs: calls.append(("install", kwargs)) or {"installed": True, "unit_path": str(tmp_path / "unit.service")})
     monkeypatch.setattr(tools, "service_control", lambda action, **kwargs: calls.append((action, kwargs)) or {"ok": True})
     monkeypatch.setattr(tools, "service_status", lambda **kwargs: calls.append(("status", kwargs)) or {"service_name": "daedalus-active@test.service"})
@@ -324,15 +326,27 @@ def test_change_delivery_active_service_loop_promotes_lane_before_running(tmp_pa
     workflow_root.mkdir()
     calls: list[str] = []
 
-    fake_daedalus = SimpleNamespace(
-        _project_key_for=lambda _workflow_root: "project",
-        run_active_loop=lambda **kwargs: calls.append("run-active") or {"loop_status": "completed", "kwargs": kwargs},
-        run_shadow_loop=lambda **kwargs: calls.append("run-shadow") or {"loop_status": "completed", "kwargs": kwargs},
-    )
+    class FakeWorkflowModule:
+        @staticmethod
+        def service_loop(*, workflow_root, project_key, instance_id, interval_seconds, max_iterations, service_mode):
+            calls.append("lane")
+            calls.append("run-active")
+            return {
+                "workflow": "change-delivery",
+                "service_mode": service_mode,
+                "loop_status": "completed",
+                "lane_selection": {"ok": True, "promoted": True, "issueNumber": 8},
+                "kwargs": {
+                    "workflow_root": workflow_root,
+                    "project_key": project_key,
+                    "instance_id": instance_id,
+                    "interval_seconds": interval_seconds,
+                    "max_iterations": max_iterations,
+                },
+            }
 
     monkeypatch.setattr(tools, "_assert_service_mode_supported", lambda **_kwargs: "change-delivery")
-    monkeypatch.setattr(tools, "_load_daedalus_module", lambda _workflow_root: fake_daedalus)
-    monkeypatch.setattr(tools, "_ensure_change_delivery_active_lane_for_start", lambda _workflow_root: calls.append("lane") or {"ok": True, "promoted": True, "issueNumber": 8})
+    monkeypatch.setattr(tools, "_load_workflow_module_for_root", lambda _workflow_root: FakeWorkflowModule)
 
     result = tools.service_loop(
         workflow_root=workflow_root,

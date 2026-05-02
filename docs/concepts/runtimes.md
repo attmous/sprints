@@ -112,6 +112,7 @@ The bundled templates default executable roles to `codex-app-server`:
 runtimes:
   codex-app-server:
     kind: codex-app-server
+    stage-command: false
     mode: external
     endpoint: ws://127.0.0.1:4500
     ephemeral: false
@@ -234,6 +235,7 @@ consumes notifications until `turn/completed`.
 runtimes:
   codex:
     kind: codex-app-server
+    stage-command: false
     command: codex app-server
     ephemeral: false
     approval_policy: never
@@ -286,6 +288,7 @@ Then configure Daedalus for external mode:
 runtimes:
   codex:
     kind: codex-app-server
+    stage-command: false
     mode: external
     endpoint: ws://127.0.0.1:4500
     healthcheck_path: /readyz

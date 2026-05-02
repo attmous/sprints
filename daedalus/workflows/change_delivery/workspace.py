@@ -529,8 +529,8 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
         engine_store.save_scheduler(
             retry_entries={},
             running_entries={},
-            codex_totals=payload.get("codex_totals") or payload.get("codexTotals") or {},
-            codex_threads=payload.get("codex_threads") or payload.get("codexThreads") or {},
+            runtime_totals=payload.get("runtime_totals") or {},
+            runtime_sessions=payload.get("runtime_sessions") or {},
             now_iso=payload.get("updatedAt") or _now_iso(),
             now_epoch=time.time(),
         )
@@ -750,6 +750,7 @@ def make_workspace(*, workspace_root: Path, config: dict[str, Any]) -> SimpleNam
     _default_runtimes_cfg = {
         "codex-app-server": {
             "kind": "codex-app-server",
+            "stage-command": False,
             "mode": "external",
             "endpoint": "ws://127.0.0.1:4500",
             "healthcheck_path": "/readyz",
@@ -963,7 +964,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         issue_number = ns._scheduler_issue_number_from_session(worktree=worktree, session_name=session_name)
         thread_id = ns._codex_thread_for_issue_number(issue_number)
         if thread_id:
-            entry = ((ns.load_scheduler().get("codex_threads") or {}).get(ns._scheduler_issue_key(issue_number)) or {})
+            entry = ((ns.load_scheduler().get("runtime_sessions") or {}).get(ns._scheduler_issue_key(issue_number)) or {})
             return {
                 "name": session_name,
                 "closed": False,
@@ -1273,7 +1274,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         key = ns._scheduler_issue_key(issue_number)
         if not key:
             return None
-        entry = ((ns.load_scheduler().get("codex_threads") or {}).get(key) or {})
+        entry = ((ns.load_scheduler().get("runtime_sessions") or {}).get(key) or {})
         thread_id = str(entry.get("thread_id") or "").strip()
         return thread_id or None
 
@@ -1282,14 +1283,14 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         if not key:
             return False
         scheduler = ns.load_scheduler()
-        threads = dict(scheduler.get("codex_threads") or {})
+        threads = dict(scheduler.get("runtime_sessions") or {})
         if key not in threads:
             return False
         threads.pop(key, None)
         scheduler["workflow"] = "change-delivery"
         scheduler["updatedAt"] = ns._now_iso()
-        scheduler["codex_threads"] = threads
-        scheduler.setdefault("codex_totals", {})
+        scheduler["runtime_sessions"] = threads
+        scheduler.setdefault("runtime_totals", {})
         ns.save_scheduler(scheduler)
         return True
 
@@ -1301,7 +1302,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         if not key:
             return metrics
         scheduler = ns.load_scheduler()
-        threads = dict(scheduler.get("codex_threads") or {})
+        threads = dict(scheduler.get("runtime_sessions") or {})
         thread_id = str(metrics.get("thread_id") or metrics.get("session_id") or "").strip()
         if thread_id:
             threads[key] = {
@@ -1319,7 +1320,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
                 "run_id": getattr(ns, "CURRENT_ENGINE_RUN_ID", None),
                 "updated_at": at,
             }
-        totals = dict(scheduler.get("codex_totals") or {})
+        totals = dict(scheduler.get("runtime_totals") or {})
         tokens = metrics.get("tokens") or {}
         totals["input_tokens"] = int(totals.get("input_tokens") or 0) + int(tokens.get("input_tokens") or 0)
         totals["output_tokens"] = int(totals.get("output_tokens") or 0) + int(tokens.get("output_tokens") or 0)
@@ -1331,8 +1332,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             {
                 "workflow": "change-delivery",
                 "updatedAt": ns._now_iso(),
-                "codex_threads": threads,
-                "codex_totals": totals,
+                "runtime_sessions": threads,
+                "runtime_totals": totals,
             }
         )
         ns.save_scheduler(scheduler)
@@ -1349,7 +1350,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         if not key:
             return None
         scheduler = ns.load_scheduler()
-        threads = dict(scheduler.get("codex_threads") or {})
+        threads = dict(scheduler.get("runtime_sessions") or {})
         prior = dict(threads.get(key) or {})
         threads[key] = {
             **prior,
@@ -1372,8 +1373,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             {
                 "workflow": "change-delivery",
                 "updatedAt": ns._now_iso(),
-                "codex_threads": threads,
-                "codex_totals": scheduler.get("codex_totals") or {},
+                "runtime_sessions": threads,
+                "runtime_totals": scheduler.get("runtime_totals") or {},
             }
         )
         ns.save_scheduler(scheduler)
@@ -1381,7 +1382,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
 
     def _interrupt_active_implementation_turn(*, issue_number=None, reason="cancel-requested"):
         scheduler = ns.load_scheduler()
-        threads = dict(scheduler.get("codex_threads") or {})
+        threads = dict(scheduler.get("runtime_sessions") or {})
         key = ns._scheduler_issue_key(issue_number) if issue_number is not None else None
         if key is None:
             running_entries = [
@@ -1420,8 +1421,8 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             {
                 "workflow": "change-delivery",
                 "updatedAt": ns._now_iso(),
-                "codex_threads": threads,
-                "codex_totals": scheduler.get("codex_totals") or {},
+                "runtime_sessions": threads,
+                "runtime_totals": scheduler.get("runtime_totals") or {},
             }
         )
         ns.save_scheduler(scheduler)
@@ -1600,7 +1601,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
             issue_number = ns._scheduler_issue_number_from_session(worktree=worktree, session_name=session_name)
             thread_id = ns._codex_thread_for_issue_number(issue_number)
             if thread_id:
-                entry = ((ns.load_scheduler().get("codex_threads") or {}).get(ns._scheduler_issue_key(issue_number)) or {})
+                entry = ((ns.load_scheduler().get("runtime_sessions") or {}).get(ns._scheduler_issue_key(issue_number)) or {})
                 return {
                     "name": session_name,
                     "closed": False,

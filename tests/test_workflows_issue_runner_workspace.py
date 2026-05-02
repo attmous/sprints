@@ -128,10 +128,11 @@ def _write_fake_codex_app_server(path: Path, *, requests_path: Path, fail: bool 
 def _use_codex_runtime_profile(cfg: dict, command: str) -> None:
     cfg["agent"]["runtime"] = "codex"
     cfg.pop("daedalus", None)
-    cfg["codex"]["command"] = command
+    cfg.pop("codex", None)
     cfg["runtimes"] = {
         "codex": {
             "kind": "codex-app-server",
+            "stage-command": False,
             "command": command,
             "ephemeral": False,
             "approval_policy": "never",
@@ -169,6 +170,34 @@ def _wait_for_supervised_futures(workspace, *, timeout: float = 2.0) -> None:
             return
         time.sleep(0.01)
     raise AssertionError("supervised futures did not finish")
+
+
+def test_issue_runner_workspace_exposes_orchestrator_boundary(tmp_path):
+    from workflows.issue_runner.orchestrator import IssueRunnerOrchestrator
+    from workflows.issue_runner.workspace import load_workspace_from_config
+
+    cfg = _config(tmp_path)
+    workflow_root = tmp_path / "attmous-daedalus-issue-runner"
+    workflow_root.mkdir()
+    (tmp_path / "repo").mkdir()
+    _write_issue_runner_contract(workflow_root=workflow_root, cfg=cfg, issues=[])
+
+    workspace = load_workspace_from_config(
+        workspace_root=workflow_root,
+        run=lambda *args, **kwargs: None,
+        run_json=lambda *args, **kwargs: {},
+    )
+
+    orchestrator = workspace.orchestrator()
+    assert isinstance(orchestrator, IssueRunnerOrchestrator)
+    assert orchestrator.workspace is workspace
+
+    class FakeOrchestrator:
+        def tick(self):
+            return {"ok": True, "source": "fake-orchestrator"}
+
+    workspace.orchestrator = lambda: FakeOrchestrator()
+    assert workspace.tick() == {"ok": True, "source": "fake-orchestrator"}
 
 
 def test_issue_runner_tick_runs_selected_issue_and_writes_artifacts(tmp_path):
@@ -606,14 +635,14 @@ def test_issue_runner_tick_uses_codex_app_server_and_persists_metrics(tmp_path):
     status = workspace.build_status()
     assert status["metrics"]["tokens"]["total_tokens"] == 18
     assert status["metrics"]["rate_limits"]["requests_remaining"] == 99
-    assert status["scheduler"]["codex_threads"]["ISSUE-1"]["thread_id"] == "thread-1"
+    assert status["scheduler"]["runtime_sessions"]["ISSUE-1"]["thread_id"] == "thread-1"
     assert status["runtimeDiagnostics"]["codex"]["kind"] == "codex-app-server"
     assert status["runtimeDiagnostics"]["codex"]["mode"] == "managed"
     assert status["runtimeDiagnostics"]["codex"]["transport"] == "stdio"
     assert status["runtimeDiagnostics"]["codex"]["keep_alive"] is False
 
 
-def test_issue_runner_codex_thread_mapping_persists_and_resumes(tmp_path):
+def test_issue_runner_runtime_session_mapping_persists_and_resumes(tmp_path):
     from workflows.issue_runner.workspace import load_workspace_from_config
 
     cfg = _config(tmp_path)
@@ -661,18 +690,18 @@ def test_issue_runner_codex_thread_mapping_persists_and_resumes(tmp_path):
     first_workspace = load_workspace_from_config(workspace_root=workflow_root)
     first = first_workspace.tick()
     assert first["ok"] is True
-    assert first_workspace.build_status()["scheduler"]["codex_threads"]["ISSUE-1"]["thread_id"] == "thread-1"
+    assert first_workspace.build_status()["scheduler"]["runtime_sessions"]["ISSUE-1"]["thread_id"] == "thread-1"
 
     reloaded = load_workspace_from_config(workspace_root=workflow_root)
-    assert reloaded.build_status()["scheduler"]["codex_threads"]["ISSUE-1"]["thread_id"] == "thread-1"
+    assert reloaded.build_status()["scheduler"]["runtime_sessions"]["ISSUE-1"]["thread_id"] == "thread-1"
     reloaded.retry_entries["ISSUE-1"]["due_at_epoch"] = 0.0
 
     second = reloaded.tick()
     assert second["ok"] is True
     scheduler = reloaded.build_status()["scheduler"]
-    assert scheduler["codex_threads"]["ISSUE-1"]["thread_id"] == "thread-1"
-    assert scheduler["codex_totals"]["total_tokens"] == 36
-    assert scheduler["codex_totals"]["turn_count"] == 2
+    assert scheduler["runtime_sessions"]["ISSUE-1"]["thread_id"] == "thread-1"
+    assert scheduler["runtime_totals"]["total_tokens"] == 36
+    assert scheduler["runtime_totals"]["turn_count"] == 2
 
     requests = [json.loads(line) for line in requests_path.read_text(encoding="utf-8").splitlines()]
     methods = [item.get("method") for item in requests]
@@ -759,7 +788,7 @@ def test_issue_runner_retry_queue_retries_failed_issue_on_next_due_tick(tmp_path
     retry_queue = workspace.build_status()["scheduler"]["retry_queue"]
     assert retry_queue[0]["attempt"] == 1
     assert retry_queue[0]["error"] == "continuation"
-    assert workspace.build_status()["scheduler"]["codex_totals"]["total_tokens"] == 0
+    assert workspace.build_status()["scheduler"]["runtime_totals"]["total_tokens"] == 0
 
 
 def test_issue_runner_retry_queue_persists_across_workspace_reload(tmp_path):
@@ -1300,7 +1329,7 @@ def test_issue_runner_codex_failure_preserves_partial_metrics(tmp_path):
     assert result["ok"] is False
     assert result["metrics"]["tokens"]["total_tokens"] == 7
     assert result["metrics"]["rate_limits"]["requests_remaining"] == 88
-    assert workspace.build_status()["scheduler"]["codex_totals"]["total_tokens"] == 7
+    assert workspace.build_status()["scheduler"]["runtime_totals"]["total_tokens"] == 7
 
 
 def test_issue_runner_run_loop_keeps_last_known_good_on_invalid_reload(tmp_path):

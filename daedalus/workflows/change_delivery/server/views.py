@@ -8,7 +8,7 @@ JSONL events log on disk per request.
 Shape conforms to Symphony §13.7 (spec §6.4):
 
 - ``state_view`` returns a snapshot of running + retrying work plus a
-  ``codex_totals`` block. `change-delivery` keeps the lane-backed domain
+  ``runtime_totals`` block. `change-delivery` keeps the lane-backed domain
   model; engine execution state is projected from shared SQLite tables.
 - ``issue_view`` returns the per-lane shape, or ``None`` if the
   identifier is unknown.
@@ -352,12 +352,12 @@ def run_view(workflow_root: Path, events_log_path: Path, run_id: str) -> dict[st
     ]
     retrying = [
         row
-        for row in (scheduler.get("retry_queue") or scheduler.get("retryQueue") or [])
+        for row in (scheduler.get("retry_queue") or [])
         if isinstance(row, dict) and _event_run_id(row) == run_id
     ]
-    codex_threads = [
+    runtime_sessions = [
         row
-        for row in (scheduler.get("codex_threads") or scheduler.get("codexThreads") or {}).values()
+        for row in (scheduler.get("runtime_sessions") or {}).values()
         if isinstance(row, dict) and _event_run_id(row) == run_id
     ]
     return {
@@ -367,7 +367,7 @@ def run_view(workflow_root: Path, events_log_path: Path, run_id: str) -> dict[st
         "related": {
             "running": running,
             "retrying": retrying,
-            "codex_threads": codex_threads,
+            "runtime_sessions": runtime_sessions,
         },
         "timeline": _run_timeline(workflow_root, events_log_path, run_id),
     }
@@ -480,30 +480,30 @@ def _issue_runner_state_view(workflow_root: Path, events_log_path: Path) -> dict
     ]
     retry_rows = [
         _issue_runner_retry_entry(row)
-        for row in (scheduler_payload.get("retry_queue") or scheduler_payload.get("retryQueue") or [])
+        for row in (scheduler_payload.get("retry_queue") or [])
         if isinstance(row, dict)
     ]
-    codex_totals = dict(scheduler_payload.get("codex_totals") or scheduler_payload.get("codexTotals") or {})
+    runtime_totals = dict(scheduler_payload.get("runtime_totals") or {})
     seconds_running = sum(int((row.get("running_for_ms") or 0)) for row in (scheduler_payload.get("running") or []) if isinstance(row, dict)) // 1000
     recent_events = _issue_runner_recent_events(
         workflow_root,
         events_log_path=events_log_path,
         audit_log_path=audit_log_path,
     )
-    rate_limits = codex_totals.pop("rate_limits", None)
+    rate_limits = runtime_totals.pop("rate_limits", None)
     totals = {
-        "input_tokens": int(codex_totals.get("input_tokens") or 0),
-        "output_tokens": int(codex_totals.get("output_tokens") or 0),
-        "total_tokens": int(codex_totals.get("total_tokens") or 0),
+        "input_tokens": int(runtime_totals.get("input_tokens") or 0),
+        "output_tokens": int(runtime_totals.get("output_tokens") or 0),
+        "total_tokens": int(runtime_totals.get("total_tokens") or 0),
         "seconds_running": seconds_running,
     }
     return {
-        "generated_at": scheduler_payload.get("updatedAt") or ((status_payload.get("lastRun") or {}).get("updatedAt")) or _now_iso(),
+        "generated_at": scheduler_payload.get("updated_at") or ((status_payload.get("lastRun") or {}).get("updatedAt")) or _now_iso(),
         "counts": {"running": len(running_rows), "retrying": len(retry_rows)},
         "running": running_rows,
         "retrying": retry_rows,
         "latest_runs": _engine_runs(workflow_root, "issue-runner"),
-        "codex_totals": totals,
+        "runtime_totals": totals,
         "rate_limits": rate_limits,
         "recent_events": recent_events,
     }
@@ -537,26 +537,26 @@ def _issue_runner_issue_view(
     return {**entry, "recent_events": issue_events}
 
 
-def _codex_turn_entries(scheduler: dict[str, Any]) -> list[dict[str, Any]]:
+def _runtime_session_entries(scheduler: dict[str, Any]) -> list[dict[str, Any]]:
     entries = []
-    for issue_id, raw_entry in (scheduler.get("codex_threads") or scheduler.get("codexThreads") or {}).items():
+    for issue_id, raw_entry in (scheduler.get("runtime_sessions") or {}).items():
         if not isinstance(raw_entry, dict):
             continue
-        issue_number = raw_entry.get("issue_number") or raw_entry.get("issueNumber")
+        issue_number = raw_entry.get("issue_number")
         entries.append(
             {
                 "issue_id": raw_entry.get("issue_id") or issue_id,
                 "issue_number": issue_number,
                 "issue_identifier": raw_entry.get("identifier") or (f"#{issue_number}" if issue_number else issue_id),
-                "session_name": raw_entry.get("session_name") or raw_entry.get("sessionName"),
-                "runtime_name": raw_entry.get("runtime_name") or raw_entry.get("runtimeName"),
-                "runtime_kind": raw_entry.get("runtime_kind") or raw_entry.get("runtimeKind"),
-                "thread_id": raw_entry.get("thread_id") or raw_entry.get("threadId"),
-                "turn_id": raw_entry.get("turn_id") or raw_entry.get("turnId"),
+                "session_name": raw_entry.get("session_name"),
+                "runtime_name": raw_entry.get("runtime_name"),
+                "runtime_kind": raw_entry.get("runtime_kind"),
+                "thread_id": raw_entry.get("thread_id"),
+                "turn_id": raw_entry.get("turn_id"),
                 "status": raw_entry.get("status"),
-                "cancel_requested": bool(raw_entry.get("cancel_requested") or raw_entry.get("cancelRequested") or False),
-                "cancel_reason": raw_entry.get("cancel_reason") or raw_entry.get("cancelReason"),
-                "updated_at": raw_entry.get("updated_at") or raw_entry.get("updatedAt"),
+                "cancel_requested": bool(raw_entry.get("cancel_requested") or False),
+                "cancel_reason": raw_entry.get("cancel_reason"),
+                "updated_at": raw_entry.get("updated_at"),
             }
         )
     return sorted(entries, key=lambda item: str(item.get("issue_id") or ""))
@@ -572,24 +572,24 @@ def state_view(db_path: Path, events_log_path: Path, workflow_root: Path | None 
         events = _read_events_tail(events_log_path, _RECENT_EVENTS_LIMIT)
     running = [_lane_to_running_entry(lane, events) for lane in lanes]
     scheduler = _engine_scheduler(workflow_root, "change-delivery")
-    codex_totals = dict(scheduler.get("codex_totals") or scheduler.get("codexTotals") or {})
-    rate_limits = codex_totals.pop("rate_limits", None)
-    codex_turns = _codex_turn_entries(scheduler)
+    runtime_totals = dict(scheduler.get("runtime_totals") or {})
+    rate_limits = runtime_totals.pop("rate_limits", None)
+    runtime_sessions = _runtime_session_entries(scheduler)
     return {
         "generated_at": _now_iso(),
         "counts": {"running": len(running), "retrying": 0},
         "running": running,
         "retrying": [],
-        "codex_turns": codex_turns,
-        "codex_turn_counts": {
-            "running": len([entry for entry in codex_turns if entry.get("status") == "running"]),
-            "canceling": len([entry for entry in codex_turns if entry.get("status") == "canceling"]),
+        "runtime_sessions": runtime_sessions,
+        "runtime_session_counts": {
+            "running": len([entry for entry in runtime_sessions if entry.get("status") == "running"]),
+            "canceling": len([entry for entry in runtime_sessions if entry.get("status") == "canceling"]),
         },
         "latest_runs": _engine_runs(workflow_root, "change-delivery"),
-        "codex_totals": {
-            "input_tokens": int(codex_totals.get("input_tokens") or 0),
-            "output_tokens": int(codex_totals.get("output_tokens") or 0),
-            "total_tokens": int(codex_totals.get("total_tokens") or 0),
+        "runtime_totals": {
+            "input_tokens": int(runtime_totals.get("input_tokens") or 0),
+            "output_tokens": int(runtime_totals.get("output_tokens") or 0),
+            "total_tokens": int(runtime_totals.get("total_tokens") or 0),
             "seconds_running": 0,
         },
         "rate_limits": rate_limits,

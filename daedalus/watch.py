@@ -31,7 +31,7 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
         t.add_row(
             str(lane.get("lane_id") or ""),
             str(lane.get("state") or ""),
-            str(lane.get("issue_identifier") or lane.get("github_issue_number") or ""),
+            str(lane.get("issue_identifier") or lane.get("issue_number") or ""),
         )
     return t
 
@@ -87,14 +87,14 @@ def _workflow_status_panel(workflow_status: Mapping[str, Any]) -> Panel | None:
             f"selected={run.get('selected_count') or 0} "
             f"completed={run.get('completed_count') or 0}"
         )
-    for turn in workflow_status.get("codex_turns") or []:
-        if turn.get("status") == "canceling" or turn.get("cancel_requested"):
+    for session in workflow_status.get("runtime_sessions") or []:
+        if session.get("status") == "canceling" or session.get("cancel_requested"):
             lines.append(
-                "codex_canceling="
-                f"{turn.get('issue_identifier') or turn.get('issue_id')} "
-                f"thread={turn.get('thread_id')} "
-                f"turn={turn.get('turn_id')} "
-                f"reason={turn.get('cancel_reason') or '?'}"
+                "runtime_canceling="
+                f"{session.get('issue_identifier') or session.get('issue_id')} "
+                f"thread={session.get('thread_id')} "
+                f"turn={session.get('turn_id')} "
+                f"reason={session.get('cancel_reason') or '?'}"
             )
     if workflow_status.get("updated_at"):
         lines.append(f"updated_at={workflow_status.get('updated_at')}")

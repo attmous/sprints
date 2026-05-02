@@ -260,7 +260,7 @@ def test_live_change_delivery_codex_app_server_creates_issue_and_dispatches_lane
         assert result["threadId"] or result["resumeSessionId"]
 
         scheduler = workspace.load_scheduler()
-        entry = (scheduler.get("codex_threads") or {}).get(f"lane:{issue_number}") or {}
+        entry = (scheduler.get("runtime_sessions") or {}).get(f"lane:{issue_number}") or {}
         assert entry.get("thread_id") == (result["threadId"] or result["resumeSessionId"])
         assert entry.get("status") == "completed"
 

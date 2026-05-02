@@ -17,7 +17,7 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
 from engine.scheduler import (
     build_scheduler_payload,
-    codex_threads_snapshot,
+    runtime_sessions_snapshot,
     restore_scheduler_state,
     retry_due_at,
     retry_queue_snapshot,
@@ -40,6 +40,7 @@ from runtimes.stages import prompt_result_from_stage, run_runtime_stage
 from workflows.contract import WORKFLOW_POLICY_KEY, WorkflowContractError, load_workflow_contract
 from workflows.shared.config_snapshot import AtomicRef, ConfigSnapshot
 from workflows.shared.paths import runtime_paths
+from workflows.issue_runner.orchestrator import IssueRunnerOrchestrator
 from workflows.issue_runner.tracker import (
     TrackerClient,
     TrackerConfigError,
@@ -213,52 +214,10 @@ def _runtime_profiles_from_config(config: dict[str, Any]) -> dict[str, dict[str,
     raw_profiles = config.get("runtimes") or (
         daedalus_cfg.get("runtimes") if isinstance(daedalus_cfg, dict) else {}
     ) or {}
-    profiles = {
+    return {
         str(name): dict(profile_cfg or {})
         for name, profile_cfg in raw_profiles.items()
     }
-    codex_cfg = dict(config.get("codex") or {})
-    agent_cfg = config.get("agent") or {}
-    runtime_name = str(agent_cfg.get("runtime") or "").strip()
-
-    for profile in profiles.values():
-        if str(profile.get("kind") or "").strip() != "codex-app-server":
-            continue
-        for key in (
-            "command",
-            "mode",
-            "endpoint",
-            "healthcheck_path",
-            "ws_token_env",
-            "ws_token_file",
-            "ephemeral",
-            "approval_policy",
-            "thread_sandbox",
-            "turn_sandbox_policy",
-            "turn_timeout_ms",
-            "read_timeout_ms",
-            "stall_timeout_ms",
-            "keep_alive",
-            "keep-alive",
-        ):
-            if profile.get(key) in (None, "", []):
-                value = codex_cfg.get(key)
-                if value not in (None, "", []):
-                    profile[key] = value
-
-    if not runtime_name and codex_cfg.get("command"):
-        profiles.setdefault(
-            "codex",
-            {
-                "kind": "codex-app-server",
-                **{
-                    key: value
-                    for key, value in codex_cfg.items()
-                    if value not in (None, "", [])
-                },
-            },
-        )
-    return profiles
 
 
 def _build_runtimes_from_config(
@@ -308,12 +267,15 @@ class IssueRunnerWorkspace(WorkflowDriver):
     _run_json: Callable[..., dict[str, Any]]
     retry_entries: dict[str, dict[str, Any]]
     running_entries: dict[str, dict[str, Any]]
-    codex_threads: dict[str, dict[str, Any]]
+    runtime_sessions: dict[str, dict[str, Any]]
     running_issue_id: str | None = None
-    codex_totals: dict[str, Any] | None = None
+    runtime_totals: dict[str, Any] | None = None
     _supervisor_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
     _supervisor_futures: dict[str, concurrent.futures.Future] = field(default_factory=dict, init=False, repr=False)
     _supervisor_cancel_events: dict[str, threading.Event] = field(default_factory=dict, init=False, repr=False)
+
+    def orchestrator(self) -> IssueRunnerOrchestrator:
+        return IssueRunnerOrchestrator(self)
 
     def runtime(self, name: str) -> Runtime:
         return self.runtimes[name]
@@ -391,8 +353,8 @@ class IssueRunnerWorkspace(WorkflowDriver):
                 **_scheduler_state_from_config(self.config),
                 "running": self._running_snapshot(),
                 "retry_queue": self._retry_queue_snapshot(),
-                "codex_totals": dict(self.codex_totals or {}),
-                "codex_threads": self._codex_threads_snapshot(),
+                "runtime_totals": dict(self.runtime_totals or {}),
+                "runtime_sessions": self._runtime_sessions_snapshot(),
             },
             "runtimeDiagnostics": self._runtime_diagnostics(),
             "selectedIssue": selected,
@@ -530,8 +492,8 @@ class IssueRunnerWorkspace(WorkflowDriver):
         self.engine_store.save_scheduler(
             retry_entries=self.retry_entries,
             running_entries=self.running_entries,
-            codex_totals=self.codex_totals,
-            codex_threads=self.codex_threads,
+            runtime_totals=self.runtime_totals,
+            runtime_sessions=self.runtime_sessions,
             now_iso=now_iso,
             now_epoch=now_epoch,
         )
@@ -541,8 +503,8 @@ class IssueRunnerWorkspace(WorkflowDriver):
                 workflow="issue-runner",
                 retry_entries=self.retry_entries,
                 running_entries=self.running_entries,
-                codex_totals=self.codex_totals,
-                codex_threads=self.codex_threads,
+                runtime_totals=self.runtime_totals,
+                runtime_sessions=self.runtime_sessions,
                 now_iso=now_iso,
                 now_epoch=now_epoch,
             ),
@@ -596,8 +558,8 @@ class IssueRunnerWorkspace(WorkflowDriver):
         restored = restore_scheduler_state(payload, now_epoch=_now_epoch())
         self.retry_entries = restored.retry_entries
         self.running_entries = {}
-        self.codex_totals = dict(restored.codex_totals)
-        self.codex_threads = restored.codex_threads
+        self.runtime_totals = dict(restored.runtime_totals)
+        self.runtime_sessions = restored.runtime_sessions
         self.running_issue_id = None
 
         if restored.recovered_running:
@@ -615,42 +577,48 @@ class IssueRunnerWorkspace(WorkflowDriver):
     def _retry_queue_snapshot(self) -> list[dict[str, Any]]:
         return retry_queue_snapshot(self.retry_entries, now_epoch=_now_epoch())
 
-    def _codex_threads_snapshot(self) -> dict[str, dict[str, Any]]:
-        return codex_threads_snapshot(self.codex_threads)
+    def _runtime_sessions_snapshot(self) -> dict[str, dict[str, Any]]:
+        return runtime_sessions_snapshot(self.runtime_sessions)
 
-    def _codex_thread_for_issue(self, issue: dict[str, Any]) -> str | None:
+    def _runtime_session_id_for_issue(self, issue: dict[str, Any]) -> str | None:
         issue_id = str(issue.get("id") or "").strip()
         if not issue_id:
             return None
-        entry = self.codex_threads.get(issue_id) or {}
-        thread_id = str(entry.get("thread_id") or "").strip()
-        return thread_id or None
+        entry = self.runtime_sessions.get(issue_id) or {}
+        session_id = str(entry.get("session_id") or entry.get("thread_id") or "").strip()
+        return session_id or None
 
-    def _record_codex_thread(
+    def _record_runtime_session(
         self,
         *,
         issue: dict[str, Any],
         session_name: str,
         metrics: dict[str, Any],
+        runtime_name: str | None = None,
+        runtime_kind: str | None = None,
         run_id: str | None = None,
     ) -> None:
         issue_id = str(issue.get("id") or "").strip()
+        session_id = str(metrics.get("session_id") or metrics.get("thread_id") or "").strip()
         thread_id = str(metrics.get("thread_id") or "").strip()
-        if not issue_id or not thread_id:
+        if not issue_id or not session_id:
             return
-        self.codex_threads[issue_id] = {
+        self.runtime_sessions[issue_id] = {
             "issue_id": issue_id,
             "identifier": issue.get("identifier"),
             "session_name": session_name,
-            "thread_id": thread_id,
+            "session_id": session_id,
+            "thread_id": thread_id or None,
             "turn_id": metrics.get("turn_id"),
+            "runtime_name": runtime_name,
+            "runtime_kind": runtime_kind,
             "run_id": run_id,
             "updated_at": _now_iso(),
         }
 
-    def _clear_codex_thread(self, issue_id: str | None) -> None:
+    def _clear_runtime_session(self, issue_id: str | None) -> None:
         if issue_id:
-            self.codex_threads.pop(issue_id, None)
+            self.runtime_sessions.pop(issue_id, None)
 
     def _due_retry_issue(self, *, issues_by_id: dict[str, dict[str, Any]]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         now_epoch = _now_epoch()
@@ -801,7 +769,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
 
     def _record_metrics(self, result: PromptRunResult) -> dict[str, Any]:
         metrics = self._metrics_payload(result)
-        totals = dict(self.codex_totals or {})
+        totals = dict(self.runtime_totals or {})
         tokens = metrics.get("tokens") or {}
         totals["input_tokens"] = int(totals.get("input_tokens") or 0) + int(tokens.get("input_tokens") or 0)
         totals["output_tokens"] = int(totals.get("output_tokens") or 0) + int(tokens.get("output_tokens") or 0)
@@ -809,7 +777,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
         totals["turn_count"] = int(totals.get("turn_count") or 0) + int(metrics.get("turn_count") or 0)
         if metrics.get("rate_limits") is not None:
             totals["rate_limits"] = metrics.get("rate_limits")
-        self.codex_totals = totals
+        self.runtime_totals = totals
         return metrics
 
     def _dispatch_slots(self) -> int:
@@ -1036,9 +1004,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
             else:
                 runtime = _build_runtimes_from_config(self.config, run=self._run, run_json=self._run_json)[runtime_name]
             session_name = issue_session_name(issue)
-            resume_thread_id = None
-            if str(runtime_cfg.get("kind") or "").strip() == "codex-app-server":
-                resume_thread_id = self._codex_thread_for_issue(issue)
+            resume_session_id = self._runtime_session_id_for_issue(issue)
             stage_result = run_runtime_stage(
                 runtime=runtime,
                 runtime_cfg=runtime_cfg,
@@ -1049,7 +1015,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
                 prompt=prompt,
                 prompt_path=prompt_path,
                 env=env,
-                resume_session_id=resume_thread_id,
+                resume_session_id=resume_session_id,
                 cancel_event=cancel_event,
                 placeholders={
                     "issue_id": str(issue.get("id") or ""),
@@ -1125,13 +1091,14 @@ class IssueRunnerWorkspace(WorkflowDriver):
                         rate_limits=metrics.get("rate_limits"),
                     )
                 )
-                if result.get("runtimeKind") == "codex-app-server":
-                    self._record_codex_thread(
-                        issue=issue,
-                        session_name=issue_session_name(issue),
-                        metrics=recorded_metrics,
-                        run_id=run_id,
-                    )
+                self._record_runtime_session(
+                    issue=issue,
+                    session_name=issue_session_name(issue),
+                    metrics=recorded_metrics,
+                    runtime_name=result.get("runtime"),
+                    runtime_kind=result.get("runtimeKind"),
+                    run_id=run_id,
+                )
                 result["metrics"] = recorded_metrics
 
             if result.get("ok"):
@@ -1444,9 +1411,12 @@ class IssueRunnerWorkspace(WorkflowDriver):
             )
             self._supervisor_futures[issue_id] = future
             entry = self.running_entries.get(issue_id) or {}
-            resume_thread_id = self._codex_thread_for_issue(issue)
-            if resume_thread_id:
-                entry["thread_id"] = resume_thread_id
+            resume_session_id = self._runtime_session_id_for_issue(issue)
+            if resume_session_id:
+                entry["session_id"] = resume_session_id
+                persisted_session = self.runtime_sessions.get(issue_id) or {}
+                if persisted_session.get("thread_id"):
+                    entry["thread_id"] = persisted_session.get("thread_id")
             dispatched.append(dict(entry))
             self._emit_event(
                 "issue_runner.worker.dispatched",
@@ -1474,260 +1444,13 @@ class IssueRunnerWorkspace(WorkflowDriver):
         return dispatched
 
     def supervise_once(self) -> dict[str, Any]:
-        engine_run = self.engine_store.start_run(mode="supervised")
-        status = {
-            "ok": True,
-            "workflow": "issue-runner",
-            "mode": "supervised",
-            "updatedAt": _now_iso(),
-            "selectedIssue": None,
-            "selectedIssues": [],
-            "attempt": None,
-            "outputPath": None,
-            "metrics": {},
-            "results": [],
-            "completedResults": [],
-            "dispatchedWorkers": [],
-            "cancellationRequests": [],
-        }
-        try:
-            try:
-                issues = self.tracker_client.list_all()
-                terminal_issues = self.tracker_client.list_terminal()
-            except Exception as exc:
-                status["ok"] = False
-                status["error"] = f"{type(exc).__name__}: {exc}"
-                status["engineRun"] = self._finish_engine_run_for_status(
-                    engine_run,
-                    status,
-                    selected_count=0,
-                    completed_count=0,
-                    metadata={"reason": "tracker-load-failed"},
-                )
-                self._write_status(status, health="error")
-                self._emit_event(
-                    "issue_runner.tick.failed",
-                    {
-                        "error": status["error"],
-                        "reason": "tracker-load-failed",
-                        "run_id": engine_run["run_id"],
-                    },
-                )
-                return status
-
-            status["cancellationRequests"] = self._request_terminal_cancellations(terminal_issues)
-            completed = self._reconcile_supervised_workers()
-            if completed:
-                status = self._status_from_results(base_status=status, results=completed)
-                status["completedResults"] = status.get("results") or []
-            suppressed_completed_ids = {
-                str((result.get("issue") or {}).get("id") or "").strip()
-                for result in completed
-                if result.get("suppressRetry")
-            }
-            cleanup = self._cleanup_terminal_workspaces(terminal_issues)
-            status["cleanup"] = cleanup
-
-            dispatch_issues = [
-                issue
-                for issue in issues
-                if str(issue.get("id") or "").strip() not in suppressed_completed_ids
-            ]
-            issues_by_id = {
-                str(issue.get("id")): issue
-                for issue in dispatch_issues
-                if str(issue.get("id") or "").strip()
-            }
-            selections = self._select_issue_batch(issues=dispatch_issues, issues_by_id=issues_by_id)
-            refreshed_selections: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
-            for selected, retry_entry in selections:
-                issue_id = str(selected.get("id") or "").strip()
-                if issue_id:
-                    selected = self.tracker_client.refresh([issue_id]).get(issue_id, selected)
-                refreshed_selections.append((selected, retry_entry))
-            selections = refreshed_selections
-            status["selectedIssues"] = [issue for issue, _retry_entry in selections]
-            status["selectedIssue"] = selections[0][0] if selections else None
-            self._publish_selected_feedback(selections, run_id=engine_run["run_id"])
-            dispatched = self._dispatch_supervised_workers(selections, run_id=engine_run["run_id"])
-            status["dispatchedWorkers"] = dispatched
-            if not completed and not dispatched:
-                status["message"] = "no dispatchable issues"
-                self._emit_event(
-                    "issue_runner.tick.noop",
-                    {"reason": "no-dispatchable-issues", "run_id": engine_run["run_id"]},
-                )
-
-            if completed and not all(result.get("ok") or result.get("suppressRetry") for result in completed):
-                status["ok"] = False
-            status["engineRun"] = self._finish_engine_run_for_status(
-                engine_run,
-                status,
-                metadata={
-                    "dispatched_count": len(dispatched),
-                    "cancellation_count": len(status.get("cancellationRequests") or []),
-                },
-            )
-            self._write_status(status, health="healthy" if status["ok"] else "error")
-            self._persist_scheduler_state()
-            return status
-        except Exception as exc:
-            self._fail_engine_run_after_exception(engine_run, exc)
-            raise
+        return self.orchestrator().supervise_once()
 
     def _reconcile_before_loop_exit(self, last_result: dict[str, Any] | None) -> dict[str, Any] | None:
-        engine_run = self.engine_store.start_run(mode="supervised-exit-reconcile")
-        try:
-            completed = self._reconcile_supervised_workers()
-            if not completed:
-                self._persist_scheduler_state()
-                self.engine_store.complete_run(
-                    engine_run["run_id"],
-                    selected_count=0,
-                    completed_count=0,
-                    metadata={"changed": False},
-                )
-                return last_result
-            status = {
-                "ok": True,
-                "workflow": "issue-runner",
-                "mode": "supervised-exit-reconcile",
-                "updatedAt": _now_iso(),
-                "selectedIssue": None,
-                "selectedIssues": [],
-                "attempt": None,
-                "outputPath": None,
-                "metrics": {},
-                "results": [],
-                "completedResults": [],
-                "dispatchedWorkers": [],
-                "cancellationRequests": [],
-            }
-            status = self._status_from_results(base_status=status, results=completed)
-            status["completedResults"] = status.get("results") or []
-            status["engineRun"] = self._finish_engine_run_for_status(
-                engine_run,
-                status,
-                selected_count=0,
-                completed_count=len(completed),
-                metadata={"changed": True},
-            )
-            self._write_status(status, health="healthy" if status["ok"] else "error")
-            self._persist_scheduler_state()
-            return status
-        except Exception as exc:
-            self._fail_engine_run_after_exception(engine_run, exc)
-            raise
+        return self.orchestrator().reconcile_before_loop_exit(last_result)
 
     def tick(self) -> dict[str, Any]:
-        engine_run = self.engine_store.start_run(mode="tick")
-        status = {
-            "ok": False,
-            "workflow": "issue-runner",
-            "updatedAt": _now_iso(),
-            "selectedIssue": None,
-            "selectedIssues": [],
-            "attempt": None,
-            "outputPath": None,
-            "metrics": {},
-        }
-        try:
-            try:
-                issues = self.tracker_client.list_all()
-                cleanup = self._cleanup_terminal_workspaces(self.tracker_client.list_terminal())
-            except Exception as exc:
-                status["error"] = f"{type(exc).__name__}: {exc}"
-                status["engineRun"] = self._finish_engine_run_for_status(
-                    engine_run,
-                    status,
-                    selected_count=0,
-                    completed_count=0,
-                    metadata={"reason": "tracker-load-failed"},
-                )
-                self._write_status(status, health="error")
-                self._emit_event(
-                    "issue_runner.tick.failed",
-                    {
-                        "error": status["error"],
-                        "reason": "tracker-load-failed",
-                        "run_id": engine_run["run_id"],
-                    },
-                )
-                return status
-            issues_by_id = {str(issue.get("id")): issue for issue in issues if str(issue.get("id") or "").strip()}
-            selections = self._select_issue_batch(issues=issues, issues_by_id=issues_by_id)
-            refreshed_selections: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
-            for selected, retry_entry in selections:
-                issue_id = str(selected.get("id") or "").strip()
-                if issue_id:
-                    selected = self.tracker_client.refresh([issue_id]).get(issue_id, selected)
-                refreshed_selections.append((selected, retry_entry))
-            selections = refreshed_selections
-            status["selectedIssues"] = [issue for issue, _retry_entry in selections]
-            status["selectedIssue"] = selections[0][0] if selections else None
-            status["cleanup"] = cleanup
-            if not selections:
-                status["ok"] = True
-                status["message"] = "no dispatchable issues"
-                status["engineRun"] = self._finish_engine_run_for_status(
-                    engine_run,
-                    status,
-                    selected_count=0,
-                    completed_count=0,
-                    metadata={"reason": "no-dispatchable-issues"},
-                )
-                self._write_status(status, health="healthy")
-                self._persist_scheduler_state()
-                self._emit_event(
-                    "issue_runner.tick.noop",
-                    {"reason": "no-dispatchable-issues", "run_id": engine_run["run_id"]},
-                )
-                return status
-
-            self._publish_selected_feedback(selections, run_id=engine_run["run_id"])
-            self._mark_running(selections, run_id=engine_run["run_id"])
-            results: list[dict[str, Any]] = []
-            try:
-                if len(selections) == 1:
-                    issue, retry_entry = selections[0]
-                    results = [
-                        self._execute_issue(
-                            issue=issue,
-                            retry_entry=retry_entry,
-                            run_id=engine_run["run_id"],
-                        )
-                    ]
-                else:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(selections)) as executor:
-                        future_map = {
-                            executor.submit(
-                                self._execute_issue,
-                                issue=issue,
-                                retry_entry=retry_entry,
-                                run_id=engine_run["run_id"],
-                            ): (issue, retry_entry)
-                            for issue, retry_entry in selections
-                        }
-                        for future in concurrent.futures.as_completed(future_map):
-                            results.append(future.result())
-
-                status = self._status_from_results(base_status=status, results=results)
-                status["engineRun"] = self._finish_engine_run_for_status(
-                    engine_run,
-                    status,
-                    selected_count=len(selections),
-                    completed_count=len(results),
-                )
-                self._write_status(status, health="healthy" if status["ok"] else "error")
-                return status
-            finally:
-                self._clear_running([str(issue.get("id") or "") for issue, _retry_entry in selections])
-                self._persist_scheduler_state()
-        except Exception as exc:
-            self._fail_engine_run_after_exception(engine_run, exc)
-            raise
-        finally:
-            self._apply_event_retention()
+        return self.orchestrator().tick()
 
     def _cleanup_terminal_workspaces(self, issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
         terminal_states = self._terminal_states()
@@ -1738,7 +1461,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
                 continue
             issue_id = str(issue.get("id") or "")
             if issue_id in self.running_entries:
-                self._request_supervised_cancel(issue_id, reason="terminal-state")
+                self.orchestrator().request_supervised_cancel(issue_id, reason="terminal-state")
                 cleaned.append(
                     {
                         "issue_id": issue.get("id"),
@@ -1749,8 +1472,8 @@ class IssueRunnerWorkspace(WorkflowDriver):
                     }
                 )
                 continue
-            self._clear_retry(issue_id)
-            self._clear_codex_thread(issue_id)
+            self.orchestrator().clear_retry(issue_id)
+            self._clear_runtime_session(issue_id)
             issue_workspace = _safe_issue_workspace_path(self.issue_workspace_root, issue)
             if not issue_workspace.exists():
                 continue
@@ -1922,30 +1645,11 @@ class IssueRunnerWorkspace(WorkflowDriver):
         max_iterations: int | None = None,
         sleep_fn=time.sleep,
     ) -> dict[str, Any]:
-        iterations = 0
-        last_result = None
-        last_retention = self._apply_event_retention()
-        loop_status = "completed"
-        try:
-            while True:
-                self.reload_contract()
-                last_result = self.supervise_once()
-                last_retention = self._apply_event_retention()
-                iterations += 1
-                if max_iterations is not None and iterations >= max_iterations:
-                    break
-                sleep_fn(self._poll_interval_seconds(interval_seconds))
-        except KeyboardInterrupt:
-            loop_status = "interrupted"
-        last_result = self._reconcile_before_loop_exit(last_result)
-        if not self._supervisor_futures:
-            self.close()
-        return {
-            "loop_status": loop_status,
-            "iterations": iterations,
-            "last_result": last_result,
-            "event_retention": last_retention,
-        }
+        return self.orchestrator().run_loop(
+            interval_seconds=interval_seconds,
+            max_iterations=max_iterations,
+            sleep_fn=sleep_fn,
+        )
 
     def reload_contract(self) -> None:
         try:
@@ -2110,8 +1814,8 @@ def load_workspace_from_config(
         _run_json=runner_json,
         retry_entries={},
         running_entries={},
-        codex_threads={},
-        codex_totals={},
+        runtime_sessions={},
+        runtime_totals={},
     )
     workspace._restore_scheduler_state()
     return workspace

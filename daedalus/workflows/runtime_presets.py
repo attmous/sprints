@@ -31,6 +31,7 @@ from runtimes.capabilities import (
 RUNTIME_PRESETS: dict[str, dict[str, Any]] = {
     "codex-app-server": {
         "kind": "codex-app-server",
+        "stage-command": False,
         "mode": "external",
         "endpoint": "ws://127.0.0.1:4500",
         "ephemeral": False,

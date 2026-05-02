@@ -194,7 +194,7 @@ def test_codex_app_server_doctor_reports_managed_health_and_threads(tmp_path, mo
         workflow="issue-runner",
         running_entries={},
         retry_entries={},
-        codex_threads={
+        runtime_sessions={
             "ISSUE-1": {
                 "issue_id": "ISSUE-1",
                 "identifier": "DAE-1",
@@ -205,7 +205,7 @@ def test_codex_app_server_doctor_reports_managed_health_and_threads(tmp_path, mo
                 "updated_at": "2026-04-30T00:00:00Z",
             }
         },
-        codex_totals={"total_tokens": 42, "turn_count": 1},
+        runtime_totals={"total_tokens": 42, "turn_count": 1},
         now_iso="2026-04-30T00:00:00Z",
         now_epoch=1777507200.0,
     )

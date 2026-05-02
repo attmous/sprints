@@ -682,7 +682,7 @@ def test_workspace_internal_review_uses_configured_runtime(tmp_path):
     assert "Target local head SHA: abc123" in prompt_text
 
 
-def test_workspace_records_change_delivery_codex_threads_and_totals(tmp_path):
+def test_workspace_records_change_delivery_runtime_sessions_and_totals(tmp_path):
     from workflows.change_delivery.workspace import make_workspace
 
     cfg = _workflow_contract_config(tmp_path)
@@ -709,9 +709,9 @@ def test_workspace_records_change_delivery_codex_threads_and_totals(tmp_path):
     scheduler = json.loads((tmp_path / "memory" / "workflow-scheduler.json").read_text(encoding="utf-8"))
     assert metrics["thread_id"] == "thread-224"
     assert scheduler["workflow"] == "change-delivery"
-    assert scheduler["codex_threads"]["lane:224"]["thread_id"] == "thread-224"
-    assert scheduler["codex_totals"]["total_tokens"] == 18
-    assert scheduler["codex_totals"]["rate_limits"] == {"requests_remaining": 99}
+    assert scheduler["runtime_sessions"]["lane:224"]["thread_id"] == "thread-224"
+    assert scheduler["runtime_totals"]["total_tokens"] == 18
+    assert scheduler["runtime_totals"]["rate_limits"] == {"requests_remaining": 99}
     assert ws._codex_thread_for_issue_number(224) == "thread-224"
 
 
@@ -750,7 +750,7 @@ def test_workspace_records_progress_and_interrupts_active_codex_turn(tmp_path):
     result = ws._interrupt_active_implementation_turn(issue_number=224, reason="operator-interrupt")
 
     scheduler = json.loads((tmp_path / "memory" / "workflow-scheduler.json").read_text(encoding="utf-8"))
-    entry = scheduler["codex_threads"]["lane:224"]
+    entry = scheduler["runtime_sessions"]["lane:224"]
     assert result["interrupted"] is True
     assert calls == {"thread_id": "thread-224", "turn_id": "turn-active", "worktree": Path("/tmp/issue-224")}
     assert entry["status"] == "canceling"

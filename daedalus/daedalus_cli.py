@@ -541,11 +541,26 @@ def _workflow_name_for_root(workflow_root: Path) -> str:
     return workflow_name
 
 
+def _load_workflow_module_for_root(workflow_root: Path):
+    workflow_name = _workflow_name_for_root(workflow_root)
+    try:
+        from workflows import load_workflow
+    except ImportError as exc:
+        raise DaedalusCommandError("unable to load workflow dispatcher") from exc
+    try:
+        return load_workflow(workflow_name)
+    except Exception as exc:
+        raise DaedalusCommandError(f"unable to load workflow {workflow_name!r}: {exc}") from exc
+
+
 def _assert_service_mode_supported(*, workflow_root: Path, service_mode: str) -> str:
     workflow_name = _workflow_name_for_root(workflow_root)
-    if workflow_name == "issue-runner" and service_mode != "active":
+    module = _load_workflow_module_for_root(workflow_root)
+    supported_modes = getattr(module, "SERVICE_MODES", None)
+    if supported_modes is not None and service_mode not in set(supported_modes):
         raise DaedalusCommandError(
-            "issue-runner supports only active supervised mode; use --service-mode active"
+            f"{workflow_name} does not support service mode {service_mode!r}; "
+            f"supported: {sorted(supported_modes)}"
         )
     return workflow_name
 
@@ -815,44 +830,18 @@ def service_loop(
     service_mode: str,
 ) -> dict[str, Any]:
     workflow_name = _assert_service_mode_supported(workflow_root=workflow_root, service_mode=service_mode)
-    if workflow_name == "change-delivery":
-        daedalus = _load_daedalus_module(workflow_root)
-        resolved_project_key = project_key or daedalus._project_key_for(workflow_root)
-        resolved_instance_id = instance_id or _instance_id_for(service_mode=service_mode, workspace=workflow_root.name)
-        lane_selection = (
-            _ensure_change_delivery_active_lane_for_start(workflow_root)
-            if service_mode == "active"
-            else None
-        )
-        if service_mode == "shadow":
-            return daedalus.run_shadow_loop(
-                workflow_root=workflow_root,
-                project_key=resolved_project_key,
-                instance_id=resolved_instance_id,
-                interval_seconds=interval_seconds,
-                max_iterations=max_iterations,
-            )
-        result = daedalus.run_active_loop(
-            workflow_root=workflow_root,
-            project_key=resolved_project_key,
-            instance_id=resolved_instance_id,
-            interval_seconds=interval_seconds,
-            max_iterations=max_iterations,
-        )
-        result["lane_selection"] = lane_selection
-        return result
-    if workflow_name == "issue-runner":
-        workspace = _load_issue_runner_workspace(workflow_root)
-        payload = workspace.run_loop(
-            interval_seconds=interval_seconds,
-            max_iterations=max_iterations,
-        )
-        return {
-            "workflow": workflow_name,
-            "service_mode": service_mode,
-            **payload,
-        }
-    raise DaedalusCommandError(f"unsupported workflow for service-loop: {workflow_name}")
+    module = _load_workflow_module_for_root(workflow_root)
+    loop_fn = getattr(module, "service_loop", None)
+    if not callable(loop_fn):
+        raise DaedalusCommandError(f"workflow {workflow_name!r} does not expose service_loop")
+    return loop_fn(
+        workflow_root=workflow_root,
+        project_key=project_key,
+        instance_id=instance_id,
+        interval_seconds=interval_seconds,
+        max_iterations=max_iterations,
+        service_mode=service_mode,
+    )
 
 
 def service_up(
@@ -869,17 +858,6 @@ def service_up(
         service_mode=service_mode,
     )
     workflow_name = preflight_result.get("workflow")
-    if workflow_name == "change-delivery":
-        daedalus = _load_daedalus_module(workflow_root)
-        init_result = daedalus.init_daedalus_db(workflow_root=workflow_root, project_key=project_key)
-    else:
-        init_result = {
-            "ok": True,
-            "workflow": workflow_name,
-            "skipped": True,
-            "reason": "workflow-managed runtime does not require daedalus.db bootstrap",
-        }
-    lane_selection_result = None
 
     install_result = install_supervised_service(
         workflow_root=workflow_root,
@@ -909,8 +887,24 @@ def service_up(
             f"{enable_result.get('stderr') or enable_result.get('stdout') or enable_result.get('returncode')}"
         )
 
-    if workflow_name == "change-delivery" and service_mode == "active":
-        lane_selection_result = _ensure_change_delivery_active_lane_for_start(workflow_root)
+    module = _load_workflow_module_for_root(workflow_root)
+    prepare_fn = getattr(module, "service_prepare", None)
+    if callable(prepare_fn):
+        prepare_result = prepare_fn(
+            workflow_root=workflow_root,
+            project_key=project_key,
+            service_mode=service_mode,
+        )
+        init_result = prepare_result.get("init") or prepare_result
+        lane_selection_result = prepare_result.get("lane_selection")
+    else:
+        init_result = {
+            "ok": True,
+            "workflow": workflow_name,
+            "skipped": True,
+            "reason": "workflow does not expose service_prepare",
+        }
+        lane_selection_result = None
 
     start_result = service_control(
         "start",
@@ -1324,8 +1318,8 @@ def _load_codex_scheduler_snapshot(workflow_root: Path) -> dict[str, Any]:
         )
         if scheduler is None:
             continue
-        raw_threads = scheduler.get("codex_threads") or scheduler.get("codexThreads") or {}
-        totals = scheduler.get("codex_totals") or scheduler.get("codexTotals") or {}
+        raw_threads = scheduler.get("runtime_sessions") or {}
+        totals = scheduler.get("runtime_totals") or {}
         if raw_threads or totals or workflow_name == workflow_names[-1]:
             break
 
@@ -1339,7 +1333,7 @@ def _load_codex_scheduler_snapshot(workflow_root: Path) -> dict[str, Any]:
             "invalid_thread_count": 0,
             "error": None,
         }
-    raw_threads = scheduler.get("codex_threads") or scheduler.get("codexThreads") or {}
+    raw_threads = scheduler.get("runtime_sessions") or {}
     threads: list[dict[str, Any]] = []
     invalid_thread_count = 0
     if isinstance(raw_threads, dict):
@@ -1347,27 +1341,27 @@ def _load_codex_scheduler_snapshot(workflow_root: Path) -> dict[str, Any]:
             if not isinstance(raw_entry, dict):
                 invalid_thread_count += 1
                 continue
-            thread_id = raw_entry.get("thread_id") or raw_entry.get("threadId")
+            thread_id = raw_entry.get("thread_id")
             if not str(thread_id or "").strip():
                 invalid_thread_count += 1
-            issue_number = raw_entry.get("issue_number") or raw_entry.get("issueNumber")
+            issue_number = raw_entry.get("issue_number")
             threads.append(
                 {
                     "issue_id": raw_entry.get("issue_id") or issue_id,
                     "issue_number": issue_number,
                     "identifier": raw_entry.get("identifier") or (f"#{issue_number}" if issue_number else issue_id),
-                    "session_name": raw_entry.get("session_name") or raw_entry.get("sessionName"),
-                    "runtime_name": raw_entry.get("runtime_name") or raw_entry.get("runtimeName"),
-                    "runtime_kind": raw_entry.get("runtime_kind") or raw_entry.get("runtimeKind"),
+                    "session_name": raw_entry.get("session_name"),
+                    "runtime_name": raw_entry.get("runtime_name"),
+                    "runtime_kind": raw_entry.get("runtime_kind"),
                     "thread_id": thread_id,
-                    "turn_id": raw_entry.get("turn_id") or raw_entry.get("turnId"),
+                    "turn_id": raw_entry.get("turn_id"),
                     "status": raw_entry.get("status"),
-                    "cancel_requested": bool(raw_entry.get("cancel_requested") or raw_entry.get("cancelRequested") or False),
-                    "cancel_reason": raw_entry.get("cancel_reason") or raw_entry.get("cancelReason"),
-                    "updated_at": raw_entry.get("updated_at") or raw_entry.get("updatedAt"),
+                    "cancel_requested": bool(raw_entry.get("cancel_requested") or False),
+                    "cancel_reason": raw_entry.get("cancel_reason"),
+                    "updated_at": raw_entry.get("updated_at"),
                 }
             )
-    totals = scheduler.get("codex_totals") or scheduler.get("codexTotals") or {}
+    totals = scheduler.get("runtime_totals") or {}
     return {
         "ok": invalid_thread_count == 0,
         "path": str(db_path),

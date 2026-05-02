@@ -31,6 +31,30 @@ def _make_workflow_root(tmp_path):
     return root
 
 
+def _write_change_delivery_contract(root: Path):
+    from workflows.contract import render_workflow_markdown
+
+    (root / "WORKFLOW.md").write_text(
+        render_workflow_markdown(
+            config={
+                "workflow": "change-delivery",
+                "schema-version": 1,
+                "instance": {"name": "attmous-daedalus-change-delivery", "engine-owner": "hermes"},
+                "repository": {"local-path": "/tmp/repo", "slug": "attmous/daedalus", "active-lane-label": "active-lane"},
+                "tracker": {"kind": "github", "github_slug": "attmous/daedalus"},
+                "code-host": {"kind": "github", "github_slug": "attmous/daedalus"},
+                "runtimes": {"coder-runtime": {"kind": "codex-app-server", "stage-command": False, "command": "codex app-server"}},
+                "actors": {"implementer": {"name": "coder", "model": "gpt-5.5", "runtime": "coder-runtime"}},
+                "stages": {"implement": {"actor": "implementer"}},
+                "gates": {"ci-green": {"type": "code-host-checks"}},
+                "triggers": {"lane-selector": {"type": "github-label", "label": "active-lane"}},
+            },
+            prompt_template="Deliver the active change.",
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_read_recent_daedalus_events_returns_last_n_lines_newest_first(tmp_path):
     sources = _module()
     root = _make_workflow_root(tmp_path)
@@ -94,11 +118,12 @@ def test_recent_engine_events_reads_sqlite_ledger(tmp_path):
 def test_read_active_lanes_from_db(tmp_path):
     """Schema must match the real ``lanes`` table in runtime.py:
        lane_id (PK), issue_number, workflow_state, lane_status.
-    Earlier drafts of active_lanes() queried `state` / `github_issue_number`
+    Earlier drafts of active_lanes() queried display aliases
     which silently raised sqlite3.OperationalError and was caught — making
     /daedalus watch always show no active lanes against a real db."""
     sources = _module()
     root = _make_workflow_root(tmp_path)
+    _write_change_delivery_contract(root)
     db_path = root / "runtime" / "state" / "daedalus" / "daedalus.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
@@ -117,7 +142,7 @@ def test_read_active_lanes_from_db(tmp_path):
     assert lanes[0]["state"] == "under_review"             # consumer-facing alias
     assert lanes[0]["workflow_state"] == "under_review"    # canonical column name
     assert lanes[0]["issue_number"] == 329
-    assert lanes[0]["github_issue_number"] == 329          # consumer-facing alias
+    assert lanes[0]["issue_identifier"] == "#329"
     assert lanes[0]["lane_status"] == "active"
     assert lanes[0]["work_item"]["id"] == "lane-329"
     assert lanes[0]["work_item"]["identifier"] == "#329"
@@ -135,6 +160,7 @@ def test_active_lanes_returns_empty_when_query_fails():
         (root / "runtime" / "state" / "daedalus").mkdir(parents=True)
         (root / "config").mkdir()
         (root / "workspace").mkdir()
+        _write_change_delivery_contract(root)
         db_path = root / "runtime" / "state" / "daedalus" / "daedalus.db"
         conn = sqlite3.connect(db_path)
         # Wrong-shape lanes table — the prior bug.
@@ -198,8 +224,8 @@ def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
         workflow="issue-runner",
         running_entries={"123": {"issue_id": "123", "identifier": "#123", "state": "open"}},
         retry_entries={"124": {"issue_id": "124", "identifier": "#124", "error": "x", "due_at_epoch": 1714478410.0}},
-        codex_totals={"total_tokens": 18, "rate_limits": {"requests_remaining": 88}},
-        codex_threads={},
+        runtime_totals={"total_tokens": 18, "rate_limits": {"requests_remaining": 88}},
+        runtime_sessions={},
         now_iso="2026-04-30T12:00:20Z",
         now_epoch=1714478400.0,
     )
@@ -231,7 +257,7 @@ def test_issue_runner_watch_sources_use_repo_storage_paths(tmp_path):
     assert workflow_status["latest_runs"][0]["selected_count"] == 1
 
 
-def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
+def test_change_delivery_watch_sources_surface_canceling_runtime_sessions(tmp_path):
     from engine.state import save_engine_scheduler_state
     from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
@@ -248,7 +274,7 @@ def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
                 "repository": {"local-path": "/tmp/repo", "slug": "attmous/daedalus", "active-lane-label": "active-lane"},
                 "tracker": {"kind": "github", "github_slug": "attmous/daedalus", "active_states": ["open"], "terminal_states": ["closed"]},
                 "code-host": {"kind": "github", "github_slug": "attmous/daedalus"},
-                "runtimes": {"coder-runtime": {"kind": "codex-app-server", "command": "codex app-server"}},
+                "runtimes": {"coder-runtime": {"kind": "codex-app-server", "stage-command": False, "command": "codex app-server"}},
                 "actors": {"implementer": {"name": "coder", "model": "gpt-5.5", "runtime": "coder-runtime"}},
                 "stages": {"implement": {"actor": "implementer"}},
                 "gates": {"ci-green": {"type": "code-host-checks"}},
@@ -265,8 +291,8 @@ def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
         workflow="change-delivery",
         running_entries={},
         retry_entries={},
-        codex_totals={"total_tokens": 18},
-        codex_threads={
+        runtime_totals={"total_tokens": 18},
+        runtime_sessions={
             "lane:42": {
                 "issue_id": "lane:42",
                 "issue_number": 42,
@@ -296,7 +322,7 @@ def test_change_delivery_watch_sources_surface_canceling_codex_turns(tmp_path):
     assert workflow_status["running_count"] == 0
     assert workflow_status["canceling_count"] == 1
     assert workflow_status["total_tokens"] == 18
-    assert workflow_status["codex_turns"][0]["thread_id"] == "thread-42"
-    assert workflow_status["codex_turns"][0]["turn_id"] == "turn-42"
-    assert workflow_status["codex_turns"][0]["cancel_reason"] == "operator-interrupt"
+    assert workflow_status["runtime_sessions"][0]["thread_id"] == "thread-42"
+    assert workflow_status["runtime_sessions"][0]["turn_id"] == "turn-42"
+    assert workflow_status["runtime_sessions"][0]["cancel_reason"] == "operator-interrupt"
     assert workflow_status["latest_runs"][0]["mode"] == "active-iteration"

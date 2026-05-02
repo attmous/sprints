@@ -35,7 +35,6 @@ def _validate_config(config: dict[str, Any], *, workflow_root: Path) -> None:
     daedalus_cfg = config.get("daedalus") or {}
     runtimes = config.get("runtimes") or (daedalus_cfg.get("runtimes") if isinstance(daedalus_cfg, dict) else {}) or {}
     agent = config.get("agent") or {}
-    codex_cfg = config.get("codex") or {}
     runtime_name = str(agent.get("runtime") or "").strip()
     if runtime_name:
         if runtime_name not in runtimes:
@@ -50,16 +49,15 @@ def _validate_config(config: dict[str, Any], *, workflow_root: Path) -> None:
         if runtime_kind == "codex-app-server":
             runtime_mode = str(
                 runtime_cfg.get("mode")
-                or codex_cfg.get("mode")
-                or ("external" if runtime_cfg.get("endpoint") or codex_cfg.get("endpoint") else "managed")
+                or ("external" if runtime_cfg.get("endpoint") else "managed")
             ).strip()
-            if runtime_mode == "external" and not (runtime_cfg.get("endpoint") or codex_cfg.get("endpoint")):
+            if runtime_mode == "external" and not runtime_cfg.get("endpoint"):
                 raise RuntimeError(
-                    "external codex-app-server runtime requires endpoint on the runtime profile or codex block"
+                    "external codex-app-server runtime requires endpoint on the runtime profile"
                 )
-            if runtime_mode != "external" and not (runtime_cfg.get("command") or codex_cfg.get("command")):
+            if runtime_mode != "external" and not runtime_cfg.get("command"):
                 raise RuntimeError(
-                    "codex-app-server runtime requires command on the runtime profile or codex block"
+                    "managed codex-app-server runtime requires command on the runtime profile"
                 )
     else:
         raise RuntimeError("issue-runner requires agent.runtime")

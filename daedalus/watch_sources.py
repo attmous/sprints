@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from engine.state import read_engine_events, read_engine_runs, read_engine_scheduler_state
-from engine.work_items import work_item_from_change_delivery_lane, work_item_from_issue
+from engine.work_items import work_item_from_issue
+from workflows.change_delivery.work_items import lane_to_work_item_ref
 from workflows.contract import WorkflowContractError, load_workflow_contract
 
 # Sibling-import boilerplate.
@@ -131,7 +132,7 @@ def recent_workflow_audit(workflow_root: Path, limit: int = 50) -> list[dict[str
 def recent_engine_events(workflow_root: Path, limit: int = 50) -> list[dict[str, Any]]:
     workflow_root = Path(workflow_root)
     workflow = _workflow_name(workflow_root)
-    if workflow not in {"issue-runner", "change-delivery"}:
+    if not workflow:
         return []
     return [
         {**event, "source": "engine-events"}
@@ -146,8 +147,11 @@ def recent_engine_events(workflow_root: Path, limit: int = 50) -> list[dict[str,
 
 def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
     workflow_root = Path(workflow_root)
-    if _workflow_name(workflow_root) == "issue-runner":
-        scheduler = _engine_scheduler(workflow_root, "issue-runner")
+    workflow_name = _workflow_name(workflow_root)
+    if not workflow_name:
+        return []
+    if workflow_name == "issue-runner":
+        scheduler = _engine_scheduler(workflow_root, workflow_name)
         out: list[dict[str, Any]] = []
         for row in scheduler.get("running") or []:
             if not isinstance(row, dict):
@@ -166,8 +170,6 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
                     "lane_id": row.get("issue_id"),
                     "state": row.get("state") or "running",
                     "workflow_state": row.get("state") or "running",
-                    "github_issue_number": identifier,
-                    "issue_number": identifier,
                     "issue_identifier": identifier,
                     "lane_status": "active",
                     "kind": "running",
@@ -191,8 +193,6 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
                     "lane_id": row.get("issue_id"),
                     "state": "retrying",
                     "workflow_state": "retrying",
-                    "github_issue_number": identifier,
-                    "issue_number": identifier,
                     "issue_identifier": identifier,
                     "lane_status": "retrying",
                     "kind": "retrying",
@@ -200,6 +200,21 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
                 }
             )
         return out
+
+    if workflow_name != "change-delivery":
+        scheduler = _engine_scheduler(workflow_root, workflow_name)
+        return [
+            {
+                "lane_id": row.get("issue_id"),
+                "state": row.get("state") or row.get("worker_status") or "running",
+                "workflow_state": row.get("state") or row.get("worker_status") or "running",
+                "issue_identifier": row.get("identifier") or row.get("issue_id"),
+                "lane_status": row.get("worker_status") or "running",
+                "kind": "running",
+            }
+            for row in (scheduler.get("running") or [])
+            if isinstance(row, dict)
+        ]
 
     paths = runtime_paths(Path(workflow_root))
     db_path = paths["db_path"]
@@ -212,7 +227,8 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
     try:
         # Real columns per runtime.py lanes schema:
         #   lane_id (PK), issue_number, workflow_state, lane_status, ...
-        # An earlier draft queried `state` and `github_issue_number` which
+        # An earlier draft queried generic display aliases instead of the
+        # real lanes schema, which
         # raised sqlite3.OperationalError against any real db, silently
         # returning [] and making /daedalus watch falsely report
         # "no active lanes" even when lanes existed.
@@ -230,11 +246,11 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
                 # consumers that care.
                 "state": row[1],
                 "workflow_state": row[1],
-                "github_issue_number": row[2],
                 "issue_number": row[2],
+                "issue_identifier": f"#{row[2]}",
                 "lane_status": row[3],
             }
-            lane["work_item"] = work_item_from_change_delivery_lane(lane).to_dict()
+            lane["work_item"] = lane_to_work_item_ref(lane).to_dict()
             out.append(lane)
     except sqlite3.OperationalError:
         out = []
@@ -254,23 +270,23 @@ def alert_state(workflow_root: Path) -> dict[str, Any]:
         return {}
 
 
-def _codex_turn_entries(scheduler: dict[str, Any]) -> list[dict[str, Any]]:
+def _runtime_session_entries(scheduler: dict[str, Any]) -> list[dict[str, Any]]:
     entries = []
-    for issue_id, raw_entry in (scheduler.get("codex_threads") or scheduler.get("codexThreads") or {}).items():
+    for issue_id, raw_entry in (scheduler.get("runtime_sessions") or {}).items():
         if not isinstance(raw_entry, dict):
             continue
-        issue_number = raw_entry.get("issue_number") or raw_entry.get("issueNumber")
+        issue_number = raw_entry.get("issue_number")
         entries.append(
             {
                 "issue_id": raw_entry.get("issue_id") or issue_id,
                 "issue_number": issue_number,
                 "issue_identifier": raw_entry.get("identifier") or (f"#{issue_number}" if issue_number else issue_id),
-                "thread_id": raw_entry.get("thread_id") or raw_entry.get("threadId"),
-                "turn_id": raw_entry.get("turn_id") or raw_entry.get("turnId"),
+                "thread_id": raw_entry.get("thread_id"),
+                "turn_id": raw_entry.get("turn_id"),
                 "status": raw_entry.get("status"),
-                "cancel_requested": bool(raw_entry.get("cancel_requested") or raw_entry.get("cancelRequested") or False),
-                "cancel_reason": raw_entry.get("cancel_reason") or raw_entry.get("cancelReason"),
-                "updated_at": raw_entry.get("updated_at") or raw_entry.get("updatedAt"),
+                "cancel_requested": bool(raw_entry.get("cancel_requested") or False),
+                "cancel_reason": raw_entry.get("cancel_reason"),
+                "updated_at": raw_entry.get("updated_at"),
             }
         )
     return sorted(entries, key=lambda item: str(item.get("issue_id") or ""))
@@ -279,44 +295,61 @@ def _codex_turn_entries(scheduler: dict[str, Any]) -> list[dict[str, Any]]:
 def workflow_status(workflow_root: Path) -> dict[str, Any]:
     workflow_root = Path(workflow_root)
     workflow_name = _workflow_name(workflow_root)
-    if workflow_name not in {"issue-runner", "change-delivery"}:
+    if not workflow_name:
         return {}
     if workflow_name == "change-delivery":
         scheduler_payload = _engine_scheduler(workflow_root, "change-delivery")
-        totals = scheduler_payload.get("codex_totals") or scheduler_payload.get("codexTotals") or {}
-        codex_turns = _codex_turn_entries(scheduler_payload)
+        totals = scheduler_payload.get("runtime_totals") or {}
+        runtime_sessions = _runtime_session_entries(scheduler_payload)
         latest_runs = _engine_runs(workflow_root, "change-delivery")
         return {
             "workflow": "change-delivery",
             "health": None,
-            "updated_at": scheduler_payload.get("updatedAt"),
-            "running_count": len([entry for entry in codex_turns if entry.get("status") == "running"]),
+            "updated_at": scheduler_payload.get("updated_at"),
+            "running_count": len([entry for entry in runtime_sessions if entry.get("status") == "running"]),
             "retry_count": 0,
-            "canceling_count": len([entry for entry in codex_turns if entry.get("status") == "canceling"]),
+            "canceling_count": len([entry for entry in runtime_sessions if entry.get("status") == "canceling"]),
             "selected_issue": None,
-            "codex_turns": codex_turns,
+            "runtime_sessions": runtime_sessions,
             "latest_runs": latest_runs,
             "total_tokens": int(totals.get("total_tokens") or 0),
             "rate_limits": totals.get("rate_limits"),
         }
+    if workflow_name != "issue-runner":
+        scheduler_payload = _engine_scheduler(workflow_root, workflow_name)
+        totals = scheduler_payload.get("runtime_totals") or {}
+        running = scheduler_payload.get("running") or []
+        retry_queue = scheduler_payload.get("retry_queue") or []
+        return {
+            "workflow": workflow_name,
+            "health": None,
+            "updated_at": scheduler_payload.get("updated_at"),
+            "running_count": len(running),
+            "retry_count": len(retry_queue),
+            "selected_issue": None,
+            "latest_runs": _engine_runs(workflow_root, workflow_name),
+            "total_tokens": int(totals.get("total_tokens") or 0),
+            "rate_limits": totals.get("rate_limits"),
+        }
+
     status_path = _resolve_issue_runner_storage_path(workflow_root, "status", "memory/workflow-status.json")
     status_payload = _load_optional_json(status_path) or {}
     scheduler_payload = _engine_scheduler(workflow_root, "issue-runner")
     scheduler = {
         "running": scheduler_payload.get("running") or [],
-        "retry_queue": scheduler_payload.get("retry_queue") or scheduler_payload.get("retryQueue") or [],
-        "codex_totals": scheduler_payload.get("codex_totals") or scheduler_payload.get("codexTotals") or {},
+        "retry_queue": scheduler_payload.get("retry_queue") or [],
+        "runtime_totals": scheduler_payload.get("runtime_totals") or {},
     }
     last_run = status_payload.get("lastRun") or {}
     latest_runs = _engine_runs(workflow_root, "issue-runner")
     return {
         "workflow": "issue-runner",
         "health": status_payload.get("health"),
-        "updated_at": scheduler_payload.get("updatedAt") or last_run.get("updatedAt"),
+        "updated_at": scheduler_payload.get("updated_at") or last_run.get("updatedAt"),
         "running_count": len(scheduler["running"]),
         "retry_count": len(scheduler["retry_queue"]),
         "selected_issue": ((last_run.get("issue") or {}).get("identifier") or (last_run.get("issue") or {}).get("id")),
         "latest_runs": latest_runs,
-        "total_tokens": int((scheduler["codex_totals"].get("total_tokens") or 0)),
-        "rate_limits": scheduler["codex_totals"].get("rate_limits"),
+        "total_tokens": int((scheduler["runtime_totals"].get("total_tokens") or 0)),
+        "rate_limits": scheduler["runtime_totals"].get("rate_limits"),
     }

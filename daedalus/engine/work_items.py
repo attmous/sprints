@@ -101,27 +101,3 @@ def work_item_from_issue(issue: dict[str, Any], *, source: str | None = None) ->
         source=source,
         metadata={"raw": issue},
     )
-
-
-def work_item_from_change_delivery_lane(lane: dict[str, Any]) -> WorkItemRef:
-    lane_id = str(lane.get("lane_id") or lane.get("laneId") or "").strip()
-    issue_number = lane.get("issue_number") or lane.get("issueNumber") or lane.get("github_issue_number")
-    if not lane_id:
-        if issue_number in (None, ""):
-            raise ValueError("change-delivery lane is missing lane_id and issue_number")
-        lane_id = f"lane:{issue_number}"
-    identifier = f"#{issue_number}" if issue_number not in (None, "") else lane_id
-    return WorkItemRef(
-        id=lane_id,
-        identifier=identifier,
-        state=str(lane.get("workflow_state") or lane.get("workflowState") or "").strip() or None,
-        title=str(lane.get("issue_title") or lane.get("issueTitle") or "").strip() or None,
-        url=str(lane.get("issue_url") or lane.get("issueUrl") or "").strip() or None,
-        source="change-delivery",
-        metadata={
-            "issue_number": issue_number,
-            "lane_status": lane.get("lane_status") or lane.get("laneStatus"),
-            "active_actor_id": lane.get("active_actor_id") or lane.get("activeActorId"),
-            "current_action_id": lane.get("current_action_id") or lane.get("currentActionId"),
-        },
-    )

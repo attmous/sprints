@@ -214,16 +214,19 @@ def test_run_cli_command_dispatches_bootstrap(tmp_path, capsys, monkeypatch):
 def test_run_cli_command_dispatches_service_loop_for_issue_runner(tmp_path, capsys, monkeypatch):
     tools = _tools()
 
-    class FakeWorkspace:
-        def run_loop(self, *, interval_seconds, max_iterations):
+    class FakeWorkflowModule:
+        @staticmethod
+        def service_loop(*, workflow_root, project_key, instance_id, interval_seconds, max_iterations, service_mode):
             return {
+                "workflow": "issue-runner",
+                "service_mode": service_mode,
                 "loop_status": "completed",
                 "iterations": max_iterations,
                 "last_result": {"ok": True},
             }
 
     monkeypatch.setattr(tools, "_assert_service_mode_supported", lambda **kwargs: "issue-runner")
-    monkeypatch.setattr(tools, "_load_issue_runner_workspace", lambda workflow_root: FakeWorkspace())
+    monkeypatch.setattr(tools, "_load_workflow_module_for_root", lambda workflow_root: FakeWorkflowModule)
     monkeypatch.setattr(tools, "_record_operator_command_event", lambda **kwargs: None)
 
     args = _parse(

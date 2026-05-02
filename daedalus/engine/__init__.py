@@ -23,7 +23,7 @@ from .retention import normalize_event_retention
 from .scheduler import (
     RestoredSchedulerState,
     build_scheduler_payload,
-    codex_threads_snapshot,
+    runtime_sessions_snapshot,
     restore_scheduler_state,
     retry_due_at,
     retry_queue_snapshot,
@@ -59,7 +59,6 @@ from .work_items import (
     RunningWork,
     WorkItemRef,
     WorkResult,
-    work_item_from_change_delivery_lane,
     work_item_from_issue,
 )
 
@@ -76,7 +75,7 @@ __all__ = [
     "append_jsonl",
     "build_scheduler_payload",
     "clear_work_entries",
-    "codex_threads_snapshot",
+    "runtime_sessions_snapshot",
     "connect_daedalus_db",
     "engine_event_stats_from_connection",
     "engine_events_from_connection",
@@ -111,7 +110,6 @@ __all__ = [
     "save_engine_scheduler_state_to_connection",
     "release_engine_lease",
     "start_engine_run_to_connection",
-    "work_item_from_change_delivery_lane",
     "work_item_from_issue",
     "write_json_atomic",
     "write_text_atomic",
