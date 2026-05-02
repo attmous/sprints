@@ -216,11 +216,12 @@ def _write_fake_cancellable_app_server(path: Path, requests_path: Path) -> None:
 
 
 class _FakeWebSocketAppServer:
-    def __init__(self, *, required_auth_token: str | None = None):
+    def __init__(self, *, required_auth_token: str | None = None, turn_completion_delay_s: float = 0):
         self.requests: list[dict] = []
         self.websocket_authorizations: list[str | None] = []
         self.websocket_connections = 0
         self.required_auth_token = required_auth_token
+        self.turn_completion_delay_s = turn_completion_delay_s
         self._stop = threading.Event()
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -317,6 +318,8 @@ class _FakeWebSocketAppServer:
                         "params": {"threadId": thread_id, "turnId": "turn-ws", "itemId": "item-1", "delta": "ws ok"},
                     },
                 )
+                if self.turn_completion_delay_s:
+                    time.sleep(self.turn_completion_delay_s)
                 completed = {"id": "turn-ws", "status": "completed", "items": []}
                 self._send_ws_json(
                     conn,
@@ -958,6 +961,34 @@ def test_codex_app_server_runtime_sends_external_websocket_auth_token(tmp_path):
         "thread/start",
         "turn/start",
     ]
+
+
+def test_codex_app_server_runtime_allows_external_websocket_quiet_period_longer_than_read_timeout(tmp_path):
+    from runtimes.codex_app_server import CodexAppServerRuntime
+
+    with _FakeWebSocketAppServer(turn_completion_delay_s=1.2) as server:
+        runtime = CodexAppServerRuntime(
+            {
+                "mode": "external",
+                "endpoint": server.endpoint,
+                "approval_policy": "never",
+                "turn_timeout_ms": 5000,
+                "read_timeout_ms": 1000,
+                "stall_timeout_ms": 4000,
+            },
+            run=None,
+        )
+
+        result = runtime.run_prompt_result(
+            worktree=tmp_path,
+            session_name="ISSUE-QUIET-WS",
+            prompt="Work quietly",
+            model="gpt-5.5",
+        )
+
+    assert result.output == "ws ok\n"
+    assert result.thread_id == "thread-ws"
+    assert result.turn_id == "turn-ws"
 
 
 def test_codex_app_server_runtime_reuses_external_websocket_by_default(tmp_path):

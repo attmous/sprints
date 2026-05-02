@@ -308,6 +308,9 @@ class _WebSocketAppServerClient(_AppServerClient):
         response_headers = self._parse_http_headers(response)
         if response_headers.get("sec-websocket-accept", "") != accept:
             raise CodexAppServerError("codex-app-server websocket handshake returned an invalid accept key")
+        # Keep the handshake bounded, then let poll_message, turn_timeout, and
+        # stall_timeout control idle reads during long-running turns.
+        sock.settimeout(None)
         return sock
 
     def _read_http_response(self, sock: socket.socket) -> str:
