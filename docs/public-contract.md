@@ -40,12 +40,9 @@ We can refactor those freely as long as the stable surfaces above keep working.
 
 ## Restructure guardrails
 
-The implementation source of truth remains under `daedalus/`. The repo-root
-packages `engine/`, `workflows/`, `runtimes/`, and `trackers/` are compatibility
-shims for existing imports, direct workflow CLI entrypoints, and plugin runtime
-paths. New implementation code should live under `daedalus/` while both
-`<package>` and `daedalus.<package>` imports remain available during the
-restructure.
+The implementation source of truth is `daedalus/`. Repo-root compatibility
+packages are not part of the public contract; direct imports should use the
+installed plugin layout or the `daedalus.<package>` package path.
 
 ## Bundled workflows
 

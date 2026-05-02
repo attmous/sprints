@@ -73,7 +73,7 @@ pytest -n auto  # parallel (requires pytest-xdist)
 
 1. **Implement the Protocol** in `daedalus/runtimes/your_runtime.py`:
    ```python
-   from runtimes import register
+   from daedalus.runtimes import register
 
    @register("your-kind")
    class YourRuntime:
