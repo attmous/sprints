@@ -43,7 +43,7 @@ It is specifically written for the opinionated `change-delivery` workflow.
 | Layer | Command | Answers |
 |:---|:---|:---|
 | **GitHub** | `gh issue view 220`, `gh pr view 42` | Labels, head, draft, review threads |
-| **Workflow** | `/workflow change-delivery status --json` | `nextAction`, `health`, `derivedReviewLoopState` |
+| **Workflow** | `/workflow agentic status --json` | current stage, status, state path |
 | **Sprints** | `/sprints doctor` | Runtime freshness, ownership, action compatibility, failures |
 
 ---

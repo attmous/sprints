@@ -1,8 +1,8 @@
 # Sprints installation
 
 This is the supported community install path for the first public release.
-The default managed path is for the bundled `issue-runner` workflow. Use
-`change-delivery` when you want the opinionated GitHub-first SDLC workflow.
+The managed path is the agentic workflow engine plus a repo-owned
+`WORKFLOW.md` policy contract.
 
 ## Requirements
 
@@ -18,23 +18,17 @@ Start the shared listener with `hermes sprints codex-app-server up`, or edit
 `WORKFLOW.md` / run `configure-runtime` if a stage should use Hermes Agent
 instead.
 
-The bundled `issue-runner` template defaults to `tracker.kind: local-json` so
-it is runnable without an external tracker. For first-class tracker operation,
-switch it to `tracker.kind: github`, set `tracker.github_slug`, and keep `gh`
-authenticated before running `service-up`. Linear exists as an experimental adapter,
-but it is deferred until the GitHub adapter is hardened further.
+Bundled policy templates live under `sprints/workflows/templates/` and are
+copyable starting points for common operator flows.
 
 ## Bundled workflows
 
-Sprints currently ships two workflow packages:
+Sprints ships one workflow engine, `agentic`, and four policy templates:
 
-- `change-delivery`
-  This is the opinionated issue-to-PR SDLC workflow. Its default production
-  config uses GitHub as both `tracker` and `code-host`. Use
-  `bootstrap --workflow change-delivery`, then bring it up with `service-up`.
-- `issue-runner`
-  This is the bundled generic tracker-driven workflow behind the default
-  `bootstrap` and `service-up` path.
+- `issue-runner.md`
+- `change-delivery.md`
+- `release.md`
+- `triage.md`
 
 ## Install the plugin
 
@@ -66,12 +60,12 @@ hermes sprints bootstrap
 $EDITOR WORKFLOW.md
 hermes sprints codex-app-server up
 hermes sprints validate
-hermes sprints service-up
+hermes sprints status
 ```
 
-This bootstraps the generic `issue-runner` workflow by default. To bootstrap
-the opinionated SDLC workflow instead, run
-`hermes sprints bootstrap --workflow change-delivery`.
+This bootstraps an agentic workflow root and writes the repo-owned contract.
+Replace `WORKFLOW.md` with one of the bundled policy templates if you want a
+fuller workflow shape than the minimal bootstrap contract.
 
 `bootstrap`:
 
@@ -104,14 +98,15 @@ That creates the same supported instance layout:
 ~/.hermes/workflows/<owner>-<repo>-<workflow-type>/
 ```
 
-If you want the opinionated change-delivery workflow instead:
+Bundled policy templates live under `sprints/workflows/templates/`:
 
-```bash
-hermes sprints scaffold-workflow \
-  --workflow change-delivery \
-  --workflow-root ~/.hermes/workflows/your-org-your-repo-change-delivery \
-  --repo-slug your-org/your-repo
-```
+- `issue-runner.md`
+- `change-delivery.md`
+- `release.md`
+- `triage.md`
+
+Use one of those as the starting point for the repo-owned `WORKFLOW.md` when
+you want a fuller policy than the minimal bootstrap contract.
 
 The first workflow in a repo is written to:
 
@@ -193,7 +188,8 @@ hosts.
 ```bash
 hermes sprints validate
 hermes sprints doctor
-hermes sprints service-up
+hermes sprints codex-app-server up
+hermes sprints status
 ```
 
 Run `validate` after editing `WORKFLOW.md`. It checks the contract file,
@@ -201,20 +197,7 @@ workflow schema, schema version, instance naming, repository path, service mode,
 runtime role bindings, and workflow preflight rules. `doctor` adds host/runtime
 readiness checks such as missing CLIs, unreachable Codex app-server, GitHub auth,
 and workspace access. Both commands include `next steps` recommendations when
-they find a problem. `service-up` runs validation again before it installs or
-starts the user service.
-
-`service-up` runs the supported post-edit path in one command:
-
-- initialize runtime state
-- validate `WORKFLOW.md` and workflow preflight rules
-- install the user systemd unit
-- enable the unit
-- start the service
-
-Use `--service-mode shadow` if you want read-only parity validation first.
-That `shadow` mode applies to `change-delivery`. `issue-runner` supports
-`active` mode only.
+they find a problem.
 
 If your workflow contract uses an external `codex-app-server` runtime, bring up
 the shared Codex listener once:
@@ -231,45 +214,27 @@ flags during `install` or `up`, for example `--ws-token-file
 /absolute/path/to/token`. See [Codex app-server operations](codex-app-server.md)
 for external-mode diagnostics and troubleshooting.
 
-## Run the local demo issue
-
-The default `issue-runner` bootstrap seeds `config/issues.json` with one safe
-local issue. Before wiring GitHub or another tracker, run the service loop once
-in the foreground:
-
-```bash
-hermes sprints service-loop --max-iterations 2 --interval-seconds 1 --json
-hermes sprints status --format json
-```
-
-This exercises the same engine path as the user service: it selects the local
-issue, dispatches the configured runtime, appends tracker feedback comments,
-and marks the issue `done` after a successful run.
-
 ## Manual low-level path
 
 If you want to inspect or script each step separately, the lower-level commands
 remain available:
 
 ```bash
-hermes sprints init \
-  --workflow-root ~/.hermes/workflows/your-org-your-repo-change-delivery
+hermes sprints validate \
+  --workflow-root ~/.hermes/workflows/your-org-your-repo-agentic
 
 hermes sprints doctor \
-  --workflow-root ~/.hermes/workflows/your-org-your-repo-change-delivery \
+  --workflow-root ~/.hermes/workflows/your-org-your-repo-agentic \
   --format json
 
-hermes sprints service-install \
-  --workflow-root ~/.hermes/workflows/your-org-your-repo-change-delivery \
-  --service-mode active
+hermes sprints codex-app-server install \
+  --workflow-root ~/.hermes/workflows/your-org-your-repo-agentic
 
-hermes sprints service-enable \
-  --workflow-root ~/.hermes/workflows/your-org-your-repo-change-delivery \
-  --service-mode active
+hermes sprints codex-app-server up \
+  --workflow-root ~/.hermes/workflows/your-org-your-repo-agentic
 
-hermes sprints service-start \
-  --workflow-root ~/.hermes/workflows/your-org-your-repo-change-delivery \
-  --service-mode active
+hermes sprints codex-app-server status \
+  --workflow-root ~/.hermes/workflows/your-org-your-repo-agentic
 ```
 
 ## Operate it from Hermes
@@ -284,16 +249,9 @@ Then use:
 ```text
 /sprints status
 /sprints doctor
-/workflow change-delivery status
-```
-
-For the bundled generic workflow:
-
-```text
-/workflow issue-runner status
-/workflow issue-runner doctor
-/workflow issue-runner tick
-/workflow issue-runner run --max-iterations 1 --json
+/workflow agentic status
+/workflow agentic validate
+/workflow agentic tick
 ```
 
 To validate the GitHub-backed tracker path against a disposable live issue, see

@@ -45,18 +45,19 @@ hermes sprints validate
 hermes
 ```
 
-`issue-runner` is the default public bootstrap path.
+`agentic` is the default public bootstrap path.
 Bootstrap creates the workflow root, writes the workflow contract into your
 repo, commits it on a bootstrap branch, and stores a repo-local pointer so later
 commands can resolve the workflow instance. The bundled templates default
 runtime-backed actors to `codex-app-server`; use `configure-runtime` if you want
 a Hermes runtime profile for a role instead.
 
-For the opinionated change-delivery workflow:
+Bundled workflow policy templates live under `sprints/workflows/templates/`:
 
-```bash
-hermes sprints bootstrap --workflow change-delivery
-```
+- `issue-runner.md`
+- `change-delivery.md`
+- `release.md`
+- `triage.md`
 
 For manual scaffold paths, pip installs, and every lower-level command,
 use the full install guide:
@@ -82,10 +83,9 @@ Inside Hermes Agent:
 /sprints events --limit 20                 # inspect the durable engine event ledger
 
 # Workflow package commands
-/workflow issue-runner status               # show selected issues, runs, retries, and scheduler state
-/workflow issue-runner run                  # run the issue-runner loop
-/workflow change-delivery status            # show active issue/lane and next action
-/workflow change-delivery tick              # run one change-delivery workflow tick
+/workflow agentic status                    # show workflow state
+/workflow agentic validate                  # validate the active WORKFLOW.md contract
+/workflow agentic tick                      # run one orchestrator tick
 ```
 
 The operator surfaces read persisted state for you. You should not need to

@@ -7,7 +7,7 @@ Entry point for everything that won't fit on the [project landing page](../READM
 - **[architecture.md](architecture.md)** — the big picture. What Sprints is, what it isn't, how the pieces fit together.
 - **[positioning.md](positioning.md)** — Sprints vs. Hermes Agent vs. Hermes Kanban, and where integration boundaries belong.
 - **[operator/installation.md](operator/installation.md)** — the supported install, scaffold, verify, and supervise flow.
-- **[workflows/README.md](workflows/README.md)** — the two bundled workflows, when to use each, and where their templates live.
+- **[workflows/README.md](workflows/README.md)** — the bundled agentic workflow templates and where they live.
 - **[public-contract.md](public-contract.md)** — the stability boundary for the first public release.
 - **[symphony-conformance.md](symphony-conformance.md)** — where Sprints matches the current Symphony draft, and where it still differs.
 - **[release-readiness.md](release-readiness.md)** — public-beta scorecard, launch gates, and next hardening slice.

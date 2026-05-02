@@ -20,7 +20,12 @@ workflows/
 |-- actions.py               # deterministic action execution
 |-- paths.py                 # workflow root and runtime path helpers
 |-- schema.yaml              # agentic config schema
-`-- workflow.template.md     # minimal agentic template
+|-- workflow.template.md     # minimal bootstrap smoke template
+`-- templates/               # bundled WORKFLOW.md policy templates
+    |-- issue-runner.md
+    |-- change-delivery.md
+    |-- release.md
+    `-- triage.md
 ```
 
 ## Contract Shape

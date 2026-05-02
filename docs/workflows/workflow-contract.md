@@ -133,6 +133,6 @@ hot reload to keep the last known good config if a bad edit lands.
 | [`docs/examples/issue-runner.workflow.md`](../examples/issue-runner.workflow.md) | You want the default generic issue-runner contract. |
 | [`docs/examples/change-delivery.workflow.md`](../examples/change-delivery.workflow.md) | You want the opinionated issue-to-PR-to-merge contract. |
 
-For production, start from the same examples and fill in tracker credentials,
-real runtime profiles, retention limits, hooks, gates, and tracker feedback
-settings before running `hermes sprints service-up`.
+For production, start from the bundled templates and fill in real runtime
+profiles, retention limits, gates, and operator-attention policy before running
+`hermes sprints validate`.

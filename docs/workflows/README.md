@@ -10,7 +10,7 @@ hardcoded Python lifecycle modules.
 
 | Workflow | Use it when... | Default template | Managed path |
 |---|---|---|---|
-| `agentic` | you want `WORKFLOW.md` to define stages, gates, actors, actions, and orchestrator policy while Python only executes mechanics | `sprints/workflows/workflow.template.md` | yes |
+| `agentic` | you want `WORKFLOW.md` to define stages, gates, actors, actions, and orchestrator policy while Python only executes mechanics | `sprints/workflows/templates/*.md` | yes |
 
 ## Agentic Workflow
 
@@ -20,6 +20,13 @@ and storage. The Markdown body defines orchestrator and actor policies.
 
 Python validates and executes those mechanics; production workflow policy
 belongs in `WORKFLOW.md`.
+
+Bundled policy templates:
+
+- `sprints/workflows/templates/issue-runner.md`
+- `sprints/workflows/templates/change-delivery.md`
+- `sprints/workflows/templates/release.md`
+- `sprints/workflows/templates/triage.md`
 
 ## Repo Contract Naming
 
