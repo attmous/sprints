@@ -24,9 +24,9 @@ from engine.scheduler import (
     running_snapshot,
 )
 try:
-    from engine.driver import WorkflowDriver
+    from engine import WorkflowDriver
 except ModuleNotFoundError:
-    from daedalus.engine.driver import WorkflowDriver
+    from daedalus.engine import WorkflowDriver
 from engine.lifecycle import (
     clear_work_entries,
     mark_running_work,
