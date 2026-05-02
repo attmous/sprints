@@ -1,27 +1,14 @@
 """Repo-root change-delivery workflow wrapper for official Hermes plugin installs."""
 
-import importlib
-import sys
-import types
 from pathlib import Path
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
-_PLUGIN_ROOT_STR = str(_PLUGIN_ROOT)
-if _PLUGIN_ROOT_STR not in sys.path:
-    sys.path.insert(0, _PLUGIN_ROOT_STR)
-
 _REAL_WORKFLOW_DIR = _PLUGIN_ROOT / "daedalus" / "workflows" / "change_delivery"
 _real_dir_str = str(_REAL_WORKFLOW_DIR)
-if _real_dir_str not in __path__:
-    __path__.append(_real_dir_str)
+if _real_dir_str in __path__:
+    __path__.remove(_real_dir_str)
+__path__.insert(0, _real_dir_str)
 
-from daedalus.workflows.change_delivery import *  # noqa: F401,F403
-
-
-class _ServerProxy(types.ModuleType):
-    def __getattr__(self, name):
-        real_server = importlib.import_module("daedalus.workflows.change_delivery.server")
-        return getattr(real_server, name)
-
-
-server = sys.modules.setdefault(__name__ + ".server", _ServerProxy(__name__ + ".server"))
+_INIT = _REAL_WORKFLOW_DIR / "__init__.py"
+__file__ = str(_INIT)
+exec(compile(_INIT.read_text(encoding="utf-8"), str(_INIT), "exec"), globals())

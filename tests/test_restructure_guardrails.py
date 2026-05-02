@@ -1,4 +1,6 @@
 import importlib
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +26,7 @@ PUBLIC_PACKAGE_IMPORTS = (
 )
 
 BUNDLED_WORKFLOWS = ("change-delivery", "issue-runner")
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write_contract(path: Path, *, workflow: str, body: str) -> None:
@@ -42,6 +45,30 @@ def test_public_package_imports_remain_available(module_name):
     module = importlib.import_module(module_name)
 
     assert module.__name__ == module_name
+
+
+def test_repo_root_workflow_wrapper_imports_in_clean_interpreter():
+    script = """
+import workflows
+import workflows.contract as contract
+import workflows.__main__ as workflow_main
+import workflows.issue_runner as issue_runner
+
+assert callable(workflows.run_cli)
+assert callable(workflow_main.main)
+assert contract.WORKFLOW_POLICY_KEY == "workflow-policy"
+assert issue_runner.NAME == "issue-runner"
+assert "/daedalus/workflows/__init__.py" in workflows.__file__.replace("\\\\", "/")
+assert "/daedalus/workflows/contract.py" in contract.__file__.replace("\\\\", "/")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr + completed.stdout
 
 
 @pytest.mark.parametrize("package_name", ("workflows", "daedalus.workflows"))

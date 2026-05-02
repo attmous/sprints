@@ -1,16 +1,14 @@
 """Repo-root workflow wrapper package for official Hermes plugin installs."""
 
-import sys
 from pathlib import Path
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-_PLUGIN_ROOT_STR = str(_PLUGIN_ROOT)
-if _PLUGIN_ROOT_STR not in sys.path:
-    sys.path.insert(0, _PLUGIN_ROOT_STR)
-
 _REAL_WORKFLOWS_DIR = _PLUGIN_ROOT / "daedalus" / "workflows"
 _real_dir_str = str(_REAL_WORKFLOWS_DIR)
-if _real_dir_str not in __path__:
-    __path__.append(_real_dir_str)
+if _real_dir_str in __path__:
+    __path__.remove(_real_dir_str)
+__path__.insert(0, _real_dir_str)
 
-from daedalus.workflows import *  # noqa: F401,F403
+_INIT = _REAL_WORKFLOWS_DIR / "__init__.py"
+__file__ = str(_INIT)
+exec(compile(_INIT.read_text(encoding="utf-8"), str(_INIT), "exec"), globals())
