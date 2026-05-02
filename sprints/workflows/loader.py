@@ -1,4 +1,4 @@
-﻿"""Compatibility facade for workflow loading APIs."""
+"""Public facade for workflow loading APIs."""
 
 from workflows.contracts import (
     DEFAULT_WORKFLOW_MARKDOWN_FILENAME,
@@ -26,15 +26,12 @@ from workflows.contracts import (
 from workflows.registry import (
     CONFIG_SCHEMA_PATH,
     NAME,
-    PREFLIGHT_GATED_COMMANDS,
     SUPPORTED_SCHEMA_VERSIONS,
     WORKFLOW,
     AgenticWorkflow,
-    ModuleWorkflow,
     Workflow,
     list_workflows,
     load_config,
-    load_workflow,
     load_workflow_object,
     make_workspace,
     run_cli,
@@ -47,12 +44,14 @@ from workflows.bindings import (
     configure_runtime_contract,
     runtime_availability_checks,
     runtime_binding_checks,
-    runtime_capability_checks,
     runtime_preset_config,
     runtime_role_bindings,
     runtime_stage_bindings,
     runtime_stage_checks,
 )
-from workflows.validation import build_readiness_recommendations, validate_workflow_contract
+from workflows.validation import (
+    build_readiness_recommendations,
+    validate_workflow_contract,
+)
 
 __all__ = [name for name in globals() if not name.startswith("_")]

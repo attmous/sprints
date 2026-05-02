@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Mapping
 
-from workflows.loader import (
+from workflows.contracts import (
     DEFAULT_WORKFLOW_MARKDOWN_FILENAME,
     find_workflow_contract_path,
     load_workflow_contract,
@@ -117,30 +117,6 @@ def runtime_paths(workflow_root: Path) -> dict[str, Path]:
         "event_log_path": base_dir / "memory" / "sprints-events.jsonl",
         "alert_state_path": base_dir / "memory" / "sprints-alert-state.json",
     }
-
-
-def lane_state_path(worktree: Path | None) -> Path | None:
-    if worktree is None:
-        return None
-    return worktree / ".lane-state.json"
-
-
-def lane_memo_path(worktree: Path | None) -> Path | None:
-    if worktree is None:
-        return None
-    return worktree / ".lane-memo.md"
-
-
-def tick_dispatch_dir(workflow_root: Path) -> Path:
-    return runtime_base_dir(workflow_root) / "memory" / "tick-dispatch"
-
-
-def tick_dispatch_state_path(workflow_root: Path) -> Path:
-    return tick_dispatch_dir(workflow_root) / "active.json"
-
-
-def tick_dispatch_history_dir(workflow_root: Path) -> Path:
-    return tick_dispatch_dir(workflow_root) / "history"
 
 
 def plugin_root_path(*, plugin_dir: Path | None = None) -> Path:

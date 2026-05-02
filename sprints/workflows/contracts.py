@@ -20,6 +20,7 @@ _HEADING_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 class WorkflowContractError(RuntimeError):
     """Raised when a workflow contract cannot be loaded or projected."""
 
+
 class WorkflowPolicyError(RuntimeError):
     """Raised when Markdown policy chunks are missing or malformed."""
 
@@ -43,17 +44,22 @@ class WorkflowPolicy:
     orchestrator: str
     actors: dict[str, ActorPolicy]
 
+
 def workflow_markdown_path(workflow_root: Path) -> Path:
     return workflow_root.resolve() / DEFAULT_WORKFLOW_MARKDOWN_FILENAME
+
 
 def workflow_named_markdown_filename(workflow_name: str) -> str:
     return f"{WORKFLOW_MARKDOWN_PREFIX}{workflow_name}.md"
 
+
 def workflow_named_markdown_path(repo_root: Path, workflow_name: str) -> Path:
     return repo_root.resolve() / workflow_named_markdown_filename(workflow_name)
 
+
 def workflow_contract_pointer_path(workflow_root: Path) -> Path:
     return workflow_root.resolve() / WORKFLOW_CONTRACT_POINTER_RELATIVE_PATH
+
 
 def read_workflow_contract_pointer(workflow_root: Path) -> Path | None:
     pointer_path = workflow_contract_pointer_path(workflow_root)
@@ -72,11 +78,13 @@ def read_workflow_contract_pointer(workflow_root: Path) -> Path | None:
         target = target.resolve()
     return target
 
+
 def write_workflow_contract_pointer(workflow_root: Path, contract_path: Path) -> Path:
     pointer_path = workflow_contract_pointer_path(workflow_root)
     pointer_path.parent.mkdir(parents=True, exist_ok=True)
     pointer_path.write_text(str(contract_path.resolve()) + "\n", encoding="utf-8")
     return pointer_path
+
 
 def find_repo_workflow_contract_path(
     repo_root: Path, *, workflow_name: str | None = None
@@ -100,6 +108,7 @@ def find_repo_workflow_contract_path(
         return candidates[0]
     return None
 
+
 def find_workflow_contract_path(
     workflow_root: Path, *, workflow_name: str | None = None
 ) -> Path | None:
@@ -113,6 +122,7 @@ def find_workflow_contract_path(
     markdown_path = workflow_markdown_path(root)
     return markdown_path if markdown_path.exists() else None
 
+
 def load_workflow_contract(workflow_root: Path) -> WorkflowContract:
     path = find_workflow_contract_path(workflow_root)
     if path is None:
@@ -121,6 +131,7 @@ def load_workflow_contract(workflow_root: Path) -> WorkflowContract:
             f"(looked for {DEFAULT_WORKFLOW_MARKDOWN_FILENAME} / WORKFLOW-<name>.md)"
         )
     return load_workflow_contract_file(path)
+
 
 def load_workflow_contract_file(path: Path) -> WorkflowContract:
     resolved = Path(path).expanduser().resolve()
@@ -138,6 +149,7 @@ def load_workflow_contract_file(path: Path) -> WorkflowContract:
         prompt_template=prompt_template,
         front_matter=front_matter,
     )
+
 
 def render_workflow_markdown(
     *, config: dict[str, Any], prompt_template: str | None = None
@@ -166,6 +178,7 @@ def render_workflow_markdown(
         return f"---\n{front_matter_text}\n---\n\n{body_text}\n"
     return f"---\n{front_matter_text}\n---\n"
 
+
 def parse_workflow_policy(markdown_body: str) -> WorkflowPolicy:
     sections: list[tuple[str, str]] = []
     body = markdown_body or ""
@@ -190,6 +203,7 @@ def parse_workflow_policy(markdown_body: str) -> WorkflowPolicy:
         raise WorkflowPolicyError("missing # Actor: <name> policy sections")
     return WorkflowPolicy(orchestrator=orchestrator, actors=actors)
 
+
 def _repo_workflow_candidates(repo_root: Path) -> list[Path]:
     root = repo_root.resolve()
     candidates: list[Path] = []
@@ -203,6 +217,7 @@ def _repo_workflow_candidates(repo_root: Path) -> list[Path]:
     )
     return candidates
 
+
 def _workflow_name_for_contract_path(path: Path) -> str | None:
     try:
         contract = load_workflow_contract_file(path)
@@ -210,6 +225,7 @@ def _workflow_name_for_contract_path(path: Path) -> str | None:
         return None
     value = contract.config.get("workflow")
     return str(value).strip() if value else None
+
 
 def _parse_markdown_contract(path: Path, text: str) -> tuple[dict[str, Any], str]:
     if not text.startswith("---"):
@@ -241,6 +257,7 @@ def _parse_markdown_contract(path: Path, text: str) -> tuple[dict[str, Any], str
             f"{path} front matter must decode to a YAML mapping at the top level"
         )
     return parsed, prompt_body
+
 
 def _project_markdown_front_matter(
     *, path: Path, front_matter: dict[str, Any], prompt_template: str

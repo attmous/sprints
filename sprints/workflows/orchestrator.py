@@ -8,7 +8,7 @@ import json
 import re
 
 from workflows.config import AgenticConfig
-from workflows.loader import ActorPolicy, WorkflowPolicy
+from workflows.contracts import ActorPolicy, WorkflowPolicy
 
 
 class OrchestratorDecisionError(RuntimeError):

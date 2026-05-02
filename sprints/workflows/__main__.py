@@ -1,4 +1,4 @@
-"""Plugin-level CLI entrypoint for the workflow dispatcher.
+"""Workflow dispatcher command entrypoint.
 
 Invocation forms (both supported):
 
@@ -13,8 +13,7 @@ inserting the plugin root onto sys.path before the import.
 
 If ``--workflow-root`` is omitted, the entrypoint delegates to the shared
 workflow-root resolver. That keeps ``SPRINTS_WORKFLOW_ROOT`` as the canonical
-override and otherwise falls back to the installed/repo-local workflow layout
-without hardcoding a single project path.
+override while preserving the installed/repo-local workflow layout.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ from workflows import run_cli
 
 
 def _resolve_workflow_root(argv: list[str]) -> tuple[Path, list[str]]:
-    """Peel --workflow-root / --workflow-root=<path> out of argv; shared fallback."""
+    """Peel --workflow-root / --workflow-root=<path> out of argv."""
     out: list[str] = []
     workflow_root: Path | None = None
     i = 0

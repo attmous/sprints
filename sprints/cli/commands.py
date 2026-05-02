@@ -102,7 +102,7 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
 
     validate_cmd = sub.add_parser(
         "validate",
-        help="Validate the repo-owned WORKFLOW.md contract and workflow preflight rules.",
+        help="Validate the repo-owned WORKFLOW.md contract and runtime bindings.",
     )
     validate_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
     validate_cmd.add_argument("--json", action="store_true")
@@ -194,7 +194,6 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
         required=True,
         help="Repository identity in owner/repo form for workflow instance naming.",
     )
-    scaffold_cmd.add_argument("--active-lane-label", default="active-lane")
     scaffold_cmd.add_argument(
         "--engine-owner", default="hermes", choices=["hermes", "openclaw"]
     )
@@ -218,7 +217,6 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     bootstrap_cmd.add_argument(
         "--repo-slug", help="Override the inferred repository slug from git origin."
     )
-    bootstrap_cmd.add_argument("--active-lane-label", default="active-lane")
     bootstrap_cmd.add_argument(
         "--engine-owner", default="hermes", choices=["hermes", "openclaw"]
     )
@@ -649,7 +647,6 @@ def cmd_scaffold_workflow(args, parser) -> str:
             workflow_name=args.workflow,
             repo_path=Path(args.repo_path) if args.repo_path else None,
             repo_slug=args.repo_slug,
-            active_lane_label=args.active_lane_label,
             engine_owner=args.engine_owner,
             force=args.force,
         )
@@ -675,7 +672,6 @@ def cmd_bootstrap_workflow(args, parser) -> str:
             workflow_name=args.workflow,
             workflow_root=Path(args.workflow_root) if args.workflow_root else None,
             repo_slug=args.repo_slug,
-            active_lane_label=args.active_lane_label,
             engine_owner=args.engine_owner,
             force=args.force,
         )

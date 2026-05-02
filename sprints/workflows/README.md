@@ -12,8 +12,13 @@ orchestrator decisions, and writing state.
 workflows/
 |-- __init__.py              # public workflow exports
 |-- __main__.py              # `python -m workflows --workflow-root <path> ...`
-|-- loader.py                # WORKFLOW.md loading, policy parsing, validation, registry
+|-- loader.py                # public workflow API facade
+|-- contracts.py             # WORKFLOW.md loading, rendering, and policy sections
+|-- registry.py              # workflow object registry and CLI dispatch
 |-- config.py                # typed front matter config
+|-- bindings.py              # actor/runtime binding and runtime checks
+|-- validation.py            # contract validation and readiness recommendations
+|-- bootstrap.py             # repo bootstrap and scaffold mechanics
 |-- orchestrator.py          # orchestrator prompt + decision schema
 |-- runner.py                # tick mechanics, state persistence, status, stall hook
 |-- actors.py                # actor runtime dispatch

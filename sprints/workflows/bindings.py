@@ -30,8 +30,10 @@ RUNTIME_PRESETS: dict[str, dict[str, Any]] = {
 class RuntimePresetError(RuntimeError):
     pass
 
+
 def available_runtime_presets() -> tuple[str, ...]:
     return tuple(sorted(RUNTIME_PRESETS))
+
 
 def runtime_preset_config(preset_name: str) -> dict[str, Any]:
     try:
@@ -40,6 +42,7 @@ def runtime_preset_config(preset_name: str) -> dict[str, Any]:
         raise RuntimePresetError(
             f"unknown runtime preset {preset_name!r}; expected one of {list(available_runtime_presets())}"
         ) from exc
+
 
 def configure_runtime_contract(
     *,
@@ -85,10 +88,10 @@ def configure_runtime_contract(
         "changed_roles": changed_roles,
         "bindings": runtime_role_bindings(config),
         "checks": runtime_binding_checks(config),
-        "capability_checks": runtime_capability_checks(config),
         "availability_checks": runtime_availability_checks(config),
         "dry_run": dry_run,
     }
+
 
 def bind_runtime_role(
     *, config: dict[str, Any], workflow_name: str, role: str, runtime_name: str
@@ -108,6 +111,7 @@ def bind_runtime_role(
         actor["runtime"] = runtime_name
     return names
 
+
 def runtime_role_bindings(config: dict[str, Any]) -> list[dict[str, Any]]:
     runtimes = _runtime_profiles_from_config(config)
     actors = config.get("actors") if isinstance(config.get("actors"), dict) else {}
@@ -118,6 +122,7 @@ def runtime_role_bindings(config: dict[str, Any]) -> list[dict[str, Any]]:
             bindings, role=str(role), runtime_name=runtime_name, runtimes=runtimes
         )
     return bindings
+
 
 def runtime_stage_bindings(config: dict[str, Any]) -> list[dict[str, Any]]:
     actors = config.get("actors") if isinstance(config.get("actors"), dict) else {}
@@ -141,6 +146,7 @@ def runtime_stage_bindings(config: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
     return bindings
+
 
 def runtime_binding_checks(config: dict[str, Any]) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
@@ -178,6 +184,7 @@ def runtime_binding_checks(config: dict[str, Any]) -> list[dict[str, Any]]:
             )
     return checks
 
+
 def runtime_stage_checks(config: dict[str, Any]) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     for binding in runtime_stage_bindings(config):
@@ -211,17 +218,6 @@ def runtime_stage_checks(config: dict[str, Any]) -> list[dict[str, Any]]:
             )
     return checks
 
-def runtime_capability_checks(config: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        _runtime_check(
-            f"runtime-capability:{binding.get('role')}",
-            "pass",
-            "capability policy is runtime-owned",
-            role=binding.get("role"),
-        )
-        for binding in runtime_role_bindings(config)
-        if binding.get("runtime")
-    ]
 
 def runtime_availability_checks(config: dict[str, Any]) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
@@ -265,6 +261,7 @@ def runtime_availability_checks(config: dict[str, Any]) -> list[dict[str, Any]]:
         )
     return checks
 
+
 def build_runtime_matrix_report(
     *,
     workflow_root: Path,
@@ -292,7 +289,6 @@ def build_runtime_matrix_report(
         for check in [
             *runtime_stage_checks(config),
             *runtime_binding_checks(config),
-            *runtime_capability_checks(config),
             *runtime_availability_checks(config),
         ]
         if check.get("status") == "fail"
@@ -304,7 +300,6 @@ def build_runtime_matrix_report(
         "contract_path": str(contract.source_path),
         "execute": execute,
         "filters": {"roles": sorted(role_filter), "runtimes": sorted(runtime_filter)},
-        "missing": {"roles": [], "runtimes": []},
         "runtime_profiles": config.get("runtimes")
         if isinstance(config.get("runtimes"), dict)
         else {},
@@ -312,11 +307,11 @@ def build_runtime_matrix_report(
         "stage_bindings": runtime_stage_bindings(config),
         "stage_checks": runtime_stage_checks(config),
         "binding_checks": runtime_binding_checks(config),
-        "capability_checks": runtime_capability_checks(config),
         "availability_checks": runtime_availability_checks(config),
         "matrix": selected,
         "failures": failures,
     }
+
 
 def _normalize_role(role: str) -> str:
     normalized = role.strip()
@@ -326,9 +321,11 @@ def _normalize_role(role: str) -> str:
         normalized = normalized.removeprefix("agentic.")
     return normalized
 
+
 def _runtime_profiles_from_config(config: dict[str, Any]) -> dict[str, Any]:
     runtimes = config.get("runtimes")
     return runtimes if isinstance(runtimes, dict) else {}
+
 
 def _append_binding(
     bindings: list[dict[str, Any]],
@@ -348,10 +345,8 @@ def _append_binding(
             "kind": str(runtime_cfg.get("kind") or "").strip()
             if profile_exists
             else None,
-            "capabilities": [],
         }
     )
-
 
 
 def _runtime_check(name: str, status: str, detail: str, **extra: Any) -> dict[str, Any]:

@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from workflows.loader import (
+from workflows.contracts import (
     WorkflowContractError,
     find_repo_workflow_contract_path,
     load_workflow_contract_file,
@@ -89,19 +89,6 @@ def _repo_slug_from_remote_url(remote_url: str) -> str:
 def _repo_workflow_contract_candidates(repo_root: Path) -> list[Path]:
     return sorted(
         path.resolve() for path in repo_root.glob("WORKFLOW*.md") if path.is_file()
-    )
-
-
-def _single_repo_contract_path(repo_root: Path) -> Path:
-    default_path = repo_root / "WORKFLOW.md"
-    if default_path.exists():
-        return default_path
-    candidates = _repo_workflow_contract_candidates(repo_root)
-    if len(candidates) == 1:
-        return candidates[0]
-    raise WorkflowBootstrapError(
-        "unable to infer a single workflow contract path; "
-        "use explicit workflow naming and bootstrap one workflow at a time"
     )
 
 
@@ -278,7 +265,6 @@ def bootstrap_workflow_root(
     workflow_name: str,
     workflow_root: Path | None,
     repo_slug: str | None,
-    active_lane_label: str,
     engine_owner: str,
     force: bool,
 ) -> dict[str, Any]:
@@ -310,7 +296,6 @@ def bootstrap_workflow_root(
         workflow_name=workflow_name,
         repo_path=repo_root,
         repo_slug=resolved_repo_slug,
-        active_lane_label=active_lane_label,
         engine_owner=engine_owner,
         force=force,
     )
@@ -351,7 +336,6 @@ def scaffold_workflow_root(
     workflow_name: str,
     repo_path: Path | None,
     repo_slug: str,
-    active_lane_label: str,
     engine_owner: str,
     force: bool,
 ) -> dict[str, Any]:
@@ -408,11 +392,6 @@ def scaffold_workflow_root(
     instance_cfg["engine-owner"] = engine_owner
     repository_cfg["local-path"] = str(resolved_repo_path)
     repository_cfg["slug"] = resolved_repo_slug
-    triggers_cfg = config.get("triggers")
-    if isinstance(triggers_cfg, dict):
-        lane_selector_cfg = triggers_cfg.get("lane-selector")
-        if isinstance(lane_selector_cfg, dict):
-            lane_selector_cfg["label"] = active_lane_label
 
     created_dirs = [
         root / "config",
@@ -449,7 +428,6 @@ def scaffold_workflow_root(
         "engine_owner": engine_owner,
         "repo_path": str(resolved_repo_path),
         "repo_slug": resolved_repo_slug,
-        "active_lane_label": active_lane_label,
         "force": force,
         "workflow_contract_pointer_path": str(workflow_contract_pointer_path(root)),
         "renamed_contract_paths": renamed_contract_paths,

@@ -12,7 +12,7 @@ from typing import Any, Literal, Mapping, Protocol
 from workflows.actions import run_action
 from workflows.actors import build_actor_runtime
 from workflows.config import AgenticConfig, AgenticConfigError
-from workflows.loader import (
+from workflows.contracts import (
     WorkflowPolicy,
     load_workflow_contract,
     parse_workflow_policy,
@@ -23,20 +23,6 @@ from workflows.orchestrator import (
     build_orchestrator_prompt,
 )
 
-SPRINTS_ACTIVE_ACTION_CANCELED = "sprints.active.action.canceled"
-SPRINTS_ACTIVE_ACTION_COMPLETED = "sprints.active.action.completed"
-SPRINTS_ACTIVE_ACTION_FAILED = "sprints.active.action.failed"
-SPRINTS_ACTIVE_ACTION_REQUESTED = "sprints.active.action.requested"
-SPRINTS_ACTIVE_EXECUTION_CONTROL_UPDATED = "sprints.active.execution_control.updated"
-SPRINTS_ERROR_ANALYSIS_COMPLETED = "sprints.error_analysis.completed"
-SPRINTS_ERROR_ANALYSIS_REQUESTED = "sprints.error_analysis.requested"
-SPRINTS_FAILURE_DETECTED = "sprints.failure.detected"
-SPRINTS_LANE_PROMOTED = "sprints.lane.promoted"
-SPRINTS_OPERATOR_ATTENTION_REQUIRED = "sprints.operator_attention.required"
-SPRINTS_RECOVERY_REQUESTED = "sprints.recovery.requested"
-SPRINTS_RUNTIME_HEARTBEAT = "sprints.runtime.heartbeat"
-SPRINTS_RUNTIME_STARTED = "sprints.runtime.started"
-SPRINTS_SHADOW_ACTION_REQUESTED = "sprints.shadow.action.requested"
 SPRINTS_STALL_DETECTED = "sprints.stall.detected"
 SPRINTS_STALL_TERMINATED = "sprints.stall.terminated"
 _DEFAULT_TIMEOUT_MS = 300_000
@@ -208,9 +194,6 @@ def ensure_workflow_state_files(
         "state": str(typed.storage.state_path),
         "audit_log": str(typed.storage.audit_log_path),
     }
-
-
-ensure_change_delivery_state_files = ensure_workflow_state_files
 
 
 def build_status(workflow_root: Path) -> dict[str, Any]:

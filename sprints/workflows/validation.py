@@ -1,4 +1,4 @@
-﻿"""Workflow contract validation and readiness recommendations."""
+"""Workflow contract validation and readiness recommendations."""
 
 from __future__ import annotations
 
@@ -8,18 +8,20 @@ from typing import Any
 import jsonschema
 import yaml
 
-from workflows.contracts import WorkflowContract, WorkflowContractError, load_workflow_contract
+from workflows.contracts import (
+    WorkflowContract,
+    WorkflowContractError,
+    load_workflow_contract,
+)
 from workflows.registry import Workflow, load_workflow_object
 from workflows.bindings import (
     runtime_availability_checks,
     runtime_binding_checks,
-    runtime_capability_checks,
     runtime_stage_checks,
 )
 
-def validate_workflow_contract(
-    workflow_root: Path, *, run_preflight: bool = True
-) -> dict[str, Any]:
+
+def validate_workflow_contract(workflow_root: Path) -> dict[str, Any]:
     root = Path(workflow_root).expanduser().resolve()
     checks: list[dict[str, Any]] = []
     contract: WorkflowContract | None = None
@@ -100,30 +102,10 @@ def validate_workflow_contract(
     checks.append(_repository_path_check(workflow_root=root, config=config))
     checks.extend(runtime_stage_checks(config))
     checks.extend(runtime_binding_checks(config))
-    checks.extend(runtime_capability_checks(config))
-
-    if workflow is not None and run_preflight:
-        try:
-            loaded_config = workflow.load_config(workflow_root=root, raw=config)
-            result = workflow.run_preflight(workflow_root=root, config=loaded_config)
-            ok = bool(getattr(result, "ok", True))
-            code = getattr(result, "error_code", None)
-            detail = getattr(result, "error_detail", None)
-            checks.append(
-                _check(
-                    "workflow-preflight",
-                    "pass" if ok else "fail",
-                    "ok" if ok else f"code={code} detail={detail}",
-                    error_code=code,
-                    error_detail=detail,
-                )
-            )
-        except Exception as exc:
-            checks.append(
-                _check("workflow-preflight", "fail", f"{type(exc).__name__}: {exc}")
-            )
+    checks.extend(runtime_availability_checks(config))
 
     return _validation_report(root, source_path, workflow_name, schema_version, checks)
+
 
 def build_readiness_recommendations(
     checks: list[dict[str, Any]],
@@ -178,11 +160,6 @@ def build_readiness_recommendations(
                 recommendations,
                 "Set `repository.local-path` to an existing local checkout path.",
             )
-        elif name == "workflow-preflight":
-            _append_once(
-                recommendations,
-                _preflight_recommendation(check=check, workflow=workflow),
-            )
         elif name.startswith("runtime-binding"):
             _append_once(
                 recommendations, _runtime_binding_recommendation(workflow=workflow)
@@ -191,11 +168,6 @@ def build_readiness_recommendations(
             _append_once(
                 recommendations,
                 "Fix the actor/stage runtime references in `WORKFLOW.md`, then rerun `hermes sprints validate`.",
-            )
-        elif name.startswith("runtime-capability"):
-            _append_once(
-                recommendations,
-                "Bind the role to a runtime with the required capabilities, or remove the explicit `required-capabilities` entry.",
             )
         elif name.startswith("runtime-availability"):
             _append_once(recommendations, _runtime_availability_recommendation(detail))
@@ -231,14 +203,17 @@ def build_readiness_recommendations(
             )
     return recommendations
 
+
 def _check(name: str, status: str, detail: str, **extra: Any) -> dict[str, Any]:
     payload = {"name": name, "status": status, "detail": detail}
     payload.update({key: value for key, value in extra.items() if value is not None})
     return payload
 
+
 def _json_path(parts: Any) -> str:
     values = [str(part) for part in parts]
     return ".".join(values) if values else "<root>"
+
 
 def _schema_errors(
     *, config: dict[str, Any], schema: dict[str, Any]
@@ -255,6 +230,7 @@ def _schema_errors(
         }
         for error in errors
     ]
+
 
 def _repository_path_check(
     *, workflow_root: Path, config: dict[str, Any]
@@ -282,6 +258,7 @@ def _repository_path_check(
         )
     return _check("repository-path", "pass", str(path))
 
+
 def _instance_name_check(
     *, workflow_root: Path, config: dict[str, Any]
 ) -> dict[str, Any]:
@@ -299,6 +276,7 @@ def _instance_name_check(
         )
     return _check("instance-name", "pass", name)
 
+
 def _contract_kind_check(contract: WorkflowContract) -> dict[str, Any]:
     if contract.source_path.suffix.lower() == ".md":
         return _check(
@@ -309,6 +287,7 @@ def _contract_kind_check(contract: WorkflowContract) -> dict[str, Any]:
         "fail",
         f"unsupported workflow contract format: {contract.source_path}",
     )
+
 
 def _validation_report(
     workflow_root: Path,
@@ -336,31 +315,21 @@ def _validation_report(
         ),
     }
 
+
 def _check_name(check: dict[str, Any]) -> str:
     raw = str(check.get("name") or check.get("code") or "check").strip()
     return raw.replace("_", "-") if raw.startswith("runtime_") else raw
+
 
 def _append_once(items: list[str], value: str) -> None:
     if value and value not in items:
         items.append(value)
 
-def _preflight_recommendation(*, check: dict[str, Any], workflow: str | None) -> str:
-    detail = str(check.get("error_detail") or check.get("detail") or "")
-    lowered = detail.lower()
-    if "agent.runtime" in lowered or "runtime" in lowered:
-        return _runtime_binding_recommendation(workflow=workflow)
-    if "tracker.path" in lowered or "issues.json" in lowered:
-        return "Remove the legacy tracker path config and use a supported tracker kind."
-    if "github" in lowered or "gh " in lowered:
-        return "Run `gh auth status`, verify `tracker.github_slug`, then rerun `hermes sprints validate`."
-    return "Fix the workflow preflight detail shown above, then rerun `hermes sprints validate`."
 
 def _runtime_binding_recommendation(*, workflow: str | None) -> str:
-    if workflow == "issue-runner":
-        return "Run `hermes sprints configure-runtime --runtime codex-app-server --role agent`, or define the referenced runtime profile manually."
-    if workflow == "change-delivery":
-        return "Run `hermes sprints configure-runtime --runtime codex-app-server --role implementer`, or define the referenced runtime profile manually."
+    del workflow
     return "Run `hermes sprints configure-runtime` for the affected role, or define the referenced runtime profile manually."
+
 
 def _runtime_availability_recommendation(detail: str) -> str:
     lowered = detail.lower()
