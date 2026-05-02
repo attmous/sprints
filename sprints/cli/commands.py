@@ -44,115 +44,26 @@ from workflows.paths import (
 )
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
+
+
+# Module Setup
+
 def resolve_default_workflow_root() -> Path:
     return resolve_workflow_root_default(plugin_dir=PLUGIN_DIR)
 
-
 class SprintsCommandError(Exception):
     pass
-
 
 class SprintsArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         raise SprintsCommandError(f"{message}\n\n{self.format_usage().strip()}")
 
 
-def _build_project_status(workflow_root: Path) -> dict[str, Any]:
-    return build_workflow_status(workflow_root)
+# Parser Shape
 
-
-def _lazy_cmd_watch(args, parser):
-    """Lazy import so importing the CLI doesn't pull rich into every invocation."""
-    try:
-        from ..observe.watch import cmd_watch
-    except ImportError:
-        try:
-            from observe.watch import cmd_watch
-        except ImportError:
-            path = PLUGIN_DIR / "observe" / "watch.py"
-            spec = importlib.util.spec_from_file_location("sprints_watch_for_cli", path)
-            if spec is None or spec.loader is None:
-                raise SprintsCommandError(f"unable to load watch module from {path}")
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            cmd_watch = module.cmd_watch
-    return cmd_watch(args, parser)
-
-
-def cmd_scaffold_workflow(args, parser) -> str:
-    try:
-        result = scaffold_workflow_root(
-            workflow_root=Path(args.workflow_root),
-            workflow_name=args.workflow,
-            repo_path=Path(args.repo_path) if args.repo_path else None,
-            repo_slug=args.repo_slug,
-            active_lane_label=args.active_lane_label,
-            engine_owner=args.engine_owner,
-            force=args.force,
-        )
-    except WorkflowBootstrapError as exc:
-        raise SprintsCommandError(str(exc)) from exc
-    if getattr(args, "json", False):
-        return json.dumps(result, indent=2, sort_keys=True)
-    lines = [
-        f"scaffolded workflow root: {result['workflow_root']}",
-        f"contract: {result['contract_path']}",
-        f"workflow: {result['workflow']}",
-        f"instance: {result['instance_name']}",
-        f"repo-path: {result['repo_path']}",
-        f"repo-slug: {result['repo_slug']}",
-    ]
-    return "\n".join(lines)
-
-
-def cmd_bootstrap_workflow(args, parser) -> str:
-    try:
-        result = bootstrap_workflow_root(
-            repo_path=Path(args.repo_path) if args.repo_path else None,
-            workflow_name=args.workflow,
-            workflow_root=Path(args.workflow_root) if args.workflow_root else None,
-            repo_slug=args.repo_slug,
-            active_lane_label=args.active_lane_label,
-            engine_owner=args.engine_owner,
-            force=args.force,
-        )
-    except WorkflowBootstrapError as exc:
-        raise SprintsCommandError(str(exc)) from exc
-    if getattr(args, "json", False):
-        return json.dumps(result, indent=2, sort_keys=True)
-    lines = [
-        f"bootstrapped workflow root: {result['workflow_root']}",
-        f"contract: {result['contract_path']}",
-        f"repo-path: {result['repo_path']}",
-        f"repo-slug: {result['repo_slug']}",
-        f"git branch: {result['git_branch']}",
-        f"repo pointer: {result['repo_pointer_path']}",
-        f"edit next: {result['next_edit_path']}",
-        f"then run: {result['next_command']}",
-    ]
-    if result.get("remote_url"):
-        lines.insert(4, f"origin: {result['remote_url']}")
-    return "\n".join(lines)
-
-
-def configure_runtime_preset(
-    *,
-    workflow_root: Path,
-    runtime_preset: str,
-    role: str,
-    runtime_name: str | None,
-    dry_run: bool,
-) -> dict[str, Any]:
-    try:
-        return configure_runtime_contract(
-            workflow_root=workflow_root,
-            preset_name=runtime_preset,
-            role=role,
-            runtime_name=runtime_name,
-            dry_run=dry_run,
-        )
-    except (RuntimePresetError, WorkflowContractError, FileNotFoundError, OSError) as exc:
-        raise SprintsCommandError(str(exc)) from exc
+def build_parser() -> argparse.ArgumentParser:
+    parser = SprintsArgumentParser(prog="sprints", description="Sprints operator control surface.")
+    return configure_subcommands(parser)
 
 
 def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -400,45 +311,97 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     return parser
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = SprintsArgumentParser(prog="sprints", description="Sprints operator control surface.")
-    return configure_subcommands(parser)
+# Entrypoints
 
+def execute_raw_args(raw_args: str) -> str:
+    parser = build_parser()
+    argv = shlex.split(raw_args) if raw_args.strip() else ["status"]
+    stderr_buffer = io.StringIO()
+    try:
+        with redirect_stderr(stderr_buffer):
+            args = parser.parse_args(argv)
+        args._command_source = "plugin-command"
+        # String-returning commands bypass execute_namespace.
+        if args.sprints_command == "watch":
+            return _lazy_cmd_watch(args, parser)
+        if args.sprints_command == "scaffold-workflow":
+            return cmd_scaffold_workflow(args, parser)
+        if args.sprints_command == "bootstrap":
+            return cmd_bootstrap_workflow(args, parser)
+        result = execute_namespace(args)
+        fmt = _resolve_format(getattr(args, "format", None), getattr(args, "json", False))
+        return render_result(args.sprints_command, result, output_format=fmt)
+    except SprintsCommandError as exc:
+        return f"sprints error: {exc}"
+    except SystemExit:
+        detail = stderr_buffer.getvalue().strip()
+        return f"sprints error: {detail or parser.format_usage().strip()}"
+    except Exception as exc:
+        return f"sprints error: unexpected {type(exc).__name__}: {exc}"
 
-def _run_wrapper_json_command(*, workflow_root: Path, command: str) -> dict[str, Any]:
-    """Run a workflow CLI command via the plugin-side entrypoint."""
-    argv = workflow_cli_argv(workflow_root, *shlex.split(command))
-    completed = subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        cwd=workflow_root,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise SprintsCommandError(
-            completed.stderr.strip() or completed.stdout.strip() or f"wrapper command failed: {command}"
-        )
-    return json.loads(completed.stdout)
+def run_cli_command(args: argparse.Namespace) -> None:
+    args._command_source = "cli"
+    # Some subcommands have handlers that return strings directly, not dicts.
+    # ``execute_namespace`` only knows about the legacy dict-returning commands,
+    # so without this branch the new (string-returning) commands would fall
+    # through to ``unknown sprints command``. This mirrors the special-cases
+    # in ``execute_raw_args`` for the slash-command path.
+    string_returning = {
+        "watch",
+        "scaffold-workflow",
+        "bootstrap",
+    }
+    if getattr(args, "sprints_command", None) in string_returning:
+        handler = getattr(args, "handler", None)
+        if handler is not None:
+            print(handler(args, parser=None))
+            return
+    fmt = _resolve_format(getattr(args, "format", None), getattr(args, "json", False))
+    print(render_result(args.sprints_command, execute_namespace(args), output_format=fmt))
 
+def execute_workflow_command(raw_args: str) -> str:
+    """Slash command handler for ``/workflow <name> <cmd> [args]``.
 
-def _resolve_format(format_arg: str | None, json_flag: bool | None) -> str:
-    """Resolve the effective output format from ``--format`` and ``--json``.
-
-    The legacy ``--json`` flag wins when set so existing scripts don't get
-    silently downgraded. Otherwise, ``--format`` is honored. Default is text.
+    Bare invocation (no args): lists available workflows under ``workflows/``.
+    Single arg (workflow name): shows that workflow's ``--help``.
+    Full invocation: routes through ``workflows.run_cli`` with
+    ``require_workflow=<name>`` so the dispatcher pins the named module
+    regardless of what the workflow contract declares.
     """
-    if json_flag:
-        return "json"
-    if format_arg == "json":
-        return "json"
-    return "text"
+    workflow_root = resolve_default_workflow_root()
+    parts = raw_args.strip().split() if raw_args else []
 
+    try:
+        from workflows import list_workflows, run_cli
+    except ImportError:
+        wfpath = PLUGIN_DIR / "workflows" / "__init__.py"
+        spec = importlib.util.spec_from_file_location("sprints_workflows", wfpath)
+        if spec is None or spec.loader is None:
+            return "sprints error: unable to load workflows dispatcher"
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        list_workflows = module.list_workflows
+        run_cli = module.run_cli
+
+    if not parts:
+        names = list_workflows()
+        return ("available workflows: " + ", ".join(names)) if names else "no workflows installed"
+
+    name, *cmd_args = parts
+
+    try:
+        if not cmd_args:
+            cmd_args = ["--help"]
+        rc = run_cli(workflow_root, cmd_args, require_workflow=name)
+        return f"workflow '{name}' exited with status {rc}" if rc != 0 else "ok"
+    except Exception as exc:
+        return f"sprints error: {exc}"
+
+
+# Dispatch
 
 def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
     workflow_root = Path(args.workflow_root).resolve() if hasattr(args, "workflow_root") else None
-    command = getattr(args, "sprints_command", None)
-
     if args.sprints_command == "status":
         return _build_project_status(workflow_root)
     if args.sprints_command == "doctor":
@@ -565,91 +528,134 @@ def _execute_codex_app_server_namespace(args: argparse.Namespace, workflow_root:
     raise SprintsCommandError(f"unknown codex-app-server command: {action}")
 
 
-def execute_workflow_command(raw_args: str) -> str:
-    """Slash command handler for ``/workflow <name> <cmd> [args]``.
+# Command Handlers
 
-    Bare invocation (no args): lists available workflows under ``workflows/``.
-    Single arg (workflow name): shows that workflow's ``--help``.
-    Full invocation: routes through ``workflows.run_cli`` with
-    ``require_workflow=<name>`` so the dispatcher pins the named module
-    regardless of what the workflow contract declares.
-    """
-    workflow_root = resolve_default_workflow_root()
-    parts = raw_args.strip().split() if raw_args else []
-
+def cmd_scaffold_workflow(args, parser) -> str:
     try:
-        from workflows import list_workflows, run_cli
+        result = scaffold_workflow_root(
+            workflow_root=Path(args.workflow_root),
+            workflow_name=args.workflow,
+            repo_path=Path(args.repo_path) if args.repo_path else None,
+            repo_slug=args.repo_slug,
+            active_lane_label=args.active_lane_label,
+            engine_owner=args.engine_owner,
+            force=args.force,
+        )
+    except WorkflowBootstrapError as exc:
+        raise SprintsCommandError(str(exc)) from exc
+    if getattr(args, "json", False):
+        return json.dumps(result, indent=2, sort_keys=True)
+    lines = [
+        f"scaffolded workflow root: {result['workflow_root']}",
+        f"contract: {result['contract_path']}",
+        f"workflow: {result['workflow']}",
+        f"instance: {result['instance_name']}",
+        f"repo-path: {result['repo_path']}",
+        f"repo-slug: {result['repo_slug']}",
+    ]
+    return "\n".join(lines)
+
+
+def cmd_bootstrap_workflow(args, parser) -> str:
+    try:
+        result = bootstrap_workflow_root(
+            repo_path=Path(args.repo_path) if args.repo_path else None,
+            workflow_name=args.workflow,
+            workflow_root=Path(args.workflow_root) if args.workflow_root else None,
+            repo_slug=args.repo_slug,
+            active_lane_label=args.active_lane_label,
+            engine_owner=args.engine_owner,
+            force=args.force,
+        )
+    except WorkflowBootstrapError as exc:
+        raise SprintsCommandError(str(exc)) from exc
+    if getattr(args, "json", False):
+        return json.dumps(result, indent=2, sort_keys=True)
+    lines = [
+        f"bootstrapped workflow root: {result['workflow_root']}",
+        f"contract: {result['contract_path']}",
+        f"repo-path: {result['repo_path']}",
+        f"repo-slug: {result['repo_slug']}",
+        f"git branch: {result['git_branch']}",
+        f"repo pointer: {result['repo_pointer_path']}",
+        f"edit next: {result['next_edit_path']}",
+        f"then run: {result['next_command']}",
+    ]
+    if result.get("remote_url"):
+        lines.insert(4, f"origin: {result['remote_url']}")
+    return "\n".join(lines)
+
+def configure_runtime_preset(
+    *,
+    workflow_root: Path,
+    runtime_preset: str,
+    role: str,
+    runtime_name: str | None,
+    dry_run: bool,
+) -> dict[str, Any]:
+    try:
+        return configure_runtime_contract(
+            workflow_root=workflow_root,
+            preset_name=runtime_preset,
+            role=role,
+            runtime_name=runtime_name,
+            dry_run=dry_run,
+        )
+    except (RuntimePresetError, WorkflowContractError, FileNotFoundError, OSError) as exc:
+        raise SprintsCommandError(str(exc)) from exc
+
+def _lazy_cmd_watch(args, parser):
+    """Lazy import so importing the CLI doesn't pull rich into every invocation."""
+    try:
+        from ..observe.watch import cmd_watch
     except ImportError:
-        wfpath = PLUGIN_DIR / "workflows" / "__init__.py"
-        spec = importlib.util.spec_from_file_location("sprints_workflows", wfpath)
-        if spec is None or spec.loader is None:
-            return "sprints error: unable to load workflows dispatcher"
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        list_workflows = module.list_workflows
-        run_cli = module.run_cli
-
-    if not parts:
-        names = list_workflows()
-        return ("available workflows: " + ", ".join(names)) if names else "no workflows installed"
-
-    name, *cmd_args = parts
-
-    try:
-        if not cmd_args:
-            cmd_args = ["--help"]
-        rc = run_cli(workflow_root, cmd_args, require_workflow=name)
-        return f"workflow '{name}' exited with status {rc}" if rc != 0 else "ok"
-    except Exception as exc:
-        return f"sprints error: {exc}"
+        try:
+            from observe.watch import cmd_watch
+        except ImportError:
+            path = PLUGIN_DIR / "observe" / "watch.py"
+            spec = importlib.util.spec_from_file_location("sprints_watch_for_cli", path)
+            if spec is None or spec.loader is None:
+                raise SprintsCommandError(f"unable to load watch module from {path}")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            cmd_watch = module.cmd_watch
+    return cmd_watch(args, parser)
 
 
-def execute_raw_args(raw_args: str) -> str:
-    parser = build_parser()
-    argv = shlex.split(raw_args) if raw_args.strip() else ["status"]
-    stderr_buffer = io.StringIO()
-    try:
-        with redirect_stderr(stderr_buffer):
-            args = parser.parse_args(argv)
-        args._command_source = "plugin-command"
-        # String-returning commands bypass execute_namespace.
-        if args.sprints_command == "watch":
-            return _lazy_cmd_watch(args, parser)
-        if args.sprints_command == "scaffold-workflow":
-            return cmd_scaffold_workflow(args, parser)
-        if args.sprints_command == "bootstrap":
-            return cmd_bootstrap_workflow(args, parser)
-        result = execute_namespace(args)
-        fmt = _resolve_format(getattr(args, "format", None), getattr(args, "json", False))
-        return render_result(args.sprints_command, result, output_format=fmt)
-    except SprintsCommandError as exc:
-        return f"sprints error: {exc}"
-    except SystemExit:
-        detail = stderr_buffer.getvalue().strip()
-        return f"sprints error: {detail or parser.format_usage().strip()}"
-    except Exception as exc:
-        return f"sprints error: unexpected {type(exc).__name__}: {exc}"
+def _build_project_status(workflow_root: Path) -> dict[str, Any]:
+    return build_workflow_status(workflow_root)
 
 
-def run_cli_command(args: argparse.Namespace) -> None:
-    args._command_source = "cli"
-    # Some subcommands have handlers that return strings directly, not dicts.
-    # ``execute_namespace`` only knows about the legacy dict-returning commands,
-    # so without this branch the new (string-returning) commands would fall
-    # through to ``unknown sprints command``. This mirrors the special-cases
-    # in ``execute_raw_args`` for the slash-command path.
-    string_returning = {
-        "watch",
-        "scaffold-workflow",
-        "bootstrap",
-    }
-    if getattr(args, "sprints_command", None) in string_returning:
-        handler = getattr(args, "handler", None)
-        if handler is not None:
-            print(handler(args, parser=None))
-            return
-    fmt = _resolve_format(getattr(args, "format", None), getattr(args, "json", False))
-    print(render_result(args.sprints_command, execute_namespace(args), output_format=fmt))
+# Utilities
+
+def _run_wrapper_json_command(*, workflow_root: Path, command: str) -> dict[str, Any]:
+    """Run a workflow CLI command via the plugin-side entrypoint."""
+    argv = workflow_cli_argv(workflow_root, *shlex.split(command))
+    completed = subprocess.run(
+        argv,
+        capture_output=True,
+        text=True,
+        cwd=workflow_root,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise SprintsCommandError(
+            completed.stderr.strip() or completed.stdout.strip() or f"wrapper command failed: {command}"
+        )
+    return json.loads(completed.stdout)
+
+
+def _resolve_format(format_arg: str | None, json_flag: bool | None) -> str:
+    """Resolve the effective output format from ``--format`` and ``--json``.
+
+    The legacy ``--json`` flag wins when set so existing scripts don't get
+    silently downgraded. Otherwise, ``--format`` is honored. Default is text.
+    """
+    if json_flag:
+        return "json"
+    if format_arg == "json":
+        return "json"
+    return "text"
 
 
 if __name__ == "__main__":
