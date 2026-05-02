@@ -13,10 +13,10 @@ from .leases import (
     release_engine_lease,
 )
 from .retention import normalize_event_retention
-from .sqlite import connect_daedalus_db
 from .state import (
     ENGINE_STATE_TABLES,
     append_engine_event_to_connection,
+    connect_daedalus_db,
     engine_event_stats_from_connection,
     engine_events_from_connection,
     engine_events_for_run_from_connection,
