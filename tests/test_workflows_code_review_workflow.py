@@ -23,7 +23,16 @@ def test_derive_next_action_prefers_merge_for_clean_published_pr():
             "openPr": {"number": 301, "headRefOid": "abc123"},
             "health": "healthy",
             "implementation": {"localHeadSha": "abc123", "sessionActionRecommendation": {"action": "continue-session"}, "laneState": {}},
-            "reviews": {},
+            "reviews": {
+                "externalReview": {
+                    "required": True,
+                    "reviewScope": "postpublish-pr",
+                    "status": "completed",
+                    "verdict": "PASS_CLEAN",
+                    "reviewedHeadSha": "abc123",
+                    "openFindingCount": 0,
+                }
+            },
             "repairBrief": None,
             "preflight": {"prePublishReview": {"shouldRun": False}},
             "ledger": {"workflowState": "under_review"},
@@ -35,6 +44,38 @@ def test_derive_next_action_prefers_merge_for_clean_published_pr():
 
     assert result["type"] == "merge_and_promote"
     assert result["reason"] == "published-pr-approved"
+
+
+def test_derive_next_action_blocks_merge_until_external_review_clean_for_pr_head():
+    workflow_module = load_module("daedalus_workflows_change_delivery_workflow_test", "workflows/change_delivery/workflow.py")
+
+    result = workflow_module.derive_next_action(
+        {
+            "activeLane": {"number": 224},
+            "openPr": {"number": 301, "headRefOid": "abc123"},
+            "health": "healthy",
+            "implementation": {"localHeadSha": "abc123", "sessionActionRecommendation": {"action": "continue-session"}, "laneState": {}},
+            "reviews": {
+                "externalReview": {
+                    "required": True,
+                    "reviewScope": "postpublish-pr",
+                    "status": "pending",
+                    "verdict": None,
+                    "reviewedHeadSha": "abc123",
+                    "openFindingCount": 0,
+                }
+            },
+            "repairBrief": None,
+            "preflight": {"prePublishReview": {"shouldRun": False}},
+            "ledger": {"workflowState": "under_review"},
+            "derivedReviewLoopState": "clean",
+            "derivedMergeBlocked": False,
+            "nextAction": {"type": "noop", "reason": "old-wrapper-value"},
+        }
+    )
+
+    assert result["type"] == "noop"
+    assert result["reason"] == "external-review-not-clean-for-current-head"
 
 
 def test_derive_next_action_uses_fresh_session_noop_for_healthy_implementation_lane():

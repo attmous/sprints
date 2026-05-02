@@ -194,6 +194,30 @@ def test_pr_ready_for_review_and_has_local_candidate_are_simple_truth_checks():
     assert reviews_module.pr_ready_for_review({"number": 1, "isDraft": True}) is False
     assert reviews_module.pr_ready_for_review(None) is False
 
+    assert reviews_module.external_review_clean_for_head(
+        {
+            "required": True,
+            "reviewScope": "postpublish-pr",
+            "status": "completed",
+            "verdict": "PASS_CLEAN",
+            "reviewedHeadSha": "abc123",
+            "openFindingCount": 0,
+        },
+        "abc123",
+    ) is True
+    assert reviews_module.external_review_clean_for_head(
+        {
+            "required": True,
+            "reviewScope": "postpublish-pr",
+            "status": "pending",
+            "verdict": None,
+            "reviewedHeadSha": "abc123",
+            "openFindingCount": 0,
+        },
+        "abc123",
+    ) is False
+    assert reviews_module.external_review_clean_for_head({"required": False}, "abc123") is True
+
     assert reviews_module.has_local_candidate("abc123", 2) is True
     assert reviews_module.has_local_candidate("abc123", 0) is False
     assert reviews_module.has_local_candidate(None, 2) is False
@@ -715,6 +739,21 @@ def test_external_review_review_shaping_helpers_cover_thread_mapping_findings_pe
         pr_signal={"state": "pending", "createdAt": "2026-04-23T00:11:00Z", "content": "eyes", "user": "codex-cloud"},
         agent_name="External_Reviewer_Agent",
     )
+    no_signal = reviews_module.summarize_external_review(
+        head_sha="head-4",
+        latest_ts=None,
+        threads=[],
+        pr_signal=None,
+        agent_name="External_Reviewer_Agent",
+    )
+    stale_signal = reviews_module.summarize_external_review(
+        head_sha="head-5",
+        latest_ts="2026-04-23T00:11:00Z",
+        threads=[],
+        pr_signal={"state": "clean", "createdAt": "2026-04-23T00:01:00Z", "content": "+1", "user": "codex-cloud"},
+        signal_current=False,
+        agent_name="External_Reviewer_Agent",
+    )
     clean = reviews_module.summarize_external_review(
         head_sha="head-3",
         latest_ts="2026-04-23T00:06:00Z",
@@ -728,9 +767,15 @@ def test_external_review_review_shaping_helpers_cover_thread_mapping_findings_pe
     assert findings["openFindingCount"] == 1
     assert findings["supersededOpenFindingCount"] == 1
     assert findings["blockingFindings"] == ["real blocker"]
-    assert pending["status"] == "completed"
+    assert pending["status"] == "pending"
     assert pending["verdict"] is None
     assert "still reviewing the current PR head" in pending["summary"]
+    assert no_signal["status"] == "pending"
+    assert no_signal["verdict"] is None
+    assert "Waiting for External_Reviewer_Agent" in no_signal["summary"]
+    assert stale_signal["status"] == "pending"
+    assert stale_signal["verdict"] is None
+    assert "older than the current PR head" in stale_signal["summary"]
     assert clean["verdict"] == "PASS_CLEAN"
     assert clean["allFindingsClosed"] is True
     assert "lingering open thread(s) were superseded" in clean["summary"]
@@ -851,7 +896,7 @@ def test_fetch_external_review_review_uses_cache_and_builds_from_graphql_threads
     cached = reviews_module.fetch_external_review(
         297,
         current_head_sha="head-1",
-        cached_review={"reviewedHeadSha": "head-1", "updatedAt": "cached-ts", "summary": "cached summary"},
+        cached_review={"reviewedHeadSha": "head-1", "updatedAt": "cached-ts", "summary": "cached summary", "verdict": "PASS_CLEAN"},
         fetch_pr_body_signal_fn=lambda _pr_number: (_ for _ in ()).throw(AssertionError("cache hit should skip signal fetch")),
         code_host_client=object(),
         codex_bot_logins={"codex-bot"},
@@ -890,6 +935,15 @@ def test_fetch_external_review_review_uses_cache_and_builds_from_graphql_threads
                 },
             }
 
+    class NoSignalCodeHost:
+        def fetch_pull_request_review_threads(self, pr_number):
+            assert pr_number == 298
+            return {
+                "headRefOid": "head-3",
+                "commits": {"nodes": [{"commit": {"oid": "head-3", "committedDate": "2026-04-23T00:10:00Z"}}]},
+                "reviewThreads": {"nodes": []},
+            }
+
     built = reviews_module.fetch_external_review(
         297,
         current_head_sha="head-other",
@@ -904,6 +958,34 @@ def test_fetch_external_review_review_uses_cache_and_builds_from_graphql_threads
         extract_summary_fn=lambda body: body,
         agent_name="External_Reviewer_Agent",
     )
+    pending_without_signal = reviews_module.fetch_external_review(
+        298,
+        current_head_sha="head-3",
+        cached_review=None,
+        fetch_pr_body_signal_fn=lambda _pr_number: None,
+        code_host_client=NoSignalCodeHost(),
+        codex_bot_logins={"codex-bot"},
+        cache_seconds=30,
+        iso_to_epoch_fn=lambda value: {"2026-04-23T00:10:00Z": 100}.get(value),
+        now_epoch_fn=lambda: 999,
+        extract_severity_fn=lambda body: "minor",
+        extract_summary_fn=lambda body: body,
+        agent_name="External_Reviewer_Agent",
+    )
+    stale_clean_signal = reviews_module.fetch_external_review(
+        298,
+        current_head_sha="head-3",
+        cached_review=None,
+        fetch_pr_body_signal_fn=lambda _pr_number: {"state": "clean", "createdAt": "2026-04-23T00:01:00Z", "content": "+1", "user": "codex-bot"},
+        code_host_client=NoSignalCodeHost(),
+        codex_bot_logins={"codex-bot"},
+        cache_seconds=30,
+        iso_to_epoch_fn=lambda value: {"2026-04-23T00:01:00Z": 10, "2026-04-23T00:10:00Z": 100}.get(value),
+        now_epoch_fn=lambda: 999,
+        extract_severity_fn=lambda body: "minor",
+        extract_summary_fn=lambda body: body,
+        agent_name="External_Reviewer_Agent",
+    )
 
     assert cached["summary"] == "cached summary"
     assert cached["required"] is True
@@ -912,6 +994,12 @@ def test_fetch_external_review_review_uses_cache_and_builds_from_graphql_threads
     assert built["openFindingCount"] == 1
     assert built["supersededOpenFindingCount"] == 1
     assert built["blockingFindings"] == ["sev0 blocker"]
+    assert pending_without_signal["status"] == "pending"
+    assert pending_without_signal["verdict"] is None
+    assert "clean PR-body review signal" in pending_without_signal["summary"]
+    assert stale_clean_signal["status"] == "pending"
+    assert stale_clean_signal["verdict"] is None
+    assert "older than the current PR head" in stale_clean_signal["summary"]
 
 
 def test_codex_parsing_and_checks_helpers_cover_severity_summary_and_acceptability():

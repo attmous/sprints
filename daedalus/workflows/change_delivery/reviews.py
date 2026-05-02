@@ -332,6 +332,23 @@ def pr_ready_for_review(open_pr: dict[str, Any] | None) -> bool:
     return bool(open_pr) and not bool((open_pr or {}).get("isDraft"))
 
 
+def external_review_clean_for_head(review: dict[str, Any] | None, current_head_sha: str | None) -> bool:
+    review = review or {}
+    if not review:
+        return False
+    if review.get("required") is False:
+        return True
+    if not current_head_sha:
+        return False
+    return (
+        review.get("reviewScope") == "postpublish-pr"
+        and review.get("status") == "completed"
+        and review.get("verdict") == "PASS_CLEAN"
+        and review.get("reviewedHeadSha") == current_head_sha
+        and int(review.get("openFindingCount") or 0) == 0
+    )
+
+
 def has_local_candidate(local_head_sha: str | None, commits_ahead: int | None) -> bool:
     return bool(local_head_sha) and int(commits_ahead or 0) > 0
 
@@ -599,6 +616,7 @@ def summarize_external_review(
     latest_ts: str | None,
     threads: list[dict[str, Any]],
     pr_signal: dict[str, Any] | None,
+    signal_current: bool = True,
     agent_name: str,
 ) -> dict[str, Any]:
     open_threads = [
@@ -612,18 +630,30 @@ def summarize_external_review(
     blocking = [t for t in open_threads if t.get("severity") == "critical"]
     major = [t for t in open_threads if t.get("severity") == "major"]
     minor = [t for t in open_threads if t.get("severity") == "minor"]
+    signal_state = "stale" if pr_signal and not signal_current else (pr_signal or {}).get("state")
     if open_threads:
+        status = "completed"
         verdict = "REWORK" if blocking else "PASS_WITH_FINDINGS"
         summary = f"{len(open_threads)} unresolved {agent_name} review thread(s) still block the current PR head"
         all_closed = False
-    elif (pr_signal or {}).get("state") == "pending":
+    elif signal_state == "pending":
+        status = "pending"
         verdict = None
         summary = (
             f"{agent_name} is still reviewing the current PR head; "
             f"PR-body {(pr_signal or {}).get('content')} signal from {(pr_signal or {}).get('user')} is newer than the last thread state."
         )
         all_closed = False
-    else:
+    elif signal_state == "stale":
+        status = "pending"
+        verdict = None
+        summary = (
+            f"{agent_name} review signal is older than the current PR head; "
+            "waiting for a fresh clean signal."
+        )
+        all_closed = False
+    elif signal_state == "clean":
+        status = "completed"
         verdict = "PASS_CLEAN"
         if superseded_threads and pr_signal:
             summary = (
@@ -634,8 +664,13 @@ def summarize_external_review(
         else:
             summary = f"No unresolved {agent_name} review threads on current PR head."
         all_closed = True
+    else:
+        status = "pending"
+        verdict = None
+        summary = f"Waiting for {agent_name} to report a clean PR-body review signal for the current PR head."
+        all_closed = False
     return {
-        "status": "completed",
+        "status": status,
         "verdict": verdict,
         "reviewedHeadSha": head_sha,
         "updatedAt": latest_ts,
@@ -649,6 +684,23 @@ def summarize_external_review(
         "supersededOpenFindingCount": len(superseded_threads),
         "prBodySignal": pr_signal,
     }
+
+
+def pr_body_signal_current_for_head(
+    pr_signal: dict[str, Any] | None,
+    head_committed_at: str | None,
+    *,
+    iso_to_epoch_fn: Callable[[str | None], int | None] = _iso_to_epoch,
+) -> bool:
+    if not pr_signal:
+        return False
+    if not head_committed_at:
+        return True
+    signal_epoch = iso_to_epoch_fn(pr_signal.get("createdAt"))
+    head_epoch = iso_to_epoch_fn(head_committed_at)
+    if signal_epoch is None or head_epoch is None:
+        return True
+    return signal_epoch >= head_epoch
 
 
 def synthesize_repair_brief(
@@ -847,14 +899,25 @@ def fetch_external_review(
         and cached_review.get("reviewedHeadSha") == current_head_sha
         and cached_updated_at is not None
         and (float(now_epoch_fn()) - cached_updated_at) <= cache_seconds
+        and cached_review.get("verdict") in {"PASS_CLEAN", "PASS_WITH_FINDINGS", "REWORK"}
     ):
         return {**base, **cached_review, "required": True}
     pr_signal = fetch_pr_body_signal_fn(pr_number)
-    signal_epoch = iso_to_epoch_fn((pr_signal or {}).get("createdAt"))
     pr = code_host_client.fetch_pull_request_review_threads(pr_number)
     head_sha = pr.get("headRefOid")
+    commit_nodes = (((pr.get("commits") or {}).get("nodes") or []))
+    head_committed_at = None
+    if commit_nodes:
+        head_committed_at = ((commit_nodes[-1].get("commit") or {}).get("committedDate"))
+    signal_current = pr_body_signal_current_for_head(
+        pr_signal,
+        head_committed_at,
+        iso_to_epoch_fn=iso_to_epoch_fn,
+    )
+    effective_pr_signal = pr_signal if signal_current else None
+    signal_epoch = iso_to_epoch_fn((effective_pr_signal or {}).get("createdAt"))
     threads = []
-    latest_ts = None
+    latest_ts = (pr_signal or {}).get("createdAt") if pr_signal else None
     for node in pr.get("reviewThreads", {}).get("nodes", []):
         comments = node.get("comments", {}).get("nodes", [])
         codex_comments = [c for c in comments if (c.get("author") or {}).get("login") in codex_bot_logins]
@@ -866,7 +929,7 @@ def fetch_external_review(
             comment=comment,
             severity=extract_severity_fn(comment.get("body", "")),
             summary=extract_summary_fn(comment.get("body", "")),
-            pr_signal=pr_signal,
+            pr_signal=effective_pr_signal,
             signal_epoch=signal_epoch,
             comment_epoch=iso_to_epoch_fn(comment.get("createdAt")),
         )
@@ -880,6 +943,7 @@ def fetch_external_review(
             latest_ts=latest_ts,
             threads=threads,
             pr_signal=pr_signal,
+            signal_current=signal_current,
             agent_name=agent_name,
         )
     )

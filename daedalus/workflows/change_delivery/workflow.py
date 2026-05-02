@@ -4,6 +4,7 @@ from typing import Any
 
 from workflows.change_delivery.migrations import get_review
 from workflows.change_delivery.reviews import (
+    external_review_clean_for_head,
     has_local_candidate,
     inter_review_agent_is_running_on_head,
     should_dispatch_internal_review_repair_handoff,
@@ -73,6 +74,13 @@ def derive_next_action(
         return {"type": "noop", "reason": "no-active-lane"}
 
     if open_pr and review_loop_state == "clean" and not merge_blocked:
+        if not external_review_clean_for_head(external_review, pr_head_sha):
+            return {
+                "type": "noop",
+                "reason": "external-review-not-clean-for-current-head",
+                "issueNumber": active_lane.get("number"),
+                "headSha": pr_head_sha,
+            }
         return {
             "type": "merge_and_promote",
             "reason": "published-pr-approved",
