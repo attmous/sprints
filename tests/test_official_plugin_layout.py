@@ -87,7 +87,7 @@ def test_repo_root_tools_wrapper_dispatches_scaffold(tmp_path):
     )
 
     out = tools.execute_raw_args(
-        f"scaffold-workflow --workflow-root {workflow_root} --repo-path {repo} --repo-slug attmous/daedalus"
+        f"scaffold-workflow --workflow-root {workflow_root.as_posix()} --repo-path {repo.as_posix()} --repo-slug attmous/daedalus"
     )
 
     assert "daedalus error:" not in out, out
@@ -101,10 +101,13 @@ def test_repo_root_workflows_wrapper_exposes_change_delivery_submodules():
 
     import importlib
 
-    runtimes = importlib.import_module("workflows.change_delivery.runtimes")
+    workflow = importlib.import_module("workflows.change_delivery")
+    status = importlib.import_module("workflows.change_delivery.status")
 
-    assert runtimes.__file__ is not None
-    assert "daedalus/workflows/change_delivery/runtimes" in runtimes.__file__
+    assert workflow.__file__ is not None
+    assert status.__file__ is not None
+    assert "daedalus/workflows/change_delivery/__init__.py" in workflow.__file__.replace("\\", "/")
+    assert "daedalus/workflows/change_delivery/status.py" in status.__file__.replace("\\", "/")
 
 
 def test_repo_root_workflows_wrapper_exposes_issue_runner_submodules():
@@ -117,7 +120,7 @@ def test_repo_root_workflows_wrapper_exposes_issue_runner_submodules():
     tracker = importlib.import_module("workflows.issue_runner.tracker")
 
     assert tracker.__file__ is not None
-    assert "daedalus/workflows/issue_runner/tracker" in tracker.__file__
+    assert "daedalus/workflows/issue_runner/tracker" in tracker.__file__.replace("\\", "/")
 
 
 def test_repo_root_runtimes_wrapper_exposes_shared_runtime_modules():
@@ -132,7 +135,7 @@ def test_repo_root_runtimes_wrapper_exposes_shared_runtime_modules():
 
     assert runtimes_pkg.__file__ is not None
     assert codex.__file__ is not None
-    assert "daedalus/runtimes/codex_app_server" in codex.__file__
+    assert "daedalus/runtimes/codex_app_server" in codex.__file__.replace("\\", "/")
 
 
 def test_repo_root_engine_wrapper_exposes_shared_engine_modules():
@@ -147,7 +150,7 @@ def test_repo_root_engine_wrapper_exposes_shared_engine_modules():
 
     assert engine_pkg.__file__ is not None
     assert scheduler.__file__ is not None
-    assert "daedalus/engine/scheduler" in scheduler.__file__
+    assert "daedalus/engine/scheduler" in scheduler.__file__.replace("\\", "/")
 
 
 def test_repo_root_trackers_wrapper_exposes_shared_tracker_modules():
@@ -162,4 +165,4 @@ def test_repo_root_trackers_wrapper_exposes_shared_tracker_modules():
 
     assert trackers_pkg.__file__ is not None
     assert linear.__file__ is not None
-    assert "daedalus/trackers/linear" in linear.__file__
+    assert "daedalus/trackers/linear" in linear.__file__.replace("\\", "/")

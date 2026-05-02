@@ -17,8 +17,6 @@ ALLOWED_COMPATIBILITY_FILES = {
     "daedalus/integrations/code_hosts/github.py",
     "daedalus/runtimes/types.py",
     "daedalus/runtimes/registry.py",
-    "daedalus/workflows/shared/runtimes/__init__.py",
-    "daedalus/workflows/core/types.py",
 }
 
 
@@ -35,6 +33,11 @@ def test_internal_workflow_imports_use_new_restructure_namespaces():
             "from engine.driver",
             "from runtimes import",
             "from workflow_core",
+            "from workflows.core",
+            "from workflows.shared",
+            "from workflows.change_delivery.runtimes",
+            "from workflows.change_delivery.config_snapshot",
+            "from workflows.change_delivery.stall",
         ):
             if old_import in text:
                 offenders.append(f"{rel}: {old_import}")
