@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -7,13 +8,6 @@ from typing import Any
 from runtimes.capabilities import recognized_runtime_kinds
 from workflows.issue_runner.tracker import TrackerConfigError, build_tracker_client, resolve_tracker_path
 from workflows.runtime_presets import runtime_capability_checks, runtime_stage_checks
-from trackers.github import (
-    github_auth_host_from_slug,
-    github_auth_success_accounts,
-    github_name_with_owner_from_slug,
-    github_slug_from_config,
-    validate_github_tracker_config,
-)
 
 
 @dataclass(frozen=True)
@@ -82,6 +76,7 @@ def _validate_config(config: dict[str, Any], *, workflow_root: Path) -> None:
         tracker_kind = str(tracker_cfg.get("kind") or "").strip()
         tracker_client_cfg = dict(tracker_cfg)
         if tracker_kind == "github":
+            github_tracker = importlib.import_module("trackers.github")
             if tracker_client_cfg.get("github-slug"):
                 raise TrackerConfigError(
                     "issue-runner GitHub config uses tracker.github_slug; remove tracker.github-slug"
@@ -90,8 +85,8 @@ def _validate_config(config: dict[str, Any], *, workflow_root: Path) -> None:
                 raise TrackerConfigError(
                     "issue-runner GitHub config uses tracker.github_slug; remove repository.github-slug"
                 )
-            github_slug_from_config(tracker_client_cfg)
-            validate_github_tracker_config(
+            github_tracker.github_slug_from_config(tracker_client_cfg)
+            github_tracker.validate_github_tracker_config(
                 workflow_root=workflow_root,
                 tracker_cfg=tracker_client_cfg,
                 repository_cfg=repository_cfg,
@@ -101,18 +96,23 @@ def _validate_config(config: dict[str, Any], *, workflow_root: Path) -> None:
             path = resolve_tracker_path(workflow_root=workflow_root, tracker_cfg=tracker_cfg)
             if not path.exists():
                 raise TrackerConfigError(f"tracker.path does not exist: {path}")
+        github_run_json = None
+        if tracker_kind == "github":
+            github_run_json = importlib.import_module("trackers.github")._subprocess_run_json
         client = build_tracker_client(
             workflow_root=workflow_root,
             tracker_cfg=tracker_client_cfg,
             repo_path=repo_path,
+            run_json=github_run_json,
         )
         if tracker_kind == "github":
-            expected_slug = github_slug_from_config(tracker_client_cfg)
-            auth_host = github_auth_host_from_slug(expected_slug)
+            github_tracker = importlib.import_module("trackers.github")
+            expected_slug = github_tracker.github_slug_from_config(tracker_client_cfg)
+            auth_host = github_tracker.github_auth_host_from_slug(expected_slug)
             auth_status = getattr(client, "auth_status_payload")(hostname=auth_host)
             _assert_github_auth_ok(auth_status, hostname=auth_host)
             repo_view = getattr(client, "repo_view_payload")()
-            expected_name_with_owner = github_name_with_owner_from_slug(expected_slug)
+            expected_name_with_owner = github_tracker.github_name_with_owner_from_slug(expected_slug)
             actual_slug = str(repo_view.get("nameWithOwner") or "").strip()
             if (
                 expected_name_with_owner
@@ -127,4 +127,5 @@ def _validate_config(config: dict[str, Any], *, workflow_root: Path) -> None:
 
 
 def _assert_github_auth_ok(payload: dict[str, Any], *, hostname: str | None) -> None:
-    github_auth_success_accounts(payload, hostname=hostname)
+    github_tracker = importlib.import_module("trackers.github")
+    github_tracker.github_auth_success_accounts(payload, hostname=hostname)

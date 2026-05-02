@@ -21,9 +21,9 @@ from workflows.change_delivery.migrations import get_ledger_field
 from workflows.change_delivery.storage import ensure_change_delivery_state_files
 from workflows.change_delivery.runtimes import build_runtimes
 from workflows.shared.paths import runtime_paths
-from code_hosts import build_code_host_client
-from trackers import build_tracker_client
-from trackers.feedback import feedback_enabled, publish_tracker_feedback
+from integrations.code_hosts import build_code_host_client
+from integrations.trackers import build_tracker_client
+from integrations.trackers.feedback import feedback_enabled, publish_tracker_feedback
 
 
 def _derive_lane_selection_cfg(yaml_cfg, *, active_lane_label):

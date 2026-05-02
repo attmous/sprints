@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
-from trackers.github import github_auth_host_from_slug, github_name_with_owner_from_slug
+from integrations.trackers.github import github_auth_host_from_slug, github_name_with_owner_from_slug
 
 from . import CodeHostConfigError, register
 

@@ -5,30 +5,18 @@ import time
 from pathlib import Path
 from typing import Any
 
+from workflows.change_delivery.config import change_delivery_storage_paths_from_config
+
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _resolve_storage_path(workflow_root: Path, value: Any, default: str) -> Path:
-    raw = str(value or default).strip() or default
-    path = Path(raw).expanduser()
-    if path.is_absolute():
-        return path
-    return (Path(workflow_root).resolve() / path).resolve()
 
 
 def change_delivery_storage_paths(
     workflow_root: Path,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Path]:
-    storage = (config or {}).get("storage") or {}
-    return {
-        "ledger": _resolve_storage_path(workflow_root, storage.get("ledger"), "memory/workflow-status.json"),
-        "health": _resolve_storage_path(workflow_root, storage.get("health"), "memory/workflow-health.json"),
-        "audit_log": _resolve_storage_path(workflow_root, storage.get("audit-log"), "memory/workflow-audit.jsonl"),
-        "scheduler": _resolve_storage_path(workflow_root, storage.get("scheduler"), "memory/workflow-scheduler.json"),
-    }
+    return change_delivery_storage_paths_from_config(workflow_root, config)
 
 
 def default_idle_ledger(*, now_iso: str | None = None) -> dict[str, Any]:

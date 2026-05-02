@@ -10,7 +10,12 @@ from engine.lifecycle import clear_work_entries, mark_running_work, schedule_ret
 from engine.scheduler import retry_due_at
 from engine.storage import load_optional_json as _load_optional_json
 from engine.work_items import work_item_from_issue
-from runtimes import PromptRunResult
+from runtimes.types import PromptRunResult
+from workflows.issue_runner.config import (
+    max_retry_backoff_ms_from_config,
+    poll_interval_seconds_from_config,
+    scheduler_state_from_config as _typed_scheduler_state_from_config,
+)
 from workflows.issue_runner.tracker import eligible_issues, issue_session_name
 
 
@@ -22,28 +27,8 @@ def _now_epoch() -> float:
     return time.time()
 
 
-def _cfg_value(config: dict[str, Any], *keys: str, default: Any = None) -> Any:
-    for key in keys:
-        if key in config:
-            return config[key]
-    return default
-
-
 def scheduler_state_from_config(config: dict[str, Any]) -> dict[str, Any]:
-    polling_cfg = config.get("polling") or {}
-    agent_cfg = config.get("agent") or {}
-    interval_ms = _cfg_value(polling_cfg, "interval_ms")
-    if interval_ms in (None, ""):
-        interval_ms = int(_cfg_value(polling_cfg, "interval_seconds", "interval-seconds", default=30) or 30) * 1000
-    return {
-        "poll_interval_ms": max(int(interval_ms or 30000), 1),
-        "max_concurrent_agents": max(int(agent_cfg.get("max_concurrent_agents") or 10), 1),
-        "max_concurrent_agents_by_state": {
-            str(state).strip().lower(): int(limit)
-            for state, limit in ((agent_cfg.get("max_concurrent_agents_by_state") or {}).items())
-            if str(state).strip() and int(limit) > 0
-        },
-    }
+    return _typed_scheduler_state_from_config(config)
 
 
 @dataclass
@@ -61,12 +46,7 @@ class IssueRunnerOrchestrator:
     def _poll_interval_seconds(self, override: int | None) -> int:
         if override is not None:
             return max(int(override), 1)
-        polling_cfg = self.workspace.config.get("polling") or {}
-        interval_ms = _cfg_value(polling_cfg, "interval_ms")
-        if interval_ms not in (None, ""):
-            return max(int(interval_ms) // 1000, 1)
-        interval_seconds = _cfg_value(polling_cfg, "interval_seconds", "interval-seconds", default=30)
-        return max(int(interval_seconds or 30), 1)
+        return poll_interval_seconds_from_config(self.workspace.config)
 
     def _dispatch_slots(self) -> int:
         w = self.workspace
@@ -203,7 +183,7 @@ class IssueRunnerOrchestrator:
         run_id: str | None = None,
     ) -> dict[str, Any]:
         w = self.workspace
-        max_backoff_ms = int((w.config.get("agent") or {}).get("max_retry_backoff_ms") or 300000)
+        max_backoff_ms = max_retry_backoff_ms_from_config(w.config)
         work_item = work_item_from_issue(issue, source=str((w.config.get("tracker") or {}).get("kind") or "tracker"))
         entry, retry = schedule_retry_entry(
             work_item=work_item,

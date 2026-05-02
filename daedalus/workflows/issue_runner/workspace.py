@@ -23,7 +23,7 @@ from engine.scheduler import (
     retry_queue_snapshot,
     running_snapshot,
 )
-from engine.driver import WorkflowDriver
+from workflows.core.types import WorkflowDriver
 from engine.lifecycle import (
     clear_work_entries,
     mark_running_work,
@@ -35,11 +35,22 @@ from engine.storage import append_jsonl as _append_jsonl
 from engine.storage import load_optional_json as _load_optional_json
 from engine.storage import write_json_atomic as _write_json
 from engine.work_items import work_item_from_issue
-from runtimes import PromptRunResult, Runtime, build_runtimes
+from runtimes.registry import build_runtimes
+from runtimes.types import PromptRunResult, Runtime
 from runtimes.stages import prompt_result_from_stage, run_runtime_stage
 from workflows.contract import WORKFLOW_POLICY_KEY, WorkflowContractError, load_workflow_contract
+from workflows.core.config import ConfigError
+from workflows.core.hooks import build_hook_env, run_shell_hook
+from workflows.core.prompts import render_prompt_template
 from workflows.shared.config_snapshot import AtomicRef, ConfigSnapshot
 from workflows.shared.paths import runtime_paths
+from workflows.issue_runner.config import (
+    IssueRunnerConfig,
+    max_retry_backoff_ms_from_config,
+    poll_interval_seconds_from_config,
+    scheduler_state_from_config as _typed_scheduler_state_from_config,
+    terminal_states_from_config,
+)
 from workflows.issue_runner.orchestrator import IssueRunnerOrchestrator
 from workflows.issue_runner.tracker import (
     TrackerClient,
@@ -58,8 +69,8 @@ from workflows.runtime_presets import (
     runtime_capability_checks,
     runtime_stage_checks,
 )
-from trackers.feedback import publish_tracker_feedback
-from trackers.github import (
+from integrations.trackers.feedback import publish_tracker_feedback
+from integrations.trackers.github import (
     github_auth_host_from_slug,
     github_auth_success_accounts,
     github_name_with_owner_from_slug,
@@ -73,13 +84,6 @@ def _now_iso() -> str:
 
 def _now_epoch() -> float:
     return time.time()
-
-
-def _cfg_value(config: dict[str, Any], *keys: str, default: Any = None) -> Any:
-    for key in keys:
-        if key in config:
-            return config[key]
-    return default
 
 
 def _repository_path_from_config(workflow_root: Path, config: dict[str, Any]) -> Path | None:
@@ -153,37 +157,11 @@ def _assert_workspace_inside_root(workspace_root: Path, issue_workspace: Path) -
 
 
 def _render_prompt(*, prompt_template: str, issue: dict[str, Any], attempt: int | None) -> str:
-    template = str(prompt_template or "").strip()
-    if not template:
-        template = "You are working on an issue.\n\nIssue: {{ issue.identifier }} - {{ issue.title }}"
-    if "{%" in template or "%}" in template:
-        raise RuntimeError("template_parse_error: control blocks are not supported")
-
-    import re
-
-    def replace(match: re.Match[str]) -> str:
-        expr = match.group(1).strip()
-        if "|" in expr:
-            raise RuntimeError(f"template_render_error: unsupported filter in {expr!r}")
-        if expr == "attempt":
-            return "" if attempt is None else str(attempt)
-        if not expr.startswith("issue."):
-            raise RuntimeError(f"template_render_error: unknown variable {expr!r}")
-        value: Any = issue
-        for part in expr.split(".")[1:]:
-            if not isinstance(value, dict) or part not in value:
-                raise RuntimeError(f"template_render_error: unknown variable {expr!r}")
-            value = value[part]
-        if value is None:
-            return ""
-        if isinstance(value, (dict, list)):
-            return json.dumps(value, sort_keys=True)
-        return str(value)
-
-    rendered = re.sub(r"{{\s*([^{}]+?)\s*}}", replace, template)
-    if "{{" in rendered or "}}" in rendered:
-        raise RuntimeError("template_parse_error: unbalanced template delimiters")
-    return rendered.strip() + "\n"
+    return render_prompt_template(
+        prompt_template=prompt_template,
+        default_template="You are working on an issue.\n\nIssue: {{ issue.identifier }} - {{ issue.title }}",
+        variables={"issue": issue, "attempt": attempt},
+    )
 
 
 def _subprocess_run(command: list[str], *, cwd: Path | None = None, timeout: int | None = None, env: dict[str, str] | None = None):
@@ -230,20 +208,7 @@ def _build_runtimes_from_config(
 
 
 def _scheduler_state_from_config(config: dict[str, Any]) -> dict[str, Any]:
-    polling_cfg = config.get("polling") or {}
-    agent_cfg = config.get("agent") or {}
-    interval_ms = _cfg_value(polling_cfg, "interval_ms")
-    if interval_ms in (None, ""):
-        interval_ms = int(_cfg_value(polling_cfg, "interval_seconds", "interval-seconds", default=30) or 30) * 1000
-    return {
-        "poll_interval_ms": max(int(interval_ms or 30000), 1),
-        "max_concurrent_agents": max(int(agent_cfg.get("max_concurrent_agents") or 10), 1),
-        "max_concurrent_agents_by_state": {
-            str(state).strip().lower(): int(limit)
-            for state, limit in ((agent_cfg.get("max_concurrent_agents_by_state") or {}).items())
-            if str(state).strip() and int(limit) > 0
-        },
-    }
+    return _typed_scheduler_state_from_config(config)
 
 
 @dataclass
@@ -312,12 +277,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
     def _poll_interval_seconds(self, override: int | None) -> int:
         if override is not None:
             return max(int(override), 1)
-        polling_cfg = self.config.get("polling") or {}
-        interval_ms = _cfg_value(polling_cfg, "interval_ms")
-        if interval_ms not in (None, ""):
-            return max(int(interval_ms) // 1000, 1)
-        interval_seconds = _cfg_value(polling_cfg, "interval_seconds", "interval-seconds", default=30)
-        return max(int(interval_seconds or 30), 1)
+        return poll_interval_seconds_from_config(self.config)
 
     def build_status(self) -> dict[str, Any]:
         snapshot = self.snapshot_ref.get()
@@ -649,7 +609,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
         delay_type: str = "failure",
         run_id: str | None = None,
     ) -> dict[str, Any]:
-        max_backoff_ms = int((self.config.get("agent") or {}).get("max_retry_backoff_ms") or 300000)
+        max_backoff_ms = max_retry_backoff_ms_from_config(self.config)
         work_item = work_item_from_issue(issue, source=str((self.config.get("tracker") or {}).get("kind") or "tracker"))
         entry, retry = schedule_retry_entry(
             work_item=work_item,
@@ -678,15 +638,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
         self.retry_entries = clear_work_entries(self.retry_entries, [issue_id])
 
     def _terminal_states(self) -> set[str]:
-        tracker_cfg = self.config.get("tracker") or {}
-        return {
-            str(value).strip().lower()
-            for value in (
-                _cfg_value(tracker_cfg, "terminal_states", "terminal-states")
-                or ["done", "closed", "canceled", "cancelled", "resolved"]
-            )
-            if str(value).strip()
-        }
+        return terminal_states_from_config(self.config)
 
     def _feedback_reached_terminal_state(self, feedback_result: dict[str, Any]) -> bool:
         state = str(feedback_result.get("state") or "").strip().lower()
@@ -1558,18 +1510,20 @@ class IssueRunnerWorkspace(WorkflowDriver):
         output_path: Path,
     ) -> dict[str, str]:
         repository_cfg = self.config.get("repository") or {}
-        return {
-            "WORKFLOW_ROOT": str(self.path),
-            "ISSUE_ID": str(issue.get("id") or ""),
-            "ISSUE_IDENTIFIER": str(issue.get("identifier") or ""),
-            "ISSUE_TITLE": str(issue.get("title") or ""),
-            "ISSUE_STATE": str(issue.get("state") or ""),
-            "ISSUE_LABELS": ",".join(issue.get("labels") or []),
-            "ISSUE_WORKSPACE": str(issue_workspace),
-            "PROMPT_PATH": str(prompt_path),
-            "OUTPUT_PATH": str(output_path),
-            "REPOSITORY_PATH": str(repository_cfg.get("local-path") or ""),
-        }
+        return build_hook_env(
+            {
+                "WORKFLOW_ROOT": self.path,
+                "ISSUE_ID": issue.get("id") or "",
+                "ISSUE_IDENTIFIER": issue.get("identifier") or "",
+                "ISSUE_TITLE": issue.get("title") or "",
+                "ISSUE_STATE": issue.get("state") or "",
+                "ISSUE_LABELS": ",".join(issue.get("labels") or []),
+                "ISSUE_WORKSPACE": issue_workspace,
+                "PROMPT_PATH": prompt_path,
+                "OUTPUT_PATH": output_path,
+                "REPOSITORY_PATH": repository_cfg.get("local-path") or "",
+            }
+        )
 
     def _run_hook(
         self,
@@ -1579,29 +1533,14 @@ class IssueRunnerWorkspace(WorkflowDriver):
         *,
         ignore_failure: bool = False,
     ) -> dict[str, Any]:
-        hooks_cfg = self.config.get("hooks") or {}
-        script = str(_cfg_value(hooks_cfg, hook_name, hook_name.replace("_", "-")) or "").strip()
-        if not script:
-            return {"hook": hook_name, "ran": False}
-        timeout_ms = int(_cfg_value(hooks_cfg, "timeout_ms", "timeout-seconds", default=60000) or 60000)
-        timeout = max(timeout_ms // 1000, 1)
-        try:
-            completed = self._run(["bash", "-lc", script], cwd=worktree, timeout=timeout, env=env)
-        except Exception as exc:
-            if not ignore_failure:
-                raise
-            return {
-                "hook": hook_name,
-                "ran": True,
-                "returncode": None,
-                "ignored_failure": True,
-                "error": str(exc),
-            }
-        return {
-            "hook": hook_name,
-            "ran": True,
-            "returncode": getattr(completed, "returncode", 0),
-        }
+        return run_shell_hook(
+            hooks_config=self.config.get("hooks") or {},
+            hook_name=hook_name,
+            worktree=worktree,
+            env=env,
+            run=self._run,
+            ignore_failure=ignore_failure,
+        )
 
     def _metrics_payload(self, result: PromptRunResult) -> dict[str, Any]:
         return {
@@ -1654,10 +1593,13 @@ class IssueRunnerWorkspace(WorkflowDriver):
     def reload_contract(self) -> None:
         try:
             contract = load_workflow_contract(self.path)
-            _validate_issue_runner_config(dict(contract.config))
+            next_config = dict(contract.config)
+            _validate_issue_runner_config(next_config)
+            typed_cfg = IssueRunnerConfig.from_raw(next_config, workflow_root=self.path)
         except (
             FileNotFoundError,
             WorkflowContractError,
+            ConfigError,
             JsonSchemaValidationError,
             OSError,
             UnicodeDecodeError,
@@ -1677,7 +1619,7 @@ class IssueRunnerWorkspace(WorkflowDriver):
         current_key = (current.source_mtime, current.source_size, str(self.contract_path))
         if key == current_key:
             return
-        cfg = dict(contract.config)
+        cfg = next_config
         prompts = cfg.get("prompts") or {}
         snapshot = ConfigSnapshot(
             config=cfg,
@@ -1692,8 +1634,6 @@ class IssueRunnerWorkspace(WorkflowDriver):
         self.snapshot_ref.set(snapshot)
         tracker_cfg = cfg.get("tracker") or {}
         tracker_client_cfg = _tracker_config_for_client(cfg)
-        workspace_cfg = cfg.get("workspace") or {}
-        storage_cfg = cfg.get("storage") or {}
         repo_path = _repository_path_from_config(self.path, cfg)
         tracker_source_cfg = dict(tracker_client_cfg)
         if repo_path is not None and str(tracker_cfg.get("kind") or "").strip() == "github":
@@ -1708,18 +1648,11 @@ class IssueRunnerWorkspace(WorkflowDriver):
         )
         previous_scheduler_path = self.scheduler_path
 
-        def _resolve_path(value: str, default: str) -> Path:
-            raw = str(value or default).strip()
-            path = Path(raw).expanduser()
-            if not path.is_absolute():
-                path = (self.path / path).resolve()
-            return path
-
-        self.issue_workspace_root = _resolve_path(_cfg_value(workspace_cfg, "root", default="workspace/issues"), "workspace/issues")
-        self.status_path = _resolve_path(storage_cfg.get("status") or "memory/workflow-status.json", "memory/workflow-status.json")
-        self.health_path = _resolve_path(storage_cfg.get("health") or "memory/workflow-health.json", "memory/workflow-health.json")
-        self.audit_log_path = _resolve_path(storage_cfg.get("audit-log") or "memory/workflow-audit.jsonl", "memory/workflow-audit.jsonl")
-        self.scheduler_path = _resolve_path(storage_cfg.get("scheduler") or "memory/workflow-scheduler.json", "memory/workflow-scheduler.json")
+        self.issue_workspace_root = typed_cfg.workspace.root
+        self.status_path = typed_cfg.storage.status
+        self.health_path = typed_cfg.storage.health
+        self.audit_log_path = typed_cfg.storage.audit_log
+        self.scheduler_path = typed_cfg.storage.scheduler
         self.db_path = runtime_paths(self.path)["db_path"]
         self.engine_store = EngineStore(
             db_path=self.db_path,
@@ -1744,6 +1677,7 @@ def load_workspace_from_config(
     root = workspace_root.expanduser().resolve()
     contract = load_workflow_contract(root)
     cfg = dict(config or contract.config)
+    typed_cfg = IssueRunnerConfig.from_raw(cfg, workflow_root=root)
     prompts = cfg.get("prompts") or {}
     st = contract.source_path.stat()
     snapshot = ConfigSnapshot(
@@ -1755,19 +1689,10 @@ def load_workspace_from_config(
     )
     tracker_cfg = cfg.get("tracker") or {}
     tracker_client_cfg = _tracker_config_for_client(cfg)
-    workspace_cfg = cfg.get("workspace") or {}
-    storage_cfg = cfg.get("storage") or {}
     repo_path = _repository_path_from_config(root, cfg)
     tracker_source_cfg = dict(tracker_client_cfg)
     if repo_path is not None and str(tracker_cfg.get("kind") or "").strip() == "github":
         tracker_source_cfg.setdefault("repo_path", str(repo_path))
-
-    def _resolve_path(value: str, default: str) -> Path:
-        raw = str(value or default).strip()
-        path = Path(raw).expanduser()
-        if not path.is_absolute():
-            path = (root / path).resolve()
-        return path
 
     runner = run or _subprocess_run
     runner_json = run_json or _subprocess_run_json
@@ -1779,11 +1704,11 @@ def load_workspace_from_config(
         run=runner,
         run_json=runner_json,
     )
-    issue_workspace_root = _resolve_path(_cfg_value(workspace_cfg, "root", default="workspace/issues"), "workspace/issues")
-    status_path = _resolve_path(storage_cfg.get("status") or "memory/workflow-status.json", "memory/workflow-status.json")
-    health_path = _resolve_path(storage_cfg.get("health") or "memory/workflow-health.json", "memory/workflow-health.json")
-    audit_log_path = _resolve_path(storage_cfg.get("audit-log") or "memory/workflow-audit.jsonl", "memory/workflow-audit.jsonl")
-    scheduler_path = _resolve_path(storage_cfg.get("scheduler") or "memory/workflow-scheduler.json", "memory/workflow-scheduler.json")
+    issue_workspace_root = typed_cfg.workspace.root
+    status_path = typed_cfg.storage.status
+    health_path = typed_cfg.storage.health
+    audit_log_path = typed_cfg.storage.audit_log
+    scheduler_path = typed_cfg.storage.scheduler
     db_path = runtime_paths(root)["db_path"]
     engine_store = EngineStore(
         db_path=db_path,

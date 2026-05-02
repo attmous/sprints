@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from runtimes import build_runtimes
+from runtimes.registry import build_runtimes
 from runtimes.stages import prompt_result_from_stage, run_runtime_stage
 from workflows.contract import load_workflow_contract
 from workflows.change_delivery.contract_model import actor_config as change_delivery_actor_config
