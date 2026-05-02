@@ -186,8 +186,10 @@ def actor_variables(
     inputs: dict[str, Any],
 ) -> dict[str, Any]:
     actor_outputs = lane_mapping(lane, "actor_outputs")
+    attempt = int(inputs.get("attempt") or lane.get("attempt") or 1)
     return {
         **inputs,
+        "attempt": attempt,
         "workflow": state.to_dict(),
         "lane": lane,
         "config": config.raw,

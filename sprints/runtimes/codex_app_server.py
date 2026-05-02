@@ -18,6 +18,9 @@ from urllib.parse import urlparse
 
 from . import PromptRunResult, SessionHandle, SessionHealth
 
+DEFAULT_APPROVAL_POLICY = "never"
+DEFAULT_TURN_SANDBOX_POLICY = "danger-full-access"
+
 
 class CodexAppServerError(RuntimeError):
     def __init__(
@@ -247,7 +250,10 @@ class _AppServerClient:
             "item/fileChange/requestApproval",
         }:
             self.send_response(request_id, {"decision": "cancel"})
-            return
+            raise CodexAppServerError(
+                "codex-app-server requested operator approval, "
+                "but Sprints actor turns are non-interactive"
+            )
         self.send_error_response(
             request_id, f"Sprints does not handle app-server request {method!r}"
         )
@@ -509,9 +515,11 @@ class CodexAppServerRuntime:
         self._turn_timeout_ms = int(cfg.get("turn_timeout_ms") or 3600000)
         self._read_timeout_ms = int(cfg.get("read_timeout_ms") or 5000)
         self._stall_timeout_ms = int(cfg.get("stall_timeout_ms") or 300000)
-        self._approval_policy = cfg.get("approval_policy")
+        self._approval_policy = cfg.get("approval_policy", DEFAULT_APPROVAL_POLICY)
         self._thread_sandbox = str(cfg.get("thread_sandbox") or "").strip() or None
-        self._turn_sandbox_policy = cfg.get("turn_sandbox_policy")
+        self._turn_sandbox_policy = cfg.get(
+            "turn_sandbox_policy", DEFAULT_TURN_SANDBOX_POLICY
+        )
         self._keep_alive = self._bool_config(
             cfg.get("keep_alive", cfg.get("keep-alive")),
             default=(self._mode == "external"),
@@ -581,6 +589,8 @@ class CodexAppServerRuntime:
             "mode": self._mode,
             "transport": "websocket" if self._mode == "external" else "stdio",
             "endpoint": self._endpoint,
+            "approval_policy": self._approval_policy_value(),
+            "turn_sandbox_policy": self._sandbox_policy(worktree=Path.cwd()),
             "keep_alive": self._keep_alive,
             "warm_client_present": warm_client_present,
             "warm_client_open": warm_client_open,
