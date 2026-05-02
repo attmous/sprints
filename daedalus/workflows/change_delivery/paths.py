@@ -1,9 +1,9 @@
-"""Compatibility wrapper around the shared workflow path helpers.
+"""Compatibility wrapper around the flat workflow path helpers.
 
-This module resolves the shared implementation by local file path rather than
-importing ``workflows.shared.paths`` through the package namespace. That keeps
-tests and source-tree loads pinned to the repo copy even if another Daedalus
-plugin install was imported earlier in the same interpreter.
+This module resolves the flat implementation by local file path rather than
+importing ``workflows.paths`` through the package namespace. That keeps tests
+and source-tree loads pinned to the repo copy even if another Daedalus plugin
+install was imported earlier in the same interpreter.
 """
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 
-_SHARED_PATH = Path(__file__).resolve().parents[1] / "shared" / "paths.py"
-_SPEC = spec_from_file_location("daedalus_workflows_shared_paths_for_change_delivery", _SHARED_PATH)
+_SHARED_PATH = Path(__file__).resolve().parents[1] / "paths.py"
+_SPEC = spec_from_file_location("daedalus_workflows_paths_for_change_delivery", _SHARED_PATH)
 if _SPEC is None or _SPEC.loader is None:
-    raise RuntimeError(f"unable to load shared workflow paths from {_SHARED_PATH}")
+    raise RuntimeError(f"unable to load workflow paths from {_SHARED_PATH}")
 _MODULE = module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 

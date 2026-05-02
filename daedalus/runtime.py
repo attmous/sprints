@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import calendar
 import concurrent.futures
 import inspect
@@ -16,7 +16,7 @@ from engine.store import EngineStore
 from engine.state import init_engine_state
 from engine.sqlite import connect_daedalus_db
 from workflows.contract import WorkflowContractError, load_workflow_contract
-from workflows.shared.paths import (
+from workflows.paths import (
     plugin_entrypoint_path,
     project_key_for_workflow_root,
     runtime_paths,
@@ -214,15 +214,15 @@ def _migrate_relay_schema_v1_to_v2(*, conn: sqlite3.Connection, now_iso: str) ->
     )
 
 
-# Columns added to lane_actors during the v2→v3 migration. These match the
+# Columns added to lane_actors during the v2â†’v3 migration. These match the
 # canonical 21-column shape that production code (INSERT at the legacy-status
 # ingest path, SELECT * usage in derive_shadow_actions_for_lane consumers)
 # has expected for some time. Older v2 DBs may have been created from the
-# stale 15-column CREATE TABLE — this migration brings them current.
+# stale 15-column CREATE TABLE â€” this migration brings them current.
 #
 # The 6 obsolete legacy columns (actor_backend, backend_process_id,
 # backend_endpoint, backend_command, backend_extra_json, status) are NOT
-# dropped — SQLite cannot drop columns without a full table rewrite, and
+# dropped â€” SQLite cannot drop columns without a full table rewrite, and
 # they're harmless dead columns that no current code path reads.
 _LANE_ACTORS_V3_COLUMNS = (
     ("actor_name", "TEXT"),
@@ -4511,3 +4511,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

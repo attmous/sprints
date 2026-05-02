@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import http.client
 import importlib.util
 import ipaddress
@@ -50,7 +50,7 @@ from workflows.runtime_presets import (
 )
 from workflows.runtime_matrix import build_runtime_matrix_report
 from workflows.change_delivery.storage import ensure_change_delivery_state_files
-from workflows.shared.paths import (
+from workflows.paths import (
     derive_workflow_instance_name,
     plugin_runtime_path,
     project_key_for_workflow_root,
@@ -4289,3 +4289,4 @@ if __name__ == "__main__":
     result = execute_raw_args(" ".join(sys.argv[1:]))
     print(result)
     sys.exit(0 if not result.startswith("daedalus error:") else 1)
+

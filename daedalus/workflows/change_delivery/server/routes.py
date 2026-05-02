@@ -1,19 +1,19 @@
-"""HTTP routes wiring for the optional status surface.
+﻿"""HTTP routes wiring for the optional status surface.
 
-Uses :class:`http.server.ThreadingHTTPServer` from stdlib — no extra deps.
+Uses :class:`http.server.ThreadingHTTPServer` from stdlib â€” no extra deps.
 The server thread is a daemon thread so process exit on Ctrl-C is clean
 even if the main thread forgot to call ``handle.shutdown()``.
 
-Path layout (Symphony §13.7 / spec §6.3):
+Path layout (Symphony Â§13.7 / spec Â§6.3):
 
-    GET  /                  → HTML dashboard
-    GET  /api/v1/state      → state_view() JSON
-    GET  /api/v1/runs       → runs_view() JSON
-    GET  /api/v1/runs/<id>  → run_view(id) JSON or 404
-    GET  /api/v1/events     → events_view() JSON with optional filters
-    GET  /api/v1/<id>      → issue_view(id) JSON or 404
-    POST /api/v1/refresh    → spawn a tick subprocess (debounced)
-    *    other              → 404 JSON
+    GET  /                  â†’ HTML dashboard
+    GET  /api/v1/state      â†’ state_view() JSON
+    GET  /api/v1/runs       â†’ runs_view() JSON
+    GET  /api/v1/runs/<id>  â†’ run_view(id) JSON or 404
+    GET  /api/v1/events     â†’ events_view() JSON with optional filters
+    GET  /api/v1/<id>      â†’ issue_view(id) JSON or 404
+    POST /api/v1/refresh    â†’ spawn a tick subprocess (debounced)
+    *    other              â†’ 404 JSON
 
 Per-server handler subclassing keeps the workflow_root / db_path /
 events_log_path / refresh_controller closures attached to the handler
@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from workflows.change_delivery.paths import runtime_paths
+from workflows.paths import runtime_paths
 from workflows.change_delivery.server.html import render_dashboard
 from workflows.change_delivery.server.refresh import RefreshController
 from workflows.change_delivery.server.views import events_view, issue_view, run_view, runs_view, state_view
@@ -197,3 +197,4 @@ def start_server(
     )
     thread.start()
     return ServerHandle(port=actual_port, thread=thread, _server=server)
+

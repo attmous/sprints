@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from pathlib import Path
@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from workflows.change_delivery.migrations import get_review
-from workflows.change_delivery.paths import lane_memo_path, lane_state_path
+from workflows.paths import lane_memo_path, lane_state_path
 from workflows.change_delivery.sessions import (
     expected_lane_branch,
     expected_lane_worktree,
@@ -740,3 +740,4 @@ def run_tick_raw(
         headSha=action.get('headSha'),
     )
     return {'before': before, 'action': action, 'executed': executed, 'after': after}
+

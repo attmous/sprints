@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import calendar
 import json
@@ -20,7 +20,7 @@ from workflows.change_delivery.contract_model import compile_change_delivery_con
 from workflows.change_delivery.migrations import get_ledger_field
 from workflows.change_delivery.storage import ensure_change_delivery_state_files
 from workflows.change_delivery.runtimes import build_runtimes
-from workflows.shared.paths import runtime_paths
+from workflows.paths import runtime_paths
 from integrations.code_hosts import build_code_host_client
 from integrations.trackers import build_tracker_client
 from integrations.trackers.feedback import feedback_enabled, publish_tracker_feedback
@@ -190,11 +190,11 @@ and I/O primitives.
 
 Two factories are provided:
 
-* :func:`make_workspace` — builds a :class:`types.SimpleNamespace`-style
+* :func:`make_workspace` â€” builds a :class:`types.SimpleNamespace`-style
   workspace accessor. This is the primary API: adapter code (``cli``,
   ``orchestrator``, etc.) looks up workspace attributes by name, so any
   duck-typed accessor works.
-* :func:`load_workspace_from_config` — convenience wrapper that reads the
+* :func:`load_workspace_from_config` â€” convenience wrapper that reads the
   project workflow contract from ``WORKFLOW.md`` / ``WORKFLOW-<name>.md`` and
   applies the same derived constants the workspace uses internally.
 """
@@ -1099,7 +1099,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
         return ns.restart_actor_session_raw()
 
     # -----------------------------------------------------------------
-    # Job-state helpers — pure reads over the cron jobs payload.
+    # Job-state helpers â€” pure reads over the cron jobs payload.
     # -----------------------------------------------------------------
 
     def _managed_job_names():
@@ -2514,7 +2514,7 @@ def _install_wrapper_adapter_shims(ns: SimpleNamespace) -> None:
     _new_review_run_id = _new_inter_review_agent_run_id
 
     # Expose the InterReviewAgentError class so callers using
-    # ``workspace.InterReviewAgentError`` can catch it. We bind lazily — if the
+    # ``workspace.InterReviewAgentError`` can catch it. We bind lazily â€” if the
     # plugin payload isn't present (e.g. unit tests under a temp root), the
     # attribute is simply absent and the adapter reviews helper resolves it at
     # call time via ``ns._load_adapter_reviews_module()`` instead.
@@ -2549,3 +2549,4 @@ def load_workspace_from_config(
     return make_workspace(
         workspace_root=workspace_root, config=load_workflow_contract(workspace_root).config
     )
+

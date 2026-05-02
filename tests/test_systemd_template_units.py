@@ -1,4 +1,4 @@
-import importlib.util
+﻿import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -181,7 +181,7 @@ def test_codex_app_server_status_includes_ready_probe(tmp_path, monkeypatch):
 
 def test_codex_app_server_doctor_reports_managed_health_and_threads(tmp_path, monkeypatch):
     from engine.state import save_engine_scheduler_state
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     tools = load_tools()
     systemd_dir = tmp_path / "systemd"
@@ -414,3 +414,4 @@ def test_migrate_systemd_removes_old_unit_files_when_present(tmp_path, monkeypat
     assert (tmp_path / "daedalus-shadow@.service").exists()
     # systemctl daemon-reload was called
     assert any("daemon-reload" in cmd for cmd in captured_cmds)
+

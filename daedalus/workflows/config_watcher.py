@@ -1,4 +1,4 @@
-"""Generic hot-reload of a workflow contract file."""
+﻿"""Generic hot-reload of a workflow contract file."""
 from __future__ import annotations
 
 import time
@@ -11,7 +11,7 @@ from jsonschema import Draft7Validator
 from jsonschema.exceptions import ValidationError as _JSValidationError
 
 from workflows.contract import WorkflowContractError, load_workflow_contract_file
-from workflows.shared.config_snapshot import AtomicRef, ConfigSnapshot
+from workflows.config_snapshot import AtomicRef, ConfigSnapshot
 
 
 class ParseError(Exception):
@@ -92,4 +92,5 @@ class ConfigWatcher:
             "daedalus.config_reloaded",
             {"loaded_at": new_snapshot.loaded_at, "source_mtime": st.st_mtime, "size": st.st_size},
         )
+
 

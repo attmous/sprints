@@ -1,4 +1,4 @@
-"""S-2 tests: ConfigWatcher (mtime-poll hot-reload) — Symphony §6.2."""
+﻿"""S-2 tests: ConfigWatcher (mtime-poll hot-reload) â€” Symphony Â§6.2."""
 from __future__ import annotations
 
 import textwrap
@@ -129,7 +129,7 @@ def _seed_snapshot(tmp_path: Path):
 
 def test_watcher_poll_swaps_on_mtime_change(tmp_path):
     import os
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -148,7 +148,7 @@ def test_watcher_poll_swaps_on_mtime_change(tmp_path):
 
 
 def test_watcher_poll_no_change_is_noop(tmp_path):
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -164,7 +164,7 @@ def test_watcher_poll_no_change_is_noop(tmp_path):
 
 def test_watcher_poll_invalid_contract_keeps_lkg_and_emits_failure(tmp_path):
     import os
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -182,7 +182,7 @@ def test_watcher_poll_invalid_contract_keeps_lkg_and_emits_failure(tmp_path):
 
 def test_watcher_poll_schema_invalid_keeps_lkg_and_emits_failure(tmp_path):
     import os
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -202,7 +202,7 @@ def test_watcher_poll_schema_invalid_keeps_lkg_and_emits_failure(tmp_path):
 
 def test_watcher_poll_does_not_re_emit_for_same_broken_mtime(tmp_path):
     import os
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -224,7 +224,7 @@ def test_watcher_poll_does_not_re_emit_for_same_broken_mtime(tmp_path):
 def test_watcher_poll_detects_size_change_at_same_mtime(tmp_path):
     """Bytes changed but mtime preserved (e.g. rsync -t). Must reload."""
     import os
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -251,7 +251,7 @@ def test_watcher_poll_detects_size_change_at_same_mtime(tmp_path):
 
 
 def test_watcher_poll_missing_file_keeps_lkg_no_event(tmp_path):
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -268,11 +268,11 @@ def test_watcher_poll_missing_file_keeps_lkg_no_event(tmp_path):
 def test_watcher_post_init_detects_drift_between_bootstrap_and_construction(tmp_path):
     """Codex P2 on PR #19: WORKFLOW.md may change between bootstrap parse
     and ConfigWatcher construction. The watcher must seed _last_key from
-    the snapshot's recorded (mtime, size), NOT the live file — otherwise
+    the snapshot's recorded (mtime, size), NOT the live file â€” otherwise
     the drifted-but-current bytes look "fresh" and never get reloaded.
     """
     import os
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -292,7 +292,7 @@ def test_watcher_post_init_detects_drift_between_bootstrap_and_construction(tmp_
     assert len(reloads) == 1, (
         f"Expected drift detection on first poll; events={events}. "
         f"If this fails, the watcher seeded _last_key from the live file "
-        f"instead of the snapshot — drifted bytes will never be reloaded."
+        f"instead of the snapshot â€” drifted bytes will never be reloaded."
     )
     assert ref.get() is not initial
 
@@ -303,7 +303,7 @@ def test_watcher_poll_handles_unicode_decode_error(tmp_path):
     Otherwise binary content slipping into WORKFLOW.md crashes the
     watcher loop instead of preserving last-known-good config.
     """
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
 
     p, initial = _seed_snapshot(tmp_path)
@@ -315,7 +315,7 @@ def test_watcher_poll_handles_unicode_decode_error(tmp_path):
     # we want stat() to succeed and read_text(encoding="utf-8") to fail.
     p.write_bytes(b"\xff\xfe\x00\x00 not utf-8 \xc0\xc1")
 
-    # Must NOT raise — should emit failure event and keep LKG.
+    # Must NOT raise â€” should emit failure event and keep LKG.
     w.poll()
     assert ref.get() is initial
     failures = [t for t, _ in events if t == "daedalus.config_reload_failed"]
@@ -329,7 +329,7 @@ def test_watcher_poll_handles_oserror_during_read(tmp_path, monkeypatch):
     file disappears between stat() and read_text(). Without this catch
     the watcher crashes the daemon.
     """
-    from workflows.change_delivery.config_snapshot import AtomicRef
+    from workflows.config_snapshot import AtomicRef
     from workflows.change_delivery.config_watcher import ConfigWatcher
     from workflows.change_delivery import config_watcher as cw_mod
 
@@ -346,8 +346,9 @@ def test_watcher_poll_handles_oserror_during_read(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cw_mod, "parse_and_validate", _raise_oserror)
 
-    # Must NOT raise — should emit failure event and keep LKG.
+    # Must NOT raise â€” should emit failure event and keep LKG.
     w.poll()
     assert ref.get() is initial
     failures = [t for t, _ in events if t == "daedalus.config_reload_failed"]
     assert len(failures) == 1
+

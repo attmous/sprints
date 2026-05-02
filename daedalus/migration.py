@@ -1,4 +1,4 @@
-"""Filesystem migration for the Daedalus rebrand.
+﻿"""Filesystem migration for the Daedalus rebrand.
 
 Renames relay-era files to daedalus paths in a workflow root. Idempotent
 and conservative: if a new-named file already exists, the matching old
@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-# Mirrors workflows.change_delivery.paths._has_project_runtime_layout. Inlined
+# Mirrors workflows.paths._has_project_runtime_layout. Inlined
 # here so migration.py has no project-package dependency (it's loaded via
 # spec_from_file_location at runtime startup before sys.path includes the
 # workflows package).
@@ -20,7 +20,7 @@ _PROJECT_RUNTIME_LAYOUT_MARKERS = ("runtime", "config", "workspace", "docs")
 def _runtime_base_dir(workflow_root: Path) -> Path:
     """Resolve the directory under which state/ and memory/ live.
 
-    Mirrors workflows.change_delivery.paths.runtime_base_dir: when the workflow
+    Mirrors workflows.paths.runtime_base_dir: when the workflow
     root has any of the project-runtime layout markers (runtime/, config/,
     workspace/, docs/), state and memory are stored under
     ``<workflow_root>/runtime/``; otherwise they're at the top level.
@@ -32,7 +32,7 @@ def _runtime_base_dir(workflow_root: Path) -> Path:
 
 
 def _rename_if_only_old_exists(old: Path, new: Path) -> str | None:
-    """Rename old → new only if old exists and new does not.
+    """Rename old â†’ new only if old exists and new does not.
 
     Returns a human-readable description of the rename, or None if no
     action was taken.
@@ -67,7 +67,7 @@ def _rename_db_triplet(
     # untouched so an operator can inspect manually.
     if main_new.exists():
         return []
-    # No old DB: nothing to migrate (orphan WAL/SHM ignored — they're
+    # No old DB: nothing to migrate (orphan WAL/SHM ignored â€” they're
     # meaningless without a main DB).
     if not main_old.exists():
         return []
@@ -142,3 +142,4 @@ def migrate_filesystem_state(workflow_root: Path) -> list[str]:
             old_state_dir.rmdir()
 
     return descriptions
+

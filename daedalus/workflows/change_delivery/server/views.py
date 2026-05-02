@@ -1,11 +1,11 @@
-"""Pure DB → dict readers for the HTTP status surface.
+﻿"""Pure DB â†’ dict readers for the HTTP status surface.
 
 These functions never write. They open a fresh ``sqlite3`` connection per
 call (cheap, and avoids any shared-state hazards across the
 ``ThreadingHTTPServer`` worker threads). The events tail is read from the
 JSONL events log on disk per request.
 
-Shape conforms to Symphony §13.7 (spec §6.4):
+Shape conforms to Symphony Â§13.7 (spec Â§6.4):
 
 - ``state_view`` returns a snapshot of running + retrying work plus a
   ``runtime_totals`` block. `change-delivery` keeps the lane-backed domain
@@ -33,7 +33,7 @@ from engine.state import (
     read_engine_scheduler_state,
 )
 from workflows.contract import WorkflowContractError, load_workflow_contract
-from workflows.shared.paths import runtime_paths
+from workflows.paths import runtime_paths
 
 # Lane statuses the spec considers "active" (running). Anything else
 # (merged / closed / archived) is omitted from the running list. The
@@ -53,7 +53,7 @@ def _read_events_tail(events_log_path: Path, limit: int) -> list[dict[str, Any]]
 
     Codex P2 on PR #22: a previous implementation called ``readlines()``
     which loads the entire file before truncating. Since this is called
-    on every HTTP request, request cost grew with total log size — a
+    on every HTTP request, request cost grew with total log size â€” a
     long-lived ``daedalus-events.jsonl`` caused avoidable latency and
     memory spikes. Now reads from the END via seek + chunked reverse
     scan, so cost is bounded by ``limit`` (plus average line length)
@@ -563,7 +563,7 @@ def _runtime_session_entries(scheduler: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def state_view(db_path: Path, events_log_path: Path, workflow_root: Path | None = None) -> dict[str, Any]:
-    """Snapshot view conforming to Symphony §13.7 / spec §6.4."""
+    """Snapshot view conforming to Symphony Â§13.7 / spec Â§6.4."""
     if _workflow_name(workflow_root) == "issue-runner":
         return _issue_runner_state_view(Path(workflow_root), events_log_path)
     lanes = _query_active_lanes(db_path)
@@ -678,3 +678,4 @@ def events_view(
         "counts": {"shown": len(events)},
         "events": events,
     }
+

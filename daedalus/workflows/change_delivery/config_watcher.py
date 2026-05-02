@@ -1,4 +1,4 @@
-"""Hot-reload of the workflow contract (Symphony §6.2).
+﻿"""Hot-reload of the workflow contract (Symphony Â§6.2).
 
 `ConfigWatcher.poll()` is called every tick. It mtime-checks the
 workflow contract file; on change, reparses + validates and swaps the
@@ -17,7 +17,7 @@ from jsonschema import Draft7Validator
 from jsonschema.exceptions import ValidationError as _JSValidationError
 
 from workflows.contract import WorkflowContractError, load_workflow_contract_file
-from workflows.change_delivery.config_snapshot import AtomicRef, ConfigSnapshot
+from workflows.config_snapshot import AtomicRef, ConfigSnapshot
 
 
 class ParseError(Exception):
@@ -125,3 +125,4 @@ class ConfigWatcher:
             "daedalus.config_reloaded",
             {"loaded_at": new_snapshot.loaded_at, "source_mtime": st.st_mtime, "size": st.st_size},
         )
+

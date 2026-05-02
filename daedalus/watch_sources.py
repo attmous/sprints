@@ -1,6 +1,6 @@
-"""Read-only aggregation of state from Daedalus event sources for /daedalus watch.
+﻿"""Read-only aggregation of state from Daedalus event sources for /daedalus watch.
 
-This module never writes — it only reads from:
+This module never writes â€” it only reads from:
 
   - ``<workflow_root>/runtime/memory/daedalus-events.jsonl``
   - ``<workflow_root>/runtime/memory/workflow-audit.jsonl``
@@ -26,7 +26,7 @@ from workflows.contract import WorkflowContractError, load_workflow_contract
 
 # Sibling-import boilerplate.
 try:
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 except ImportError:
     import importlib.util as _ilu
     _here = Path(__file__).resolve().parent
@@ -123,7 +123,7 @@ def recent_workflow_audit(workflow_root: Path, limit: int = 50) -> list[dict[str
         audit_path = _resolve_issue_runner_storage_path(base, "audit-log", "memory/workflow-audit.jsonl")
         return _read_jsonl_tail(audit_path, limit) if audit_path is not None else []
     # workflow-audit.jsonl lives under <root>/runtime/memory/ in the project layout
-    # and under <root>/memory/ in the legacy layout — match runtime_paths logic.
+    # and under <root>/memory/ in the legacy layout â€” match runtime_paths logic.
     runtime_event_log = runtime_paths(base)["event_log_path"]
     audit_path = runtime_event_log.parent / "workflow-audit.jsonl"
     return _read_jsonl_tail(audit_path, limit)
@@ -353,3 +353,4 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         "total_tokens": int((scheduler["runtime_totals"].get("total_tokens") or 0)),
         "rate_limits": scheduler["runtime_totals"].get("rate_limits"),
     }
+

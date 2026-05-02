@@ -1,4 +1,4 @@
-"""Tests for the optional HTTP status surface (Symphony §13.7, S-6).
+﻿"""Tests for the optional HTTP status surface (Symphony Â§13.7, S-6).
 
 Covers:
 - ``views.state_view`` / ``views.issue_view`` shape and fallback behaviour.
@@ -112,7 +112,7 @@ def _make_issue_runner_root(root: Path) -> None:
     from engine.state import save_engine_scheduler_state
     from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     root.mkdir(parents=True, exist_ok=True)
     (root / "memory").mkdir()
@@ -210,7 +210,7 @@ def _make_change_delivery_root(root: Path) -> None:
     from engine.state import save_engine_scheduler_state
     from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     root.mkdir(parents=True, exist_ok=True)
     (root / "memory").mkdir()
@@ -560,7 +560,7 @@ def test_server_known_issue_returns_view(tmp_path: Path) -> None:
 
 def test_server_runs_endpoints_return_run_history_and_timeline(tmp_path: Path) -> None:
     from engine.store import EngineStore
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     store = EngineStore(
         db_path=runtime_paths(tmp_path)["db_path"],
@@ -596,7 +596,7 @@ def test_server_runs_endpoints_return_run_history_and_timeline(tmp_path: Path) -
 
 def test_server_events_endpoint_returns_filtered_engine_events(tmp_path: Path) -> None:
     from engine.store import EngineStore
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     store = EngineStore(
         db_path=runtime_paths(tmp_path)["db_path"],
@@ -796,7 +796,7 @@ def test_refresh_controller_uses_workflow_cli_argv(tmp_path, monkeypatch):
     assert rc.trigger() is True
 
     argv = captured.get("argv", [])
-    # Must NOT contain "-m workflows.change_delivery" — that's the broken form.
+    # Must NOT contain "-m workflows.change_delivery" â€” that's the broken form.
     joined = " ".join(argv)
     assert "-m workflows.change_delivery" not in joined, (
         f"refresh argv uses module-form which breaks in installed script "
@@ -805,3 +805,4 @@ def test_refresh_controller_uses_workflow_cli_argv(tmp_path, monkeypatch):
     # Must include the tick subcommand and the workflow_root.
     assert "tick" in argv
     assert str(tmp_path) in argv
+

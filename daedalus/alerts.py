@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -8,8 +8,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from workflows.shared.paths import resolve_default_workflow_root as resolve_workflow_root_default
-from workflows.shared.paths import runtime_paths as workflow_runtime_paths
+from workflows.paths import resolve_default_workflow_root as resolve_workflow_root_default
+from workflows.paths import runtime_paths as workflow_runtime_paths
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 DEFAULT_WORKFLOW_ROOT_ENV_VARS = ("DAEDALUS_WORKFLOW_ROOT",)
@@ -238,3 +238,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

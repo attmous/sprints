@@ -1,4 +1,4 @@
-"""Plugin-level CLI entrypoint for the workflow dispatcher.
+﻿"""Plugin-level CLI entrypoint for the workflow dispatcher.
 
 Invocation forms (both supported):
 
@@ -53,7 +53,7 @@ def _resolve_workflow_root(argv: list[str]) -> tuple[Path, list[str]]:
         i += 1
 
     if workflow_root is None:
-        from workflows.shared.paths import resolve_default_workflow_root
+        from workflows.paths import resolve_default_workflow_root
 
         workflow_root = resolve_default_workflow_root(
             plugin_dir=Path(__file__).resolve().parent.parent
@@ -76,3 +76,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

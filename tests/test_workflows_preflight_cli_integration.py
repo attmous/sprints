@@ -1,4 +1,4 @@
-"""Smoke integration: run_cli + preflight failure path.
+﻿"""Smoke integration: run_cli + preflight failure path.
 
 Builds a minimal workflow_root with an unsupported runtime.kind and
 verifies:
@@ -89,7 +89,7 @@ def test_run_cli_emits_dispatch_skipped_on_preflight_failure(tmp_path, monkeypat
     assert "unsupported_runtime_kind" in msg
 
     # Verify the event log was written.
-    from workflows.change_delivery.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     event_log_path = runtime_paths(workflow_root)["event_log_path"]
     assert event_log_path.exists(), f"event log not created at {event_log_path}"
@@ -138,3 +138,4 @@ def test_run_cli_skips_preflight_for_non_dispatch_commands(tmp_path, monkeypatch
     # would fail preflight, run_cli must reach cli_main and return 0.
     rc = workflows.run_cli(workflow_root, ["status"])
     assert rc == 0, "non-gated command must skip preflight even with a broken config"
+

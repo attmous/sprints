@@ -1,6 +1,6 @@
-"""Coalescing tick-trigger for ``POST /api/v1/refresh``.
+﻿"""Coalescing tick-trigger for ``POST /api/v1/refresh``.
 
-Daedalus is a CLI-tick architecture — there is no in-process tick loop
+Daedalus is a CLI-tick architecture â€” there is no in-process tick loop
 to share state with. So instead of poking a ``threading.Event`` that the
 tick observes, the refresh endpoint shells out a tick subprocess best
 effort. Concurrent refresh requests collapse into one subprocess per
@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from workflows.change_delivery.paths import workflow_cli_argv
+from workflows.paths import workflow_cli_argv
 
 
 class RefreshController:
@@ -26,7 +26,7 @@ class RefreshController:
         ``Popen`` invocation per ``DEBOUNCE_SECONDS`` window.
       - The spawned subprocess is intentionally not waited on; its
         stdout/stderr are discarded. The HTTP layer does not surface
-        tick exit codes — the source of truth remains the events log.
+        tick exit codes â€” the source of truth remains the events log.
     """
 
     DEBOUNCE_SECONDS: float = 1.0
@@ -68,3 +68,4 @@ class RefreshController:
             stderr=subprocess.DEVNULL,
         )
         return True
+

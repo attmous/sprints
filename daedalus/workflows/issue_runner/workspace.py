@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import concurrent.futures
 import json
@@ -45,8 +45,8 @@ from workflows.contract import WORKFLOW_POLICY_KEY, WorkflowContractError, load_
 from workflows.config import ConfigError
 from workflows.hooks import build_hook_env, run_shell_hook
 from workflows.prompts import render_prompt_template
-from workflows.shared.config_snapshot import AtomicRef, ConfigSnapshot
-from workflows.shared.paths import runtime_paths
+from workflows.config_snapshot import AtomicRef, ConfigSnapshot
+from workflows.paths import runtime_paths
 from workflows.issue_runner.config import (
     IssueRunnerConfig,
     max_retry_backoff_ms_from_config,
@@ -1751,3 +1751,4 @@ def load_workspace_from_config(
 
 def make_workspace(*, workflow_root: Path, config: dict) -> IssueRunnerWorkspace:
     return load_workspace_from_config(workspace_root=workflow_root, config=config)
+

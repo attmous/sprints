@@ -1,4 +1,4 @@
-"""Regression: string-returning /daedalus subcommands dispatch via run_cli_command."""
+﻿"""Regression: string-returning /daedalus subcommands dispatch via run_cli_command."""
 import json
 import importlib.util
 import subprocess
@@ -49,7 +49,7 @@ def test_run_cli_command_dispatches_watch(tmp_path, capsys):
 def test_execute_raw_args_runs_command_lists_engine_runs(tmp_path):
     from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     tools = _tools()
     root = tmp_path / "attmous-daedalus-issue-runner"
@@ -97,7 +97,7 @@ def test_execute_raw_args_runs_command_lists_engine_runs(tmp_path):
 def test_execute_raw_args_events_lists_and_prunes_engine_events(tmp_path):
     from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     tools = _tools()
     root = tmp_path / "attmous-daedalus-issue-runner"
@@ -247,3 +247,4 @@ def test_run_cli_command_dispatches_service_loop_for_issue_runner(tmp_path, caps
     assert payload["workflow"] == "issue-runner"
     assert payload["loop_status"] == "completed"
     assert payload["iterations"] == 1
+

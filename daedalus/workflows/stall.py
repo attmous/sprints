@@ -1,10 +1,10 @@
-"""Stall detection (Symphony §8.5)."""
+﻿"""Stall detection (Symphony Â§8.5)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal, Mapping, Protocol
 
-from workflows.shared.config_snapshot import ConfigSnapshot
+from workflows.config_snapshot import ConfigSnapshot
 
 _DEFAULT_TIMEOUT_MS = 300_000
 
@@ -52,4 +52,5 @@ def reconcile_stalls(
                 )
             )
     return out
+
 

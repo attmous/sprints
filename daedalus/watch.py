@@ -1,7 +1,7 @@
-"""TUI frame rendering for /daedalus watch.
+﻿"""TUI frame rendering for /daedalus watch.
 
 Phase 2 (this file) implements the frame renderer. The live loop is wired
-in later — this module exposes ``render_frame_to_string(snapshot)`` so the
+in later â€” this module exposes ``render_frame_to_string(snapshot)`` so the
 CLI handler and tests can both produce frame text without spinning up a
 real TTY.
 """
@@ -38,11 +38,11 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
 
 def _alerts_panel(alert_state: Mapping[str, Any]) -> Panel | None:
     if alert_state.get("_stale"):
-        return Panel(_esc("[stale] alert source unreadable"), title="⚠️  Active alerts")
+        return Panel(_esc("[stale] alert source unreadable"), title="âš ï¸  Active alerts")
     if not alert_state or not alert_state.get("active"):
         return None
     msg = alert_state.get("message") or alert_state.get("fingerprint") or "active alert"
-    return Panel(str(msg), title="⚠️  Active alerts")
+    return Panel(str(msg), title="âš ï¸  Active alerts")
 
 
 def _events_table(events: list[dict[str, Any]]) -> Table:
@@ -168,7 +168,7 @@ def cmd_watch(args, parser) -> str:
     if getattr(args, "once", False) or not _stdout_is_tty():
         return text
 
-    # Live mode — rich.live polling at 2s.
+    # Live mode â€” rich.live polling at 2s.
     from rich.live import Live
     from rich.console import Console
     from time import sleep
@@ -187,10 +187,10 @@ def cmd_watch(args, parser) -> str:
     return ""
 
 
-# --- Stall reconciliation hook (Symphony §8.5) ---------------------------
+# --- Stall reconciliation hook (Symphony Â§8.5) ---------------------------
 #
 # This function is called from the tick loop owner BEFORE tracker-state
-# refresh per spec §8.6, so a stalled worker on a now-terminal issue still
+# refresh per spec Â§8.6, so a stalled worker on a now-terminal issue still
 # gets stall-terminated. The contract is intentionally minimal: the caller
 # supplies a snapshot, a running-lanes mapping (issue_id -> entry exposing
 # `.runtime` and `.started_at_monotonic`), an event-log path, and an
@@ -212,7 +212,7 @@ def reconcile_stalls_tick(
         DAEDALUS_STALL_DETECTED,
         DAEDALUS_STALL_TERMINATED,
     )
-    from workflows.change_delivery.stall import reconcile_stalls
+    from workflows.stall import reconcile_stalls
     from runtime import append_daedalus_event
 
     if now is None:
@@ -235,3 +235,4 @@ def reconcile_stalls_tick(
         )
         orchestrator.queue_retry(verdict.issue_id, error="stall_timeout")
     return verdicts
+

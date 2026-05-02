@@ -1,4 +1,4 @@
-"""S-5 tests: stall detection — Symphony §8.5."""
+﻿"""S-5 tests: stall detection â€” Symphony Â§8.5."""
 from __future__ import annotations
 
 import time
@@ -113,7 +113,7 @@ class _FakeEntry:
 
 
 def _snap_with_stall(timeout_ms: int):
-    from workflows.change_delivery.config_snapshot import ConfigSnapshot
+    from workflows.config_snapshot import ConfigSnapshot
     return ConfigSnapshot(
         config={"stall": {"timeout_ms": timeout_ms}},
         prompts={}, loaded_at=0.0, source_mtime=0.0,
@@ -121,7 +121,7 @@ def _snap_with_stall(timeout_ms: int):
 
 
 def test_reconcile_stalls_terminates_inactive_worker():
-    from workflows.change_delivery.stall import reconcile_stalls
+    from workflows.stall import reconcile_stalls
 
     snap = _snap_with_stall(1000)  # 1s threshold
     rt = _FakeRuntime(last_ts=100.0)
@@ -135,7 +135,7 @@ def test_reconcile_stalls_terminates_inactive_worker():
 
 
 def test_reconcile_stalls_skips_active_worker():
-    from workflows.change_delivery.stall import reconcile_stalls
+    from workflows.stall import reconcile_stalls
 
     snap = _snap_with_stall(10000)  # 10s threshold
     rt = _FakeRuntime(last_ts=199.5)
@@ -145,7 +145,7 @@ def test_reconcile_stalls_skips_active_worker():
 
 
 def test_reconcile_stalls_disabled_when_timeout_zero():
-    from workflows.change_delivery.stall import reconcile_stalls
+    from workflows.stall import reconcile_stalls
 
     snap = _snap_with_stall(0)
     rt = _FakeRuntime(last_ts=0.0)
@@ -156,7 +156,7 @@ def test_reconcile_stalls_disabled_when_timeout_zero():
 
 def test_reconcile_stalls_baseline_falls_back_to_started_at():
     """Worker that has produced no signal still gets a deadline."""
-    from workflows.change_delivery.stall import reconcile_stalls
+    from workflows.stall import reconcile_stalls
 
     snap = _snap_with_stall(1000)
     rt = _FakeRuntime(last_ts=None)
@@ -167,9 +167,9 @@ def test_reconcile_stalls_baseline_falls_back_to_started_at():
 
 
 def test_reconcile_stalls_default_timeout_when_section_absent():
-    """Spec §8.4 default: 300_000 ms."""
-    from workflows.change_delivery.config_snapshot import ConfigSnapshot
-    from workflows.change_delivery.stall import reconcile_stalls
+    """Spec Â§8.4 default: 300_000 ms."""
+    from workflows.config_snapshot import ConfigSnapshot
+    from workflows.stall import reconcile_stalls
 
     snap = ConfigSnapshot(config={}, prompts={}, loaded_at=0.0, source_mtime=0.0)
     rt = _FakeRuntime(last_ts=0.0)
@@ -182,9 +182,9 @@ def test_reconcile_stalls_default_timeout_when_section_absent():
 
 def test_reconcile_stalls_opt_out_when_method_absent():
     """Codex P1 on PR #16: a runtime that doesn't implement
-    last_activity_ts opts out entirely — the reconciler must skip it,
+    last_activity_ts opts out entirely â€” the reconciler must skip it,
     NOT fall back to started_at_monotonic."""
-    from workflows.change_delivery.stall import reconcile_stalls
+    from workflows.stall import reconcile_stalls
 
     class _OptOutRuntime:
         # Deliberately does NOT define last_activity_ts.
@@ -193,7 +193,7 @@ def test_reconcile_stalls_opt_out_when_method_absent():
     snap = _snap_with_stall(1000)
     rt = _OptOutRuntime()
     entry = _FakeEntry(runtime=rt, started_at_monotonic=100.0)
-    # Elapsed since started_at is 99_900 seconds — vastly past threshold.
+    # Elapsed since started_at is 99_900 seconds â€” vastly past threshold.
     # If the implementation falls back to started_at, this would terminate.
     verdicts = reconcile_stalls(snap, {"i1": entry}, now=100_000.0)
     assert verdicts == [], (
@@ -279,7 +279,7 @@ def test_stall_emits_both_events_and_queues_retry(tmp_path, monkeypatch):
     """Smoke: when reconcile_stalls returns a verdict, the tick-loop
     integration emits stall_detected, terminates, emits stall_terminated,
     and queues a retry. Tested via a thin fake orchestrator."""
-    from workflows.change_delivery.stall import StallVerdict, reconcile_stalls
+    from workflows.stall import StallVerdict, reconcile_stalls
     from workflows.change_delivery.event_taxonomy import (
         DAEDALUS_STALL_DETECTED, DAEDALUS_STALL_TERMINATED,
     )
@@ -302,3 +302,4 @@ def test_stall_emits_both_events_and_queues_retry(tmp_path, monkeypatch):
     assert [e["type"] for e in events] == [DAEDALUS_STALL_DETECTED, DAEDALUS_STALL_TERMINATED]
     assert terminated == ["i1"]
     assert retried == [("i1", "stall_timeout")]
+

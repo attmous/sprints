@@ -136,7 +136,7 @@ def plugin_root_path(*, plugin_dir: Path | None = None) -> Path:
         if candidate.name == "workflows":
             return candidate.parent
         return candidate
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]
 
 
 def plugin_entrypoint_path(workflow_root: Path | None = None, *, plugin_dir: Path | None = None) -> Path:

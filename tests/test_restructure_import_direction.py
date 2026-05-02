@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,10 +36,11 @@ def test_internal_workflow_imports_use_new_restructure_namespaces():
             "from workflows.core",
             "from workflows.shared",
             "from workflows.change_delivery.runtimes",
-            "from workflows.change_delivery.config_snapshot",
-            "from workflows.change_delivery.stall",
+            "from workflows.config_snapshot",
+            "from workflows.stall",
         ):
             if old_import in text:
                 offenders.append(f"{rel}: {old_import}")
 
     assert offenders == []
+

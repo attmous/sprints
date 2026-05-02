@@ -236,7 +236,7 @@ def test_workflow_cli_argv_always_targets_generic_dispatcher(tmp_path):
     # not bare "python3") so subprocess inherits the right pyyaml/jsonschema
     # environment regardless of PATH ordering on the host.
     assert argv[0] == _sys.executable
-    assert argv[1].endswith("/workflows/__main__.py")
+    assert argv[1].replace("\\", "/").endswith("/workflows/__main__.py")
     assert argv[2:] == ["status", "--json"]
 
     # Even if a retired-style wrapper script appears under scripts/, it is
@@ -245,4 +245,4 @@ def test_workflow_cli_argv_always_targets_generic_dispatcher(tmp_path):
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("# retired\n", encoding="utf-8")
     argv2 = paths_module.workflow_cli_argv(workflow_root, "tick")
-    assert argv2[1].endswith("/workflows/__main__.py")
+    assert argv2[1].replace("\\", "/").endswith("/workflows/__main__.py")

@@ -1,4 +1,4 @@
-"""Frame rendering: aggregator output → rich-renderable frame string.
+﻿"""Frame rendering: aggregator output â†’ rich-renderable frame string.
 
 We render to a string (capture mode) and snapshot-test the output structure.
 """
@@ -207,7 +207,7 @@ def test_build_snapshot_combines_all_sources(tmp_path):
 def test_build_snapshot_prefers_engine_event_ledger(tmp_path):
     from engine.store import EngineStore
     from workflows.contract import render_workflow_markdown
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     watch = _module()
     root = _make_workflow_root(tmp_path)
@@ -252,7 +252,7 @@ def test_build_snapshot_prefers_engine_event_ledger(tmp_path):
 def test_build_snapshot_includes_issue_runner_workflow_status(tmp_path):
     from engine.state import save_engine_scheduler_state
     from workflows.contract import render_workflow_markdown
-    from workflows.shared.paths import runtime_paths
+    from workflows.paths import runtime_paths
 
     watch = _module()
     root = _make_workflow_root(tmp_path)
@@ -295,3 +295,4 @@ def test_build_snapshot_includes_issue_runner_workflow_status(tmp_path):
     snap = watch.build_snapshot(root)
     assert snap["workflow_status"]["workflow"] == "issue-runner"
     assert snap["workflow_status"]["total_tokens"] == 18
+
