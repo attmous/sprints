@@ -4,6 +4,9 @@ Daedalus ships more than one workflow. The engine, lease model, runtime
 adapters, and `WORKFLOW.md` contract are shared; each workflow package defines
 its own lifecycle, prompts, gates, and operator commands.
 
+Shared workflow helpers live in the flat `daedalus/workflows/` support layer.
+Only `change_delivery/` and `issue_runner/` are workflow subpackages.
+
 ## At a glance
 
 | Workflow | Use it when... | Default template | Managed path |

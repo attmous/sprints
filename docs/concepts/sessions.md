@@ -132,7 +132,7 @@ where can_continue = false
 
 - Session protocol: `daedalus/workflows/change_delivery/sessions.py`
 - Shared runtime adapters: `daedalus/runtimes/{claude_cli,acpx_codex,hermes_agent,codex_app_server}.py`
-- Workflow compatibility shims: `daedalus/workflows/change_delivery/runtimes/`
+- Runtime adapters: `daedalus/runtimes/`
 - Health checks: `daedalus/workflows/change_delivery/health.py`
-- Stall detection: `daedalus/workflows/shared/stall.py`, `daedalus/workflows/change_delivery/stall.py`
+- Stall detection: `daedalus/workflows/stall.py`
 - Tests: `tests/test_workflows_change_delivery_sessions.py`, `tests/test_workflows_change_delivery_session_runtime.py`

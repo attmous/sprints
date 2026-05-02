@@ -55,9 +55,9 @@ flowchart LR
 
 ## Where this lives in code
 
-- `ConfigSnapshot` + `AtomicRef`: `daedalus/workflows/shared/config_snapshot.py`
-- Watcher: `daedalus/workflows/shared/config_watcher.py`
-- `change-delivery` compatibility re-exports: `daedalus/workflows/change_delivery/config_snapshot.py`, `daedalus/workflows/change_delivery/config_watcher.py`
+- `ConfigSnapshot` + `AtomicRef`: `daedalus/workflows/config_snapshot.py`
+- Watcher: `daedalus/workflows/config_watcher.py`
+- `change-delivery` watcher policy: `daedalus/workflows/change_delivery/config_watcher.py`
 - Preflight: `daedalus/workflows/change_delivery/preflight.py`, `daedalus/workflows/issue_runner/preflight.py`
 - Gating: `daedalus/workflows/__init__.py::run_cli` reads `PREFLIGHT_GATED_COMMANDS`
 - Tests: `tests/test_config_snapshot.py`, `tests/test_config_watcher.py`, `tests/test_workflows_preflight_cli_integration.py`

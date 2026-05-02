@@ -53,8 +53,7 @@ The retry reason is always `stall_timeout` so it's distinguishable from regular 
 
 ## Where this lives in code
 
-- Pure decision function: `daedalus/workflows/shared/stall.py::reconcile_stalls`
-- `change-delivery` compatibility wrapper: `daedalus/workflows/change_delivery/stall.py`
+- Pure decision function: `daedalus/workflows/stall.py::reconcile_stalls`
 - Runtime hook: `Runtime.last_activity_ts()` — see [runtimes.md](runtimes.md)
 - Active service wiring: `daedalus/runtime.py`, `daedalus/workflows/issue_runner/workspace.py`
 - Schema: `daedalus/workflows/change_delivery/schema.yaml`, `daedalus/workflows/issue_runner/schema.yaml`

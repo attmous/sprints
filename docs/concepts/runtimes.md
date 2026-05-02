@@ -343,5 +343,5 @@ surfaces without changing the shared runtime protocol.
 - Protocol: `daedalus/runtimes/__init__.py`
 - Stage dispatcher: `daedalus/runtimes/stages.py`
 - Adapters: `daedalus/runtimes/{claude_cli,acpx_codex,hermes_agent,codex_app_server}.py`
-- Workflow compatibility shims: `daedalus/workflows/change_delivery/runtimes/`
+- Runtime adapters: `daedalus/runtimes/`
 - Preflight: `daedalus/workflows/change_delivery/preflight.py`
