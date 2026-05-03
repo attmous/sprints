@@ -14,6 +14,8 @@ from workflows.loader import (
     RuntimePresetError,
     SUPPORTED_WORKFLOW_NAMES,
     WorkflowContractError,
+    WorkflowContractApplyError,
+    apply_workflow_contract,
     available_runtime_presets,
     build_runtime_matrix_report,
     configure_runtime_contract,
@@ -104,7 +106,7 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
 
     validate_cmd = sub.add_parser(
         "validate",
-        help="Validate the repo-owned WORKFLOW.md contract and runtime bindings.",
+        help="Validate the active workflow contract and runtime bindings.",
     )
     validate_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
     validate_cmd.add_argument("--json", action="store_true")
@@ -234,9 +236,27 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     bootstrap_cmd.add_argument("--json", action="store_true")
     bootstrap_cmd.set_defaults(handler=cmd_bootstrap_workflow, func=run_cli_command)
 
+    apply_contract_cmd = sub.add_parser(
+        "apply-contract",
+        help="Validate and promote the repo-owned WORKFLOW.md from origin/main into the active workflow snapshot.",
+    )
+    apply_contract_cmd.add_argument(
+        "--workflow-root", default=default_workflow_root_str
+    )
+    apply_contract_cmd.add_argument("--source-ref", default="origin/main")
+    apply_contract_cmd.add_argument("--force", action="store_true")
+    apply_contract_cmd.add_argument("--json", action="store_true")
+    apply_contract_cmd.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (text|json). --json flag is a back-compat alias for --format json.",
+    )
+    apply_contract_cmd.set_defaults(func=run_cli_command)
+
     configure_runtime_cmd = sub.add_parser(
         "configure-runtime",
-        help="Bind a workflow role to a built-in runtime preset in the repo-owned WORKFLOW.md contract.",
+        help="Bind a workflow role to a built-in runtime preset in the active workflow contract.",
     )
     configure_runtime_cmd.add_argument(
         "--workflow-root", default=default_workflow_root_str
@@ -531,6 +551,15 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
         )
     if args.sprints_command == "validate":
         return validate_workflow_contract(workflow_root)
+    if args.sprints_command == "apply-contract":
+        try:
+            return apply_workflow_contract(
+                workflow_root=workflow_root,
+                source_ref=args.source_ref,
+                force=args.force,
+            )
+        except (WorkflowContractApplyError, WorkflowContractError, OSError) as exc:
+            raise SprintsCommandError(str(exc)) from exc
     if args.sprints_command == "configure-runtime":
         return configure_runtime_preset(
             workflow_root=workflow_root,

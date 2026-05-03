@@ -77,6 +77,20 @@ def render_result(
             lines.append("next steps:")
             lines.extend(f"- {item}" for item in recommendations[:8])
         return "\n".join(lines)
+    if command == "apply-contract":
+        lines = [
+            (
+                f"workflow contract applied ok={result.get('ok')} "
+                f"source={result.get('source_ref')}"
+            ),
+            f"source_commit={result.get('source_commit')}",
+            f"active_contract={result.get('active_contract_path')}",
+            f"contract_sha256={result.get('contract_sha256')}",
+        ]
+        active_lanes = result.get("active_lanes") or []
+        if active_lanes:
+            lines.append("active_lanes=" + ", ".join(active_lanes))
+        return "\n".join(lines)
     if command == "configure-runtime":
         bindings = result.get("bindings") or []
         availability = result.get("availability_checks") or []

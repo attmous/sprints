@@ -46,6 +46,7 @@ class ActorRuntime(Protocol):
         actor: ActorConfig,
         prompt: str,
         stage_name: str,
+        worktree: Path | None = None,
         lane_id: str | None = None,
         resume_session_id: str | None = None,
         on_session_ready: Callable[[Any], None] | None = None,
@@ -63,6 +64,7 @@ class ConfiguredActorRuntime:
         actor: ActorConfig,
         prompt: str,
         stage_name: str,
+        worktree: Path | None = None,
         lane_id: str | None = None,
         resume_session_id: str | None = None,
         on_session_ready: Callable[[Any], None] | None = None,
@@ -77,6 +79,7 @@ class ConfiguredActorRuntime:
             resume_session_id=resume_session_id,
         )
         runtime = build_runtimes({actor.runtime: runtime_cfg.raw})[actor.runtime]
+        resolved_worktree = worktree or _repository_worktree(self.config)
         result = run_runtime_stage(
             runtime=runtime,
             runtime_cfg=runtime_cfg.raw,
@@ -85,7 +88,7 @@ class ConfiguredActorRuntime:
                 "model": actor.model or actor.raw.get("model") or "",
             },
             stage_name=stage_name,
-            worktree=_repository_worktree(self.config),
+            worktree=resolved_worktree,
             session_name=plan.session_name,
             prompt=prompt,
             resume_session_id=plan.resume_session_id,

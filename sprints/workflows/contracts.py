@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +16,9 @@ import yaml
 DEFAULT_WORKFLOW_MARKDOWN_FILENAME = "WORKFLOW.md"
 WORKFLOW_MARKDOWN_PREFIX = "WORKFLOW-"
 WORKFLOW_CONTRACT_POINTER_RELATIVE_PATH = Path("config") / "workflow-contract-path"
+ACTIVE_WORKFLOW_CONTRACT_RELATIVE_PATH = Path("config") / "WORKFLOW.md"
+ACTIVE_WORKFLOW_CONTRACT_META_RELATIVE_PATH = Path("config") / "workflow-contract.json"
+VERSIONED_WORKFLOW_CONTRACT_DIR_RELATIVE_PATH = Path("config") / "contracts"
 WORKFLOW_POLICY_KEY = "workflow-policy"
 _HEADING_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
@@ -61,6 +67,18 @@ def workflow_contract_pointer_path(workflow_root: Path) -> Path:
     return workflow_root.resolve() / WORKFLOW_CONTRACT_POINTER_RELATIVE_PATH
 
 
+def active_workflow_contract_path(workflow_root: Path) -> Path:
+    return workflow_root.resolve() / ACTIVE_WORKFLOW_CONTRACT_RELATIVE_PATH
+
+
+def active_workflow_contract_meta_path(workflow_root: Path) -> Path:
+    return workflow_root.resolve() / ACTIVE_WORKFLOW_CONTRACT_META_RELATIVE_PATH
+
+
+def contract_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def read_workflow_contract_pointer(workflow_root: Path) -> Path | None:
     pointer_path = workflow_contract_pointer_path(workflow_root)
     if not pointer_path.exists():
@@ -84,6 +102,40 @@ def write_workflow_contract_pointer(workflow_root: Path, contract_path: Path) ->
     pointer_path.parent.mkdir(parents=True, exist_ok=True)
     pointer_path.write_text(str(contract_path.resolve()) + "\n", encoding="utf-8")
     return pointer_path
+
+
+def snapshot_workflow_contract(
+    *,
+    workflow_root: Path,
+    source_path: Path,
+    source_ref: str | None = None,
+    source_commit: str | None = None,
+) -> dict[str, Any]:
+    root = workflow_root.resolve()
+    source = source_path.expanduser().resolve()
+    text = source.read_text(encoding="utf-8")
+    digest = contract_sha256(text)
+    version_dir = root / VERSIONED_WORKFLOW_CONTRACT_DIR_RELATIVE_PATH / digest
+    version_path = version_dir / DEFAULT_WORKFLOW_MARKDOWN_FILENAME
+    active_path = active_workflow_contract_path(root)
+    version_dir.mkdir(parents=True, exist_ok=True)
+    active_path.parent.mkdir(parents=True, exist_ok=True)
+    version_path.write_text(text, encoding="utf-8")
+    active_path.write_text(text, encoding="utf-8")
+    meta = {
+        "active_contract_path": str(active_path),
+        "applied_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "contract_sha256": digest,
+        "source_path": str(source),
+        "source_ref": source_ref,
+        "source_commit": source_commit,
+        "versioned_contract_path": str(version_path),
+    }
+    active_workflow_contract_meta_path(root).write_text(
+        json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    write_workflow_contract_pointer(root, active_path)
+    return meta
 
 
 def find_repo_workflow_contract_path(
@@ -116,6 +168,9 @@ def find_workflow_contract_path(
     pointer_target = read_workflow_contract_pointer(root)
     if pointer_target is not None and pointer_target.exists():
         return pointer_target
+    active_path = active_workflow_contract_path(root)
+    if active_path.exists():
+        return active_path
     repo_owned = find_repo_workflow_contract_path(root, workflow_name=workflow_name)
     if repo_owned is not None:
         return repo_owned

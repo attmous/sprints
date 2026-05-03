@@ -52,6 +52,10 @@ from workflows.bindings import (
     runtime_stage_bindings,
     runtime_stage_checks,
 )
+from workflows.contract_apply import (
+    WorkflowContractApplyError,
+    apply_workflow_contract,
+)
 from workflows.validation import (
     build_readiness_recommendations,
     validate_workflow_contract,

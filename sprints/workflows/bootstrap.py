@@ -8,9 +8,9 @@ from workflows.contracts import (
     find_repo_workflow_contract_path,
     load_workflow_contract_file,
     render_workflow_markdown,
+    snapshot_workflow_contract,
     workflow_contract_pointer_path,
     workflow_named_markdown_path,
-    write_workflow_contract_pointer,
 )
 from workflows.paths import (
     derive_workflow_instance_name,
@@ -421,12 +421,18 @@ def scaffold_workflow_root(
         render_workflow_markdown(config=config, prompt_template=workflow_policy),
         encoding="utf-8",
     )
-    write_workflow_contract_pointer(root, contract_path)
+    snapshot_meta = snapshot_workflow_contract(
+        workflow_root=root,
+        source_path=contract_path,
+        source_ref="repo-working-tree",
+    )
     return {
         "ok": True,
         "workflow_root": str(root),
         "contract_path": str(contract_path),
         "config_path": str(contract_path),
+        "active_contract_path": snapshot_meta["active_contract_path"],
+        "contract_sha256": snapshot_meta["contract_sha256"],
         "workflow": workflow_name,
         "instance_name": resolved_instance_name,
         "engine_owner": engine_owner,

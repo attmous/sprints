@@ -27,6 +27,7 @@ from workflows.orchestrator import (
     build_orchestrator_prompt,
     parse_orchestrator_decisions,
 )
+from workflows.worktrees import ensure_lane_worktree
 from workflows.lanes import (
     active_lanes,
     advance_lane,
@@ -267,6 +268,7 @@ def run_stage_actor(
     if actor_policy is None:
         raise RuntimeError(f"missing actor policy section for {actor_name}")
     lane_id = str(lane.get("lane_id") or "")
+    worktree = ensure_lane_worktree(config=config, lane=lane)
     runtime_plan = actor_runtime_plan(
         config=config,
         actor=actor,
@@ -338,6 +340,7 @@ def run_stage_actor(
             actor=actor,
             prompt=prompt,
             stage_name=stage_name,
+            worktree=worktree,
             lane_id=lane_id,
             resume_session_id=runtime_plan.resume_session_id,
             on_session_ready=on_session_ready,
