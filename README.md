@@ -22,6 +22,7 @@ $EDITOR WORKFLOW.md
 hermes sprints codex-app-server up
 hermes sprints validate
 hermes sprints doctor
+hermes sprints daemon up
 hermes
 ```
 
@@ -31,6 +32,7 @@ Inside Hermes:
 /sprints status
 /sprints doctor
 /sprints watch
+/sprints daemon status
 /workflow change-delivery status
 /workflow change-delivery validate
 /workflow change-delivery tick
@@ -43,7 +45,7 @@ Inside Hermes:
 | Workflow contract | `WORKFLOW.md` front matter plus orchestrator/actor policy sections. |
 | Runtime dispatch | Actor turns through Codex app-server, Hermes Agent, Claude, ACPX, or command-backed runtime profiles. |
 | Durable state | SQLite runs, events, leases, retries, runtime sessions, and status projections. |
-| Operator surface | `/sprints`, `/workflow change-delivery`, watch output, and runtime diagnostics. |
+| Operator surface | `/sprints`, `/workflow change-delivery`, daemon control, watch output, and runtime diagnostics. |
 | Trackers | GitHub and Linear client boundaries. |
 
 ## Workflow Model

@@ -12,6 +12,7 @@ Compatibility-sensitive surfaces for the current Sprints release.
 - `hermes sprints doctor`
 - `hermes sprints configure-runtime`
 - `hermes sprints runtime-matrix`
+- `hermes sprints daemon ...`
 - `hermes sprints codex-app-server ...`
 - `/sprints ...`
 - `/workflow change-delivery ...`

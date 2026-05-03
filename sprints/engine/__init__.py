@@ -32,10 +32,14 @@ from .db import (
 )
 from .state import (
     append_engine_event_to_connection,
+    clear_engine_retry_to_connection,
+    engine_due_retries_from_connection,
     engine_event_stats_from_connection,
     engine_events_for_run_from_connection,
     engine_events_from_connection,
+    engine_runtime_sessions_from_connection,
     engine_run_from_connection,
+    engine_work_items_from_connection,
     finish_engine_run_to_connection,
     latest_engine_runs_from_connection,
     load_engine_scheduler_state,
@@ -49,6 +53,9 @@ from .state import (
     save_engine_scheduler_state,
     save_engine_scheduler_state_to_connection,
     start_engine_run_to_connection,
+    upsert_engine_retry_to_connection,
+    upsert_engine_runtime_session_to_connection,
+    upsert_engine_work_item_to_connection,
 )
 from .store import EngineStore
 from .work import (
@@ -69,13 +76,17 @@ __all__ = [
     "acquire_engine_lease",
     "append_engine_event_to_connection",
     "build_scheduler_payload",
+    "clear_engine_retry_to_connection",
     "clear_work_entries",
     "connect_sprints_db",
+    "engine_due_retries_from_connection",
     "engine_event_stats_from_connection",
     "engine_events_for_run_from_connection",
     "engine_events_from_connection",
+    "engine_runtime_sessions_from_connection",
     "engine_run_from_connection",
     "engine_state_tables_exist",
+    "engine_work_items_from_connection",
     "finish_engine_run_to_connection",
     "init_engine_leases",
     "init_engine_state",
@@ -103,5 +114,8 @@ __all__ = [
     "save_engine_scheduler_state_to_connection",
     "schedule_retry_entry",
     "start_engine_run_to_connection",
+    "upsert_engine_retry_to_connection",
+    "upsert_engine_runtime_session_to_connection",
+    "upsert_engine_work_item_to_connection",
     "work_item_from_issue",
 ]

@@ -17,6 +17,18 @@ Sprints exposes two Hermes command roots.
 | `/sprints configure-runtime` | Bind actors to runtime presets. |
 | `/sprints runtime-matrix` | Show actor/runtime bindings. |
 
+## `/sprints daemon`
+
+| Command | Purpose |
+| --- | --- |
+| `run` | Run the workflow tick loop in the foreground. |
+| `install` | Write the workflow daemon systemd user unit. |
+| `up` | Install, enable, and start the workflow daemon. |
+| `status` | Show unit and engine lease state. |
+| `restart` | Restart the workflow daemon. |
+| `logs` | Show recent logs. |
+| `down` | Stop and disable the workflow daemon. |
+
 ## `/sprints codex-app-server`
 
 | Command | Purpose |

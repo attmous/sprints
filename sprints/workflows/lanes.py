@@ -31,8 +31,11 @@ def build_workflow_facts(config: WorkflowConfig, state: Any) -> dict[str, Any]:
         "tracker": tracker_facts,
         "engine": {
             "lanes": state.lanes,
+            "work_items": _engine_store(config).work_items(limit=200),
+            "runtime_sessions": _engine_store(config).runtime_sessions(limit=200),
             "active_lane_count": len(current_active_lanes),
             "idle_reason": state.idle_reason,
+            "due_retries": _engine_store(config).due_retries(limit=50),
             "capacity": {
                 "max_active_lanes": concurrency["max_active_lanes"],
                 "available_lanes": max(
@@ -84,6 +87,8 @@ def build_lane_status(
         "total_tokens": int(runtime_totals.get("total_tokens") or 0),
         "runtime_totals": runtime_totals,
         "latest_runs": _engine_store(config).latest_runs(limit=10),
+        "engine_work_items": _engine_store(config).work_items(limit=200),
+        "engine_runtime_sessions": _engine_store(config).runtime_sessions(limit=200),
         "runtime_sessions": runtime_sessions,
         "operator_attention_lanes": [
             _lane_summary(lane)
@@ -134,6 +139,7 @@ def claim_new_lanes(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
             lease=lease,
         )
         state.lanes[lane_id] = lane
+        _record_engine_lane(config=config, lane=lane)
         _append_engine_event(
             config=config,
             lane=lane,
@@ -167,6 +173,7 @@ def _claim_manual_lane(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
         return {"status": "idle", "reason": "manual lane is already claimed"}
     lane = _new_lane(config=config, lane_id=lane_id, issue=issue, lease=lease)
     state.lanes[lane_id] = lane
+    _record_engine_lane(config=config, lane=lane)
     _append_engine_event(
         config=config,
         lane=lane,
@@ -522,6 +529,7 @@ def advance_lane(
         raise RuntimeError(f"unknown target stage: {next_stage}")
     lane["stage"] = next_stage
     lane["pending_retry"] = None
+    _clear_engine_retry(config=config, lane=lane)
     set_lane_status(
         config=config,
         lane=lane,
@@ -595,6 +603,7 @@ def queue_lane_retry(
         "max_attempts": retry["max_attempts"],
     }
     retry_history.append(record)
+    _upsert_engine_retry(config=config, lane=lane)
     set_lane_status(
         config=config,
         lane=lane,
@@ -655,12 +664,15 @@ def complete_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) 
         )
         return
     lane["completion_cleanup"] = cleanup
+    lane["pending_retry"] = None
+    _clear_engine_retry(config=config, lane=lane)
     set_lane_status(config=config, lane=lane, status="complete", reason=reason)
     _release_lane_lease(config=config, lane=lane, reason=reason)
 
 
 def release_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -> None:
     lane["pending_retry"] = None
+    _clear_engine_retry(config=config, lane=lane)
     set_lane_status(
         config=config,
         lane=lane,
@@ -755,6 +767,7 @@ def record_actor_output(
     lane["last_actor_output"] = output
     lane["last_progress_at"] = _now_iso()
     lane["pending_retry"] = None
+    _clear_engine_retry(config=config, lane=lane)
     stage_outputs = lane_mapping(lane, "stage_outputs")
     stage_outputs[lane_stage(lane)] = {
         **dict(stage_outputs.get(lane_stage(lane)) or {}),
@@ -803,6 +816,7 @@ def record_actor_runtime_start(
         }
     )
     _apply_runtime_session_ids(lane=lane, session=session)
+    _upsert_engine_runtime_session(config=config, lane=lane)
     _append_engine_event(
         config=config,
         lane=lane,
@@ -822,6 +836,7 @@ def record_actor_runtime_progress(
     session["status"] = "running"
     session["updated_at"] = _now_iso()
     _apply_runtime_session_ids(lane=lane, session=session)
+    _upsert_engine_runtime_session(config=config, lane=lane)
     lane["last_progress_at"] = _now_iso()
     _append_engine_event(
         config=config,
@@ -843,6 +858,7 @@ def record_actor_runtime_result(
     session["status"] = status
     session["updated_at"] = _now_iso()
     _apply_runtime_session_ids(lane=lane, session=session)
+    _upsert_engine_runtime_session(config=config, lane=lane)
     lane["last_progress_at"] = _now_iso()
     _append_engine_event(
         config=config,
@@ -898,19 +914,7 @@ def save_scheduler_snapshot(*, config: WorkflowConfig, state: Any) -> None:
         if status == "running":
             running_entries[lane_id] = entry
         elif status == "retry_queued":
-            pending = (
-                lane.get("pending_retry")
-                if isinstance(lane.get("pending_retry"), dict)
-                else {}
-            )
-            retry_entries[lane_id] = {
-                **entry,
-                "due_at": pending.get("due_at"),
-                "due_at_epoch": _retry_due_at_epoch(pending),
-                "error": pending.get("reason") or "retry queued",
-                "current_attempt": lane.get("attempt"),
-                "max_attempts": pending.get("max_attempts"),
-            }
+            retry_entries[lane_id] = _retry_scheduler_entry(lane)
         session = lane.get("runtime_session")
         if isinstance(session, dict) and str(session.get("thread_id") or "").strip():
             runtime_sessions[lane_id] = entry
@@ -1201,6 +1205,7 @@ def set_lane_status(
     else:
         claim["state"] = "Claimed"
     claim["reason"] = reason
+    _record_engine_lane(config=config, lane=lane)
     _append_engine_event(
         config=config,
         lane=lane,
@@ -1435,6 +1440,125 @@ def _engine_store(config: WorkflowConfig) -> EngineStore:
         db_path=runtime_paths(config.workflow_root)["db_path"],
         workflow=config.workflow_name,
     )
+
+
+def _record_engine_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> None:
+    lane_id = str(lane.get("lane_id") or "").strip()
+    if not lane_id:
+        return
+    _engine_store(config).record_work_item(
+        work_id=lane_id,
+        entry=_engine_lane_entry(lane),
+        now_iso=_now_iso(),
+    )
+
+
+def _engine_lane_entry(lane: dict[str, Any]) -> dict[str, Any]:
+    issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
+    return {
+        "work_id": lane.get("lane_id"),
+        "issue_id": lane.get("lane_id"),
+        "identifier": issue.get("identifier") or lane.get("lane_id"),
+        "state": lane.get("status"),
+        "status": lane.get("status"),
+        "title": issue.get("title"),
+        "url": issue.get("url"),
+        "source": "workflow-lane",
+        "metadata": {
+            "stage": lane.get("stage"),
+            "actor": lane.get("actor"),
+            "attempt": lane.get("attempt"),
+            "branch": lane.get("branch"),
+            "pull_request": lane.get("pull_request"),
+            "thread_id": lane.get("thread_id"),
+            "turn_id": lane.get("turn_id"),
+            "operator_attention": lane.get("operator_attention"),
+            "pending_retry": lane.get("pending_retry"),
+            "claim": lane.get("claim"),
+        },
+    }
+
+
+def _upsert_engine_retry(*, config: WorkflowConfig, lane: dict[str, Any]) -> None:
+    pending = lane.get("pending_retry")
+    if not isinstance(pending, dict):
+        return
+    _engine_store(config).upsert_retry(
+        work_id=str(lane.get("lane_id") or ""),
+        entry=_retry_scheduler_entry(lane),
+        now_iso=_now_iso(),
+    )
+
+
+def _upsert_engine_runtime_session(
+    *, config: WorkflowConfig, lane: dict[str, Any]
+) -> None:
+    lane_id = str(lane.get("lane_id") or "").strip()
+    session = lane.get("runtime_session")
+    if not lane_id or not isinstance(session, dict):
+        return
+    _engine_store(config).upsert_runtime_session(
+        work_id=lane_id,
+        entry=_runtime_session_entry(lane),
+        now_iso=_now_iso(),
+    )
+
+
+def _runtime_session_entry(lane: dict[str, Any]) -> dict[str, Any]:
+    session = (
+        lane.get("runtime_session")
+        if isinstance(lane.get("runtime_session"), dict)
+        else {}
+    )
+    issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
+    return {
+        **_scheduler_entry(lane),
+        "issue_id": lane.get("lane_id"),
+        "identifier": issue.get("identifier") or lane.get("lane_id"),
+        "session_name": session.get("session_name"),
+        "runtime_name": session.get("runtime_name"),
+        "runtime_kind": session.get("runtime_kind"),
+        "session_id": session.get("session_id"),
+        "thread_id": session.get("thread_id") or lane.get("thread_id"),
+        "turn_id": session.get("turn_id") or lane.get("turn_id"),
+        "status": session.get("status") or lane.get("status"),
+        "run_id": session.get("run_id"),
+        "updated_at": session.get("updated_at") or lane.get("last_progress_at"),
+        "actor": session.get("actor") or lane.get("actor"),
+        "stage": session.get("stage") or lane.get("stage"),
+        "attempt": session.get("attempt") or lane.get("attempt"),
+        "tokens": session.get("tokens"),
+        "rate_limits": session.get("rate_limits"),
+        "turn_count": session.get("turn_count"),
+        "last_event": session.get("last_event"),
+        "last_message": session.get("last_message"),
+        "prompt_path": session.get("prompt_path"),
+        "result_path": session.get("result_path"),
+        "command_argv": session.get("command_argv"),
+    }
+
+
+def _clear_engine_retry(*, config: WorkflowConfig, lane: dict[str, Any]) -> None:
+    lane_id = str(lane.get("lane_id") or "").strip()
+    if lane_id:
+        _engine_store(config).clear_retry(work_id=lane_id)
+
+
+def _retry_scheduler_entry(lane: dict[str, Any]) -> dict[str, Any]:
+    pending = (
+        lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
+    )
+    issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
+    return {
+        **_scheduler_entry(lane),
+        "issue_id": lane.get("lane_id"),
+        "identifier": issue.get("identifier") or lane.get("lane_id"),
+        "attempt": int(pending.get("attempt") or lane.get("attempt") or 0),
+        "due_at_epoch": _retry_due_at_epoch(pending),
+        "error": pending.get("reason") or "retry queued",
+        "current_attempt": pending.get("attempt") or lane.get("attempt"),
+        "delay_type": "workflow-retry",
+    }
 
 
 def _append_engine_event(

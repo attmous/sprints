@@ -20,6 +20,7 @@ workflows/
 |-- bindings.py              # actor/runtime binding and runtime checks
 |-- validation.py            # contract validation and readiness recommendations
 |-- bootstrap.py             # repo bootstrap and scaffold mechanics
+|-- daemon.py                # workflow tick loop and service controls
 |-- orchestrator.py          # orchestrator prompt + decision schema
 |-- runner.py                # CLI tick loop and actor/action dispatch
 |-- lanes.py                 # lane ledger, reconciliation, runtime/session state

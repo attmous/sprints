@@ -18,6 +18,7 @@ $EDITOR WORKFLOW.md
 hermes sprints codex-app-server up
 hermes sprints validate
 hermes sprints doctor
+hermes sprints daemon up
 ```
 
 `bootstrap` creates a workflow root and writes a repo-owned `WORKFLOW.md`
@@ -71,6 +72,23 @@ hermes sprints runtime-matrix
 Use `runtime-matrix --execute` only when the configured runtimes are available.
 It dispatches a minimal runtime turn.
 
+## Daemon
+
+Start the workflow daemon after the runtime listener and validation pass:
+
+```bash
+hermes sprints daemon up
+hermes sprints daemon status
+```
+
+The daemon runs one workflow tick immediately, then keeps polling. Defaults:
+
+```text
+active lanes: 15s
+idle workflow: 60s
+retry wake cap: 30s
+```
+
 ## Operate
 
 Inside Hermes:
@@ -79,6 +97,7 @@ Inside Hermes:
 /sprints status
 /sprints doctor
 /sprints watch
+/sprints daemon status
 /workflow change-delivery status
 /workflow change-delivery validate
 /workflow change-delivery tick

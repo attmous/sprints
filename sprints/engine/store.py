@@ -21,9 +21,13 @@ from .db import (
 from .retention import normalize_event_retention
 from .state import (
     append_engine_event_to_connection,
+    clear_engine_retry_to_connection,
+    engine_due_retries_from_connection,
     engine_event_stats_from_connection,
     engine_events_from_connection,
     engine_events_for_run_from_connection,
+    engine_runtime_sessions_from_connection,
+    engine_work_items_from_connection,
     engine_run_from_connection,
     finish_engine_run_to_connection,
     latest_engine_runs_from_connection,
@@ -32,6 +36,9 @@ from .state import (
     read_engine_scheduler_state,
     save_engine_scheduler_state_to_connection,
     start_engine_run_to_connection,
+    upsert_engine_retry_to_connection,
+    upsert_engine_runtime_session_to_connection,
+    upsert_engine_work_item_to_connection,
 )
 
 
@@ -127,6 +134,117 @@ class EngineStore:
                 now_iso=now_iso or self._now_iso(),
                 now_epoch=self._now_epoch() if now_epoch is None else now_epoch,
             )
+
+    def record_work_item(
+        self,
+        *,
+        work_id: str,
+        entry: dict[str, Any],
+        now_iso: str | None = None,
+        now_epoch: float | None = None,
+    ) -> dict[str, Any]:
+        with self.transaction() as conn:
+            return upsert_engine_work_item_to_connection(
+                conn,
+                workflow=self.workflow,
+                work_id=work_id,
+                entry=entry,
+                now_iso=now_iso or self._now_iso(),
+                now_epoch=self._now_epoch() if now_epoch is None else now_epoch,
+            )
+
+    def work_items(
+        self, *, state: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        conn = self.connect()
+        try:
+            return engine_work_items_from_connection(
+                conn,
+                workflow=self.workflow,
+                state=state,
+                limit=limit,
+            )
+        finally:
+            conn.close()
+
+    def upsert_retry(
+        self,
+        *,
+        work_id: str,
+        entry: dict[str, Any],
+        now_iso: str | None = None,
+        now_epoch: float | None = None,
+    ) -> dict[str, Any]:
+        with self.transaction() as conn:
+            return upsert_engine_retry_to_connection(
+                conn,
+                workflow=self.workflow,
+                work_id=work_id,
+                entry=entry,
+                now_iso=now_iso or self._now_iso(),
+                now_epoch=self._now_epoch() if now_epoch is None else now_epoch,
+            )
+
+    def clear_retry(self, *, work_id: str) -> dict[str, Any]:
+        with self.transaction() as conn:
+            return clear_engine_retry_to_connection(
+                conn,
+                workflow=self.workflow,
+                work_id=work_id,
+            )
+
+    def due_retries(
+        self, *, due_at_epoch: float | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        conn = self.connect()
+        try:
+            return engine_due_retries_from_connection(
+                conn,
+                workflow=self.workflow,
+                due_at_epoch=self._now_epoch()
+                if due_at_epoch is None
+                else due_at_epoch,
+                limit=limit,
+            )
+        finally:
+            conn.close()
+
+    def upsert_runtime_session(
+        self,
+        *,
+        work_id: str,
+        entry: dict[str, Any],
+        now_iso: str | None = None,
+        now_epoch: float | None = None,
+    ) -> dict[str, Any]:
+        with self.transaction() as conn:
+            return upsert_engine_runtime_session_to_connection(
+                conn,
+                workflow=self.workflow,
+                work_id=work_id,
+                entry=entry,
+                now_iso=now_iso or self._now_iso(),
+                now_epoch=self._now_epoch() if now_epoch is None else now_epoch,
+            )
+
+    def runtime_sessions(
+        self,
+        *,
+        work_id: str | None = None,
+        thread_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        conn = self.connect()
+        try:
+            return engine_runtime_sessions_from_connection(
+                conn,
+                workflow=self.workflow,
+                work_id=work_id,
+                thread_id=thread_id,
+                limit=limit,
+            )
+        finally:
+            conn.close()
 
     def acquire_lease(
         self,
@@ -636,11 +754,11 @@ class EngineStore:
             checks.append(
                 {
                     "name": "engine-runtime-sessions",
-                    "status": "fail" if invalid_sessions else "pass",
+                    "status": "warn" if invalid_sessions else "pass",
                     "detail": (
                         f"{len(invalid_sessions)} runtime session(s) missing thread_id"
                         if invalid_sessions
-                        else "runtime sessions have valid thread mappings"
+                        else "runtime sessions have thread mappings"
                     ),
                     "items": [row[0] for row in invalid_sessions],
                 }

@@ -21,6 +21,22 @@ from workflows.loader import (
     configure_runtime_contract,
     validate_workflow_contract,
 )
+from workflows.daemon import (
+    DEFAULT_ACTIVE_INTERVAL_SECONDS,
+    DEFAULT_ERROR_INTERVAL_SECONDS,
+    DEFAULT_IDLE_INTERVAL_SECONDS,
+    DEFAULT_JITTER_RATIO,
+    DEFAULT_LEASE_TTL_SECONDS,
+    DEFAULT_MAX_RETRY_SLEEP_SECONDS,
+    WorkflowDaemonError,
+    run_workflow_daemon,
+    workflow_daemon_down,
+    workflow_daemon_install,
+    workflow_daemon_logs,
+    workflow_daemon_restart,
+    workflow_daemon_status,
+    workflow_daemon_up,
+)
 from workflows.runner import (
     build_status as build_workflow_status,
 )
@@ -336,6 +352,58 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
         cmd.add_argument("--ws-audience")
         cmd.add_argument("--ws-max-clock-skew-seconds", type=int)
 
+    def _add_workflow_daemon_runtime_args(
+        cmd: argparse.ArgumentParser, workflow_root_default: str
+    ) -> None:
+        cmd.add_argument("--workflow-root", default=workflow_root_default)
+        cmd.add_argument(
+            "--active-interval",
+            type=float,
+            default=DEFAULT_ACTIVE_INTERVAL_SECONDS,
+            help="Seconds between ticks while lanes are active.",
+        )
+        cmd.add_argument(
+            "--idle-interval",
+            type=float,
+            default=DEFAULT_IDLE_INTERVAL_SECONDS,
+            help="Seconds between ticks while no lanes are active.",
+        )
+        cmd.add_argument(
+            "--max-retry-sleep",
+            type=float,
+            default=DEFAULT_MAX_RETRY_SLEEP_SECONDS,
+            help="Maximum sleep when a retry is due sooner than the idle interval.",
+        )
+        cmd.add_argument(
+            "--error-interval",
+            type=float,
+            default=DEFAULT_ERROR_INTERVAL_SECONDS,
+            help="Seconds to sleep after a failed tick.",
+        )
+        cmd.add_argument(
+            "--lease-ttl",
+            type=int,
+            default=DEFAULT_LEASE_TTL_SECONDS,
+            help="Workflow daemon lease TTL in seconds.",
+        )
+        cmd.add_argument(
+            "--jitter",
+            type=float,
+            default=DEFAULT_JITTER_RATIO,
+            help="Positive jitter ratio added to sleep intervals.",
+        )
+
+    def _add_workflow_daemon_service_args(
+        cmd: argparse.ArgumentParser, workflow_root_default: str
+    ) -> None:
+        _add_workflow_daemon_runtime_args(cmd, workflow_root_default)
+        cmd.add_argument("--service-name")
+        cmd.add_argument(
+            "--python-command",
+            default="python3",
+            help="Python command used by the generated systemd unit.",
+        )
+
     codex_install_cmd = codex_sub.add_parser(
         "install", help="Write the Codex app-server user unit."
     )
@@ -428,6 +496,70 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     codex_logs_cmd.add_argument("--lines", type=int, default=50)
     codex_logs_cmd.add_argument("--json", action="store_true")
     codex_logs_cmd.set_defaults(func=run_cli_command)
+
+    daemon_cmd = sub.add_parser(
+        "daemon",
+        help="Run and manage the workflow orchestrator daemon.",
+    )
+    daemon_sub = daemon_cmd.add_subparsers(dest="daemon_command")
+    daemon_sub.required = True
+
+    daemon_run_cmd = daemon_sub.add_parser(
+        "run", help="Run the workflow tick loop in the foreground."
+    )
+    _add_workflow_daemon_runtime_args(daemon_run_cmd, default_workflow_root_str)
+    daemon_run_cmd.add_argument("--once", action="store_true")
+    daemon_run_cmd.add_argument("--json", action="store_true")
+    daemon_run_cmd.set_defaults(func=run_cli_command)
+
+    daemon_install_cmd = daemon_sub.add_parser(
+        "install", help="Write the workflow daemon user unit."
+    )
+    _add_workflow_daemon_service_args(daemon_install_cmd, default_workflow_root_str)
+    daemon_install_cmd.add_argument("--json", action="store_true")
+    daemon_install_cmd.set_defaults(func=run_cli_command)
+
+    daemon_up_cmd = daemon_sub.add_parser(
+        "up", help="Install, enable, and start the workflow daemon."
+    )
+    _add_workflow_daemon_service_args(daemon_up_cmd, default_workflow_root_str)
+    daemon_up_cmd.add_argument("--json", action="store_true")
+    daemon_up_cmd.set_defaults(func=run_cli_command)
+
+    daemon_status_cmd = daemon_sub.add_parser(
+        "status", help="Show workflow daemon service and lease status."
+    )
+    daemon_status_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    daemon_status_cmd.add_argument("--service-name")
+    daemon_status_cmd.add_argument("--json", action="store_true")
+    daemon_status_cmd.set_defaults(func=run_cli_command)
+
+    daemon_down_cmd = daemon_sub.add_parser(
+        "down", help="Stop and disable the workflow daemon."
+    )
+    daemon_down_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    daemon_down_cmd.add_argument("--service-name")
+    daemon_down_cmd.add_argument("--json", action="store_true")
+    daemon_down_cmd.set_defaults(func=run_cli_command)
+
+    daemon_restart_cmd = daemon_sub.add_parser(
+        "restart", help="Restart the workflow daemon service."
+    )
+    daemon_restart_cmd.add_argument(
+        "--workflow-root", default=default_workflow_root_str
+    )
+    daemon_restart_cmd.add_argument("--service-name")
+    daemon_restart_cmd.add_argument("--json", action="store_true")
+    daemon_restart_cmd.set_defaults(func=run_cli_command)
+
+    daemon_logs_cmd = daemon_sub.add_parser(
+        "logs", help="Read workflow daemon journal logs."
+    )
+    daemon_logs_cmd.add_argument("--workflow-root", default=default_workflow_root_str)
+    daemon_logs_cmd.add_argument("--service-name")
+    daemon_logs_cmd.add_argument("--lines", type=int, default=50)
+    daemon_logs_cmd.add_argument("--json", action="store_true")
+    daemon_logs_cmd.set_defaults(func=run_cli_command)
 
     return parser
 
@@ -607,6 +739,11 @@ def execute_namespace(args: argparse.Namespace) -> dict[str, Any]:
             return _execute_codex_app_server_namespace(args, workflow_root)
         except CodexAppServerError as exc:
             raise SprintsCommandError(str(exc)) from exc
+    if args.sprints_command == "daemon":
+        try:
+            return _execute_workflow_daemon_namespace(args, workflow_root)
+        except WorkflowDaemonError as exc:
+            raise SprintsCommandError(str(exc)) from exc
     raise SprintsCommandError(f"unknown sprints command: {args.sprints_command}")
 
 
@@ -680,6 +817,69 @@ def _execute_codex_app_server_namespace(
             lines=args.lines,
         )
     raise SprintsCommandError(f"unknown codex-app-server command: {action}")
+
+
+def _execute_workflow_daemon_namespace(
+    args: argparse.Namespace, workflow_root: Path
+) -> dict[str, Any]:
+    action = args.daemon_command
+    if action == "run":
+        return run_workflow_daemon(
+            workflow_root=workflow_root,
+            active_interval=args.active_interval,
+            idle_interval=args.idle_interval,
+            max_retry_sleep=args.max_retry_sleep,
+            error_interval=args.error_interval,
+            lease_ttl_seconds=args.lease_ttl,
+            jitter_ratio=args.jitter,
+            once=args.once,
+        )
+    if action == "install":
+        return workflow_daemon_install(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            active_interval=args.active_interval,
+            idle_interval=args.idle_interval,
+            max_retry_sleep=args.max_retry_sleep,
+            error_interval=args.error_interval,
+            lease_ttl_seconds=args.lease_ttl,
+            jitter_ratio=args.jitter,
+            python_command=args.python_command,
+        )
+    if action == "up":
+        return workflow_daemon_up(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            active_interval=args.active_interval,
+            idle_interval=args.idle_interval,
+            max_retry_sleep=args.max_retry_sleep,
+            error_interval=args.error_interval,
+            lease_ttl_seconds=args.lease_ttl,
+            jitter_ratio=args.jitter,
+            python_command=args.python_command,
+        )
+    if action == "status":
+        return workflow_daemon_status(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+        )
+    if action == "down":
+        return workflow_daemon_down(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+        )
+    if action == "restart":
+        return workflow_daemon_restart(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+        )
+    if action == "logs":
+        return workflow_daemon_logs(
+            workflow_root=workflow_root,
+            service_name=args.service_name,
+            lines=args.lines,
+        )
+    raise SprintsCommandError(f"unknown daemon command: {action}")
 
 
 # Command Handlers

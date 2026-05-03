@@ -2,6 +2,9 @@
 
 Use this when actors run through `kind: codex-app-server`.
 
+This service is only the Codex runtime listener. The workflow tick loop is
+managed by `hermes sprints daemon ...`.
+
 ## Managed Listener
 
 ```bash

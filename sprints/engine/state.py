@@ -118,6 +118,82 @@ def _upsert_work_item(
     )
 
 
+def upsert_engine_work_item_to_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    work_id: str,
+    entry: dict[str, Any],
+    now_iso: str,
+    now_epoch: float,
+) -> dict[str, Any]:
+    init_engine_state(conn)
+    normalized_work_id = str(
+        entry.get("work_id") or entry.get("issue_id") or work_id or ""
+    ).strip()
+    if not normalized_work_id:
+        raise ValueError("engine work item requires work_id")
+    _upsert_work_item(
+        conn,
+        workflow=workflow,
+        work_id=normalized_work_id,
+        entry=entry,
+        now_iso=now_iso,
+        now_epoch=now_epoch,
+    )
+    item = _work_item_from_entry(
+        workflow=workflow, work_id=normalized_work_id, entry=entry
+    )
+    return {
+        **item,
+        "metadata": dict(item.get("metadata") or {}),
+        "updated_at": now_iso,
+        "updated_at_epoch": now_epoch,
+    }
+
+
+def engine_work_items_from_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    state: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    init_engine_state(conn)
+    where = "WHERE workflow=?"
+    params: list[Any] = [workflow]
+    if state:
+        where += " AND state=?"
+        params.append(state)
+    params.append(max(int(limit or 200), 1))
+    rows = conn.execute(
+        f"""
+        SELECT workflow, work_id, identifier, state, title, url, source,
+               metadata_json, updated_at, updated_at_epoch
+        FROM engine_work_items
+        {where}
+        ORDER BY updated_at_epoch DESC, work_id ASC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    return [
+        {
+            "workflow": row[0],
+            "work_id": row[1],
+            "identifier": row[2],
+            "state": row[3],
+            "title": row[4],
+            "url": row[5],
+            "source": row[6],
+            "metadata": _json_loads(row[7]) or {},
+            "updated_at": row[8],
+            "updated_at_epoch": row[9],
+        }
+        for row in rows
+    ]
+
+
 def save_engine_scheduler_state_to_connection(
     conn: sqlite3.Connection,
     *,
@@ -180,35 +256,13 @@ def save_engine_scheduler_state_to_connection(
         )
 
     for work_id, entry in sorted(retry_entries.items(), key=lambda item: str(item[0])):
-        work_id = str(entry.get("issue_id") or work_id or "").strip()
-        if not work_id:
-            continue
-        _upsert_work_item(
+        upsert_engine_retry_to_connection(
             conn,
             workflow=workflow,
             work_id=work_id,
             entry=entry,
             now_iso=now_iso,
             now_epoch=now_epoch,
-        )
-        conn.execute(
-            """
-            INSERT INTO engine_retry_queue (
-              workflow, work_id, attempt, due_at_epoch, error, current_attempt, delay_type, run_id, updated_at, updated_at_epoch
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                workflow,
-                work_id,
-                int(entry.get("attempt") or 0),
-                float(_value_or_default(entry.get("due_at_epoch"), now_epoch)),
-                entry.get("error"),
-                entry.get("current_attempt"),
-                entry.get("delay_type") or "failure",
-                entry.get("run_id"),
-                now_iso,
-                now_epoch,
-            ),
         )
 
     for work_id, entry in sorted(
@@ -300,6 +354,285 @@ def save_engine_scheduler_state_to_connection(
             now_epoch,
         ),
     )
+
+
+def upsert_engine_retry_to_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    work_id: str,
+    entry: dict[str, Any],
+    now_iso: str,
+    now_epoch: float,
+) -> dict[str, Any]:
+    init_engine_state(conn)
+    normalized_work_id = str(entry.get("issue_id") or work_id or "").strip()
+    if not normalized_work_id:
+        raise ValueError("engine retry entry requires work_id")
+    _upsert_work_item(
+        conn,
+        workflow=workflow,
+        work_id=normalized_work_id,
+        entry=entry,
+        now_iso=now_iso,
+        now_epoch=now_epoch,
+    )
+    due_at_epoch = float(_value_or_default(entry.get("due_at_epoch"), now_epoch))
+    attempt = int(entry.get("attempt") or 0)
+    current_attempt = entry.get("current_attempt")
+    delay_type = str(entry.get("delay_type") or "failure")
+    conn.execute(
+        """
+        INSERT INTO engine_retry_queue (
+          workflow, work_id, attempt, due_at_epoch, error, current_attempt, delay_type, run_id, updated_at, updated_at_epoch
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workflow, work_id) DO UPDATE SET
+          attempt=excluded.attempt,
+          due_at_epoch=excluded.due_at_epoch,
+          error=excluded.error,
+          current_attempt=excluded.current_attempt,
+          delay_type=excluded.delay_type,
+          run_id=excluded.run_id,
+          updated_at=excluded.updated_at,
+          updated_at_epoch=excluded.updated_at_epoch
+        """,
+        (
+            workflow,
+            normalized_work_id,
+            attempt,
+            due_at_epoch,
+            entry.get("error"),
+            current_attempt,
+            delay_type,
+            entry.get("run_id"),
+            now_iso,
+            now_epoch,
+        ),
+    )
+    return {
+        "workflow": workflow,
+        "work_id": normalized_work_id,
+        "attempt": attempt,
+        "due_at_epoch": due_at_epoch,
+        "error": entry.get("error"),
+        "current_attempt": current_attempt,
+        "delay_type": delay_type,
+        "run_id": entry.get("run_id"),
+    }
+
+
+def clear_engine_retry_to_connection(
+    conn: sqlite3.Connection, *, workflow: str, work_id: str
+) -> dict[str, Any]:
+    init_engine_state(conn)
+    normalized_work_id = str(work_id or "").strip()
+    if not normalized_work_id:
+        raise ValueError("engine retry clear requires work_id")
+    cursor = conn.execute(
+        "DELETE FROM engine_retry_queue WHERE workflow=? AND work_id=?",
+        (workflow, normalized_work_id),
+    )
+    return {
+        "workflow": workflow,
+        "work_id": normalized_work_id,
+        "cleared": cursor.rowcount > 0,
+    }
+
+
+def engine_due_retries_from_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    due_at_epoch: float,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    init_engine_state(conn)
+    rows = conn.execute(
+        """
+        SELECT q.work_id, w.identifier, w.state, w.title, w.url,
+               q.attempt, q.due_at_epoch, q.error, q.current_attempt, q.delay_type, q.run_id,
+               q.updated_at, q.updated_at_epoch
+        FROM engine_retry_queue q
+        LEFT JOIN engine_work_items w ON w.workflow = q.workflow AND w.work_id = q.work_id
+        WHERE q.workflow=? AND q.due_at_epoch <= ?
+        ORDER BY q.due_at_epoch ASC, q.work_id ASC
+        LIMIT ?
+        """,
+        (workflow, due_at_epoch, max(int(limit or 50), 1)),
+    ).fetchall()
+    return [
+        {
+            "workflow": workflow,
+            "work_id": str(row[0]),
+            "issue_id": str(row[0]),
+            "identifier": row[1],
+            "state": row[2],
+            "title": row[3],
+            "url": row[4],
+            "attempt": int(row[5] or 0),
+            "due_at_epoch": float(_value_or_default(row[6], due_at_epoch)),
+            "error": row[7],
+            "current_attempt": row[8],
+            "delay_type": row[9] or "failure",
+            "run_id": row[10],
+            "updated_at": row[11],
+            "updated_at_epoch": float(_value_or_default(row[12], due_at_epoch)),
+        }
+        for row in rows
+    ]
+
+
+def upsert_engine_runtime_session_to_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    work_id: str,
+    entry: dict[str, Any],
+    now_iso: str,
+    now_epoch: float,
+) -> dict[str, Any]:
+    init_engine_state(conn)
+    normalized_work_id = str(entry.get("issue_id") or work_id or "").strip()
+    if not normalized_work_id:
+        raise ValueError("engine runtime session requires work_id")
+    _upsert_work_item(
+        conn,
+        workflow=workflow,
+        work_id=normalized_work_id,
+        entry=entry,
+        now_iso=now_iso,
+        now_epoch=now_epoch,
+    )
+    metadata = {
+        key: value
+        for key, value in entry.items()
+        if key
+        not in {
+            "issue_id",
+            "identifier",
+            "session_name",
+            "runtime_name",
+            "runtime_kind",
+            "session_id",
+            "thread_id",
+            "turn_id",
+            "status",
+            "cancel_requested",
+            "cancel_reason",
+            "run_id",
+            "updated_at",
+        }
+    }
+    updated_at = str(entry.get("updated_at") or now_iso)
+    conn.execute(
+        """
+        INSERT INTO engine_runtime_sessions (
+          workflow, work_id, session_name, runtime_name, runtime_kind, session_id, thread_id, turn_id,
+          status, cancel_requested, cancel_reason, run_id, metadata_json, updated_at, updated_at_epoch
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workflow, work_id) DO UPDATE SET
+          session_name=excluded.session_name,
+          runtime_name=excluded.runtime_name,
+          runtime_kind=excluded.runtime_kind,
+          session_id=excluded.session_id,
+          thread_id=excluded.thread_id,
+          turn_id=excluded.turn_id,
+          status=excluded.status,
+          cancel_requested=excluded.cancel_requested,
+          cancel_reason=excluded.cancel_reason,
+          run_id=excluded.run_id,
+          metadata_json=excluded.metadata_json,
+          updated_at=excluded.updated_at,
+          updated_at_epoch=excluded.updated_at_epoch
+        """,
+        (
+            workflow,
+            normalized_work_id,
+            entry.get("session_name"),
+            entry.get("runtime_name"),
+            entry.get("runtime_kind"),
+            entry.get("session_id"),
+            entry.get("thread_id"),
+            entry.get("turn_id"),
+            entry.get("status"),
+            1 if entry.get("cancel_requested") else 0,
+            entry.get("cancel_reason"),
+            entry.get("run_id"),
+            _json_dumps(metadata),
+            updated_at,
+            now_epoch,
+        ),
+    )
+    return {
+        "workflow": workflow,
+        "work_id": normalized_work_id,
+        "session_name": entry.get("session_name"),
+        "runtime_name": entry.get("runtime_name"),
+        "runtime_kind": entry.get("runtime_kind"),
+        "session_id": entry.get("session_id"),
+        "thread_id": entry.get("thread_id"),
+        "turn_id": entry.get("turn_id"),
+        "status": entry.get("status"),
+        "run_id": entry.get("run_id"),
+        "metadata": metadata,
+        "updated_at": updated_at,
+        "updated_at_epoch": now_epoch,
+    }
+
+
+def engine_runtime_sessions_from_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    work_id: str | None = None,
+    thread_id: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    init_engine_state(conn)
+    conditions = ["s.workflow=?"]
+    params: list[Any] = [workflow]
+    if work_id:
+        conditions.append("s.work_id=?")
+        params.append(work_id)
+    if thread_id:
+        conditions.append("s.thread_id=?")
+        params.append(thread_id)
+    params.append(max(int(limit or 200), 1))
+    rows = conn.execute(
+        f"""
+        SELECT s.work_id, w.identifier, s.session_name, s.runtime_name, s.runtime_kind, s.session_id,
+               s.thread_id, s.turn_id, s.status, s.cancel_requested, s.cancel_reason, s.run_id,
+               s.metadata_json, s.updated_at, s.updated_at_epoch
+        FROM engine_runtime_sessions s
+        LEFT JOIN engine_work_items w ON w.workflow = s.workflow AND w.work_id = s.work_id
+        WHERE {" AND ".join(conditions)}
+        ORDER BY s.updated_at_epoch DESC, s.work_id ASC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    return [
+        {
+            "workflow": workflow,
+            "work_id": row[0],
+            "issue_id": row[0],
+            "identifier": row[1],
+            "session_name": row[2],
+            "runtime_name": row[3],
+            "runtime_kind": row[4],
+            "session_id": row[5],
+            "thread_id": row[6],
+            "turn_id": row[7],
+            "status": row[8],
+            "cancel_requested": bool(row[9]),
+            "cancel_reason": row[10],
+            "run_id": row[11],
+            "metadata": _json_loads(row[12]) or {},
+            "updated_at": row[13],
+            "updated_at_epoch": float(_value_or_default(row[14], 0.0)),
+        }
+        for row in rows
+    ]
 
 
 def save_engine_scheduler_state(

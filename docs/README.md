@@ -17,6 +17,7 @@ operator commands.
 | [Installation](operator/installation.md) | Install, bootstrap, validate, and run. |
 | [Slash Commands](operator/slash-commands.md) | `/sprints` and `/workflow change-delivery` commands. |
 | [Codex App-Server](operator/codex-app-server.md) | Shared Codex listener setup and checks. |
+| [Workflow Daemon](operator/workflow-daemon.md) | Workflow tick loop setup and checks. |
 | [Public Contract](public-contract.md) | Compatibility-sensitive surfaces. |
 | [Security](security.md) | Trust model and execution risk. |
 

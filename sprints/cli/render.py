@@ -312,4 +312,54 @@ def render_result(
                 f"endpoint={result.get('endpoint')} failures={len(failed)} warnings={len(warned)}"
                 f"{suffix}"
             )
+    if command == "daemon":
+        action = result.get("action")
+        if action == "run":
+            return (
+                f"workflow daemon {result.get('status')} workflow={result.get('workflow')} "
+                f"ticks={result.get('tick_count')} owner={result.get('owner_instance_id')}"
+                + (
+                    f" error={result.get('last_error')}"
+                    if result.get("last_error")
+                    else ""
+                )
+            )
+        if action == "install":
+            intervals = result.get("intervals") or {}
+            return (
+                f"workflow daemon installed service={result.get('service_name')} "
+                f"workflow={result.get('workflow')} ok={result.get('ok')} "
+                f"active_interval={intervals.get('active_interval')} "
+                f"idle_interval={intervals.get('idle_interval')}"
+            )
+        if action == "up":
+            status = result.get("status") or {}
+            return (
+                f"workflow daemon up service={result.get('service_name')} "
+                f"workflow={result.get('workflow')} active={status.get('active')} "
+                f"enabled={status.get('enabled')}"
+            )
+        if action == "down":
+            status = result.get("status") or {}
+            return (
+                f"workflow daemon down service={result.get('service_name')} "
+                f"active={status.get('active')} enabled={status.get('enabled')}"
+            )
+        if action == "restart":
+            status = result.get("status") or {}
+            return (
+                f"workflow daemon restart service={result.get('service_name')} "
+                f"ok={result.get('ok')} active={status.get('active')}"
+            )
+        if action == "logs":
+            output = result.get("stdout") or result.get("stderr") or ""
+            return output if output else f"no logs for {result.get('service_name')}"
+        if action == "status":
+            lease = result.get("lease") or {}
+            return (
+                f"workflow daemon service={result.get('service_name')} "
+                f"installed={result.get('installed')} active={result.get('active')} "
+                f"enabled={result.get('enabled')} lease_owner={lease.get('owner_instance_id')} "
+                f"lease_stale={lease.get('stale')}"
+            )
     return json.dumps(result, sort_keys=True)

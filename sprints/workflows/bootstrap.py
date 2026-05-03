@@ -304,7 +304,11 @@ def bootstrap_workflow_root(
     pointer_path = repo_local_workflow_pointer_path(repo_root)
     pointer_path.parent.mkdir(parents=True, exist_ok=True)
     pointer_path.write_text(str(resolved_workflow_root) + "\n", encoding="utf-8")
-    next_command = "hermes sprints status"
+    next_command = (
+        "hermes sprints codex-app-server up && "
+        "hermes sprints validate && "
+        "hermes sprints daemon up"
+    )
     commit_result = _commit_bootstrap_contract(
         repo_root=repo_root,
         workflow_name=workflow_name,

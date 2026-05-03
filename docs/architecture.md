@@ -10,7 +10,7 @@ mechanics.
 | Layer | Owns |
 | --- | --- |
 | `WORKFLOW.md` | Workflow config, orchestrator policy, actor policy, output shape. |
-| `workflows/` | Loading contracts, typing config, rendering prompts, applying decisions. |
+| `workflows/` | Loading contracts, typing config, daemon loop, rendering prompts, applying decisions. |
 | `runtimes/` | Running one actor turn through Codex, Hermes Agent, Claude, ACPX, or a command-backed adapter. |
 | `engine/` | SQLite state, leases, runs, retries, events, and reports. |
 | `trackers/` | External work sources such as GitHub and Linear. |
@@ -84,7 +84,8 @@ sprints/
 `-- workflows/
     |-- loader.py
     |-- contracts.py
-    |-- config.py
+|-- config.py
+    |-- daemon.py
     |-- runner.py
     |-- orchestrator.py
     |-- actors.py

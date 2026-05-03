@@ -43,8 +43,28 @@ not JSONL audit files.
 The engine stores neutral work IDs. Trackers may call them issues, tickets, PRs,
 or tasks, but the engine should stay tracker-neutral.
 
+`engine_work_items` is the current engine projection of lane lifecycle state.
+Workflow lanes still own the rich lane JSON, but every lane status transition
+records a tracker-neutral work item row so operators can inspect lane state from
+the engine DB.
+
+`engine_runtime_sessions` is the durable projection of actor runtime/session
+state. Workflow lanes still keep runtime metadata for orchestrator context, but
+runtime start/progress/result hooks upsert the engine session row directly.
+
 ## Deferred
 
-Retries are currently workflow-owned lane state mirrored into the engine
-scheduler snapshot. Later, move retry wakeups into the engine so due retries can
-drive workflow ticks instead of waiting for an external tick.
+The current engine layer is a durable projection, not the only source of truth.
+Workflow lane JSON still owns rich lane state and policy context.
+
+Later engine ownership waves:
+
+- move retry wakeups into the engine so due retries can drive workflow ticks
+  instead of waiting for an external tick
+- make lane lifecycle transitions engine-owned instead of `set_lane_status()`
+  mutating JSON first and recording a projection second
+- make actor dispatch/run/session updates transactional around engine run
+  records
+- reduce or remove scheduler snapshot rebuilds once direct engine tables cover
+  status, retries, running work, and sessions
+- keep workflow policy, stages, gates, and actor contracts outside the engine
