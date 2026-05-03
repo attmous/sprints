@@ -14,6 +14,31 @@ retry limits, completion cleanup, and runtime bindings. Mechanics means loading
 contracts, claiming lanes, dispatching actor turns, persisting state, reconciling
 trackers and pull requests, and exposing operator commands.
 
+## Table Of Contents
+
+- [Vocabulary](#vocabulary)
+- [System Map](#system-map)
+- [Filesystem Topology](#filesystem-topology)
+- [Package Boundaries](#package-boundaries)
+- [Workflow Contract](#workflow-contract)
+- [Tick Lifecycle](#tick-lifecycle)
+- [Lane Ledger](#lane-ledger)
+- [Lane State Machine](#lane-state-machine)
+- [Default Change Delivery Flow](#default-change-delivery-flow)
+- [Orchestrator Decisions](#orchestrator-decisions)
+- [Actor Runtime Path](#actor-runtime-path)
+- [Skills](#skills)
+- [Worktrees](#worktrees)
+- [Tracker And Code Host](#tracker-and-code-host)
+- [Engine Design](#engine-design)
+- [Reconciliation](#reconciliation)
+- [Retry Model](#retry-model)
+- [Failure And Recovery](#failure-and-recovery)
+- [Daemon Design](#daemon-design)
+- [Invariants](#invariants)
+- [File Map](#file-map)
+- [Design Pressure Points](#design-pressure-points)
+
 ## Vocabulary
 
 | Term | Meaning |
@@ -72,54 +97,55 @@ Sprints uses three different filesystem roots. Keeping them separate avoids most
 operator confusion.
 
 ```mermaid
-flowchart TB
-    Repo["Target repo root\n/path/to/repo"]
-    RepoHermes[".hermes/sprints/workflow-root\npointer to active workflow root"]
-    RepoContract["WORKFLOW.md\nrepo-owned workflow contract"]
+flowchart LR
+    subgraph Repo["Target repo root: /path/to/repo"]
+        RepoFiles["project files"]
+        RepoContract["WORKFLOW.md<br/>source contract"]
+        RepoPointer[".hermes/sprints/workflow-root<br/>pointer file only"]
+    end
 
-    Hermes["Hermes installation\n~/.hermes or Hermes-managed plugin path"]
-    Plugin["Sprints plugin package\nsprints/ + plugin.yaml"]
-    PluginTemplates["sprints/workflows/templates/\nbundled contracts"]
-    PluginSkills["sprints/skills/\nactor skill docs"]
+    subgraph Plugin["Hermes plugin install: Hermes-managed"]
+        PluginPkg["plugin.yaml + sprints/"]
+        PluginTemplates["workflow templates"]
+        PluginSkills["actor skills"]
+    end
 
-    WorkflowRoot["Workflow root\n~/.hermes/workflows/<repo>-change-delivery/"]
-    ActiveContract["config/WORKFLOW.md\nactive contract snapshot"]
-    ContractPointer["config/workflow-contract-path\nactive contract pointer"]
-    Runtime["runtime/state/sprints/sprints.db\nengine SQLite DB"]
-    StateJson[".sprints/change-delivery-state.json\nrich lane ledger"]
-    AuditJsonl[".sprints/change-delivery-audit.jsonl\nworkflow audit artifact"]
-    Worktrees["worktrees/<lane-id>/\nlane git worktrees"]
+    subgraph Root["Workflow root: ~/.hermes/workflows/<owner>-<repo>-change-delivery"]
+        ActiveContract["config/WORKFLOW.md<br/>active snapshot"]
+        EngineDb["runtime/state/sprints/sprints.db<br/>engine DB"]
+        LaneLedger[".sprints/change-delivery-state.json<br/>lane ledger"]
+        Audit[".sprints/change-delivery-audit.jsonl<br/>audit artifact"]
+        LaneWorktrees["worktrees/<lane-id>/<br/>lane checkouts"]
+    end
 
-    Repo --> RepoHermes
-    Repo --> RepoContract
-    Hermes --> Plugin
-    Plugin --> PluginTemplates
-    Plugin --> PluginSkills
-    RepoHermes --> WorkflowRoot
-    WorkflowRoot --> ActiveContract
-    WorkflowRoot --> ContractPointer
-    WorkflowRoot --> Runtime
-    WorkflowRoot --> StateJson
-    WorkflowRoot --> AuditJsonl
-    WorkflowRoot --> Worktrees
+    PluginTemplates -. "bootstrap copies template" .-> RepoContract
+    RepoContract -. "applied/snapshotted" .-> ActiveContract
+    RepoPointer -. "contains path to" .-> Root
+    RepoFiles -. "base repo for" .-> LaneWorktrees
 ```
 
 ### Target Repo Root
 
 This is the repository Sprints operates on. It contains the code being changed
-and the repo-owned workflow contract.
+and the repo-owned workflow contract. The workflow root is not inside this tree
+by default.
 
 ```text
 /path/to/repo/
 |-- WORKFLOW.md
-|-- .hermes/
-|   `-- sprints/
-|       `-- workflow-root
 `-- <project files>
 ```
 
-`WORKFLOW.md` is the operator-editable contract. The `.hermes/sprints/workflow-root`
-file points Sprints commands at the workflow root for this repo.
+`WORKFLOW.md` is the operator-editable contract.
+
+Bootstrap also writes a local pointer file:
+
+```text
+/path/to/repo/.hermes/sprints/workflow-root
+```
+
+That file contains the path to the active workflow root. It is not the workflow
+root, and it does not hold lane state, engine state, or worktrees.
 
 ### Hermes Plugin Install
 
