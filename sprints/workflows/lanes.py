@@ -263,30 +263,33 @@ def reconcile_runtime_lanes(
     for lane in lanes:
         if str(lane.get("status") or "") != "running":
             continue
+        session = lane_mapping(lane, "runtime_session")
         heartbeat = _runtime_heartbeat(lane)
         timestamp = _runtime_updated_at(lane) or str(lane.get("last_progress_at") or "")
         age = now - _iso_to_epoch(timestamp, default=now)
-        if age < stale_seconds:
+        process_missing = _runtime_process_is_missing(session)
+        if age < stale_seconds and not process_missing:
             continue
+        message = (
+            "actor process is no longer running"
+            if process_missing
+            else (
+                "actor was still marked running from an earlier tick; "
+                f"last update was {int(age)}s ago"
+            )
+        )
         record_actor_runtime_interrupted(
             config=config,
             lane=lane,
             reason="actor_interrupted",
-            message=(
-                "actor was still marked running from an earlier tick; "
-                f"last update was {int(age)}s ago"
-            ),
+            message=message,
             age_seconds=int(age),
         )
-        session = lane_mapping(lane, "runtime_session")
         recovery = _runtime_recovery_record(
             lane=lane,
             session=session,
             age_seconds=int(age),
-            message=(
-                "actor was still marked running from an earlier tick; "
-                f"last update was {int(age)}s ago"
-            ),
+            message=message,
             heartbeat=heartbeat,
         )
         lane["runtime_recovery"] = recovery
@@ -3204,6 +3207,25 @@ def _runtime_heartbeat(lane: dict[str, Any]) -> dict[str, Any]:
             payload["updated_at_epoch"] = stat.st_mtime
     payload["path"] = path_text
     return payload
+
+
+def _runtime_process_is_missing(session: dict[str, Any]) -> bool:
+    value = session.get("process_id") if isinstance(session, dict) else None
+    try:
+        process_id = int(value)
+    except (TypeError, ValueError):
+        return False
+    if process_id <= 0:
+        return False
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    except OSError:
+        return False
+    return False
 
 
 def _runtime_updated_at(lane: dict[str, Any]) -> str:
