@@ -32,6 +32,10 @@ notifications:
 completion:
   remove_labels: [active]
   add_labels: [done]
+  auto-merge:
+    enabled: true
+    method: squash
+    delete-branch: true
 orchestrator:
   actor: orchestrator
 runtimes:
@@ -117,10 +121,16 @@ permission-blocked work.
 When the workflow completes successfully, the runner applies completion cleanup
 from front matter before releasing ownership:
 
+- if `completion.auto-merge.enabled` is true, merge the reviewed pull request
+  first
 - remove label `active`
 - add label `done`
 - release the engine lane claim with reason `completed`
 - do not select the issue again while `done` is present
+
+If auto-merge is enabled and merge is blocked by checks, permissions, conflicts,
+or unresolved review state, raise `operator_attention` instead of completing the
+lane.
 
 Move from `deliver` to `review` only when the implementer returned
 `status: done`, a concrete `pull_request.url`, and non-empty verification

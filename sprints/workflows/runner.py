@@ -38,6 +38,7 @@ from workflows.lanes import (
     complete_lane,
     consume_lane_retry,
     guard_actor_dispatch,
+    lane_actor_runtime_session,
     lane_by_id,
     lane_for_decision,
     lane_mapping,
@@ -315,7 +316,9 @@ def run_stage_actor(
         actor=actor,
         stage_name=stage_name,
         lane_id=lane_id,
-        resume_session_id=_resume_session_id(lane),
+        resume_session_id=_resume_session_id(
+            lane, actor_name=actor_name, stage_name=stage_name
+        ),
     )
     prompt = build_actor_prompt(
         actor_policy=actor_policy,
@@ -493,15 +496,13 @@ def _persist_runtime_state(*, config: WorkflowConfig, state: WorkflowState) -> N
     save_scheduler_snapshot(config=config, state=state)
 
 
-def _resume_session_id(lane: dict[str, Any]) -> str | None:
-    session = (
-        lane.get("runtime_session")
-        if isinstance(lane.get("runtime_session"), dict)
-        else {}
+def _resume_session_id(
+    lane: dict[str, Any], *, actor_name: str, stage_name: str
+) -> str | None:
+    session = lane_actor_runtime_session(
+        lane, actor_name=actor_name, stage_name=stage_name
     )
-    value = (
-        session.get("thread_id") or lane.get("thread_id") or session.get("session_id")
-    )
+    value = session.get("thread_id") or session.get("session_id")
     text = str(value or "").strip()
     return text or None
 
@@ -791,6 +792,7 @@ def _operator_retry(
         inputs={"feedback": reason, "operator_requested": True},
     )
     result = queue_lane_retry(config=config, lane=lane, decision=decision)
+    _refresh_state_status(state, idle_reason="no active lanes")
     _save_tick(
         config=config,
         state=state,
@@ -812,6 +814,7 @@ def _operator_release(config: WorkflowConfig, *, lane_id: str, reason: str) -> i
     if str(lane.get("status") or "") in {"complete", "released"}:
         raise RuntimeError(f"lane {lane_id} is already terminal")
     release_lane(config=config, lane=lane, reason=reason)
+    _refresh_state_status(state, idle_reason="no active lanes")
     _save_tick(
         config=config,
         state=state,
@@ -839,6 +842,7 @@ def _operator_complete(config: WorkflowConfig, *, lane_id: str, reason: str) -> 
             "operator completion is only allowed at a terminal handoff stage"
         )
     complete_lane(config=config, lane=lane, reason=reason)
+    _refresh_state_status(state, idle_reason="no active lanes")
     _save_tick(
         config=config,
         state=state,
@@ -871,15 +875,27 @@ def _tick(config: WorkflowConfig, *, orchestrator_output: str) -> int:
 
     state.status = "running"
     state.idle_reason = None
-    output = _read_output_arg(orchestrator_output) or _run_orchestrator(
-        config=config,
-        policy=policy,
-        state=state,
-    )
-    decisions = parse_orchestrator_decisions(output)
-    results = _apply_decisions(
-        config=config, policy=policy, state=state, decisions=decisions
-    )
+    _persist_runtime_state(config=config, state=state)
+    try:
+        output = _read_output_arg(orchestrator_output) or _run_orchestrator(
+            config=config,
+            policy=policy,
+            state=state,
+        )
+        decisions = parse_orchestrator_decisions(output)
+        results = _apply_decisions(
+            config=config, policy=policy, state=state, decisions=decisions
+        )
+    except Exception as exc:
+        _save_failed_tick(
+            config=config,
+            state=state,
+            intake=intake,
+            reconcile=reconcile,
+            error=exc,
+        )
+        raise
+    _refresh_state_status(state, idle_reason="no active lanes")
     _save_tick(
         config=config,
         state=state,
@@ -892,6 +908,37 @@ def _tick(config: WorkflowConfig, *, orchestrator_output: str) -> int:
         },
     )
     return 0
+
+
+def _refresh_state_status(state: WorkflowState, *, idle_reason: str) -> None:
+    if active_lanes(state):
+        state.status = "running"
+        state.idle_reason = None
+        return
+    state.status = "idle"
+    state.idle_reason = idle_reason
+
+
+def _save_failed_tick(
+    *,
+    config: WorkflowConfig,
+    state: WorkflowState,
+    intake: dict[str, Any],
+    reconcile: dict[str, Any],
+    error: Exception,
+) -> None:
+    _persist_runtime_state(config=config, state=state)
+    append_audit(
+        config.storage.audit_log_path,
+        {
+            "event": f"{config.workflow_name}.tick_failed",
+            "state": state.to_dict(),
+            "intake": intake,
+            "reconcile": reconcile,
+            "error": str(error),
+            "error_type": type(error).__name__,
+        },
+    )
 
 
 def _save_tick(

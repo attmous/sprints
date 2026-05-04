@@ -69,6 +69,7 @@ class CodeHostClient(Protocol):
         self,
         pr_number: int | str | None,
         *,
+        method: str | None = None,
         squash: bool = True,
         delete_branch: bool = True,
     ) -> dict[str, Any]: ...

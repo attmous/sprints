@@ -12,6 +12,7 @@ from workflows.contracts import (
     load_workflow_contract,
     load_workflow_contract_file,
     snapshot_workflow_contract,
+    workflow_named_markdown_filename,
 )
 
 
@@ -38,14 +39,22 @@ def apply_workflow_contract(
     repo_path = _repo_path(config)
     _git("fetch", "origin", cwd=repo_path)
     source_commit = _git("rev-parse", source_ref, cwd=repo_path).strip()
-    text = _git(
-        "show", f"{source_ref}:{DEFAULT_WORKFLOW_MARKDOWN_FILENAME}", cwd=repo_path
+    contract_filename, text = _repo_contract_text(
+        repo_path=repo_path,
+        source_ref=source_ref,
+        workflow_name=config.workflow_name,
     )
-    incoming_path = root / "config" / "incoming-WORKFLOW.md"
+    incoming_path = root / "config" / f"incoming-{contract_filename}"
     incoming_path.parent.mkdir(parents=True, exist_ok=True)
     incoming_path.write_text(text, encoding="utf-8")
     try:
         incoming = load_workflow_contract_file(incoming_path)
+        incoming_workflow = str(incoming.config.get("workflow") or "").strip()
+        if incoming_workflow != config.workflow_name:
+            raise WorkflowContractApplyError(
+                f"incoming contract {contract_filename} declares workflow "
+                f"{incoming_workflow!r}, expected {config.workflow_name!r}"
+            )
         WorkflowConfig.from_raw(raw=incoming.config, workflow_root=root)
     except (WorkflowContractError, OSError, ValueError) as exc:
         raise WorkflowContractApplyError(
@@ -62,6 +71,7 @@ def apply_workflow_contract(
         "workflow_root": str(root),
         "source_ref": source_ref,
         "source_commit": source_commit,
+        "source_contract_path": contract_filename,
         "active_lanes": active_lanes,
         **meta,
     }
@@ -101,6 +111,33 @@ def _active_lanes(state_path: Path) -> list[str]:
         if status not in {"complete", "released"}:
             active.append(str(lane_id))
     return active
+
+
+def _repo_contract_text(
+    *, repo_path: Path, source_ref: str, workflow_name: str
+) -> tuple[str, str]:
+    candidates = [
+        workflow_named_markdown_filename(workflow_name),
+        DEFAULT_WORKFLOW_MARKDOWN_FILENAME,
+    ]
+    failures: list[str] = []
+    for filename in dict.fromkeys(candidates):
+        completed = subprocess.run(
+            ["git", "show", f"{source_ref}:{filename}"],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return filename, completed.stdout
+        failures.append(completed.stderr.strip() or completed.stdout.strip())
+    raise WorkflowContractApplyError(
+        "could not find workflow contract at "
+        + " or ".join(candidates)
+        + f" in {source_ref}: "
+        + "; ".join(item for item in failures if item)
+    )
 
 
 def _git(*args: str, cwd: Path) -> str:

@@ -4,7 +4,8 @@ This module never writes â€” it only reads from:
 
   - ``<workflow_root>/runtime/memory/sprints-events.jsonl``
   - ``<workflow_root>/runtime/memory/workflow-audit.jsonl``
-  - ``<workflow_root>/runtime/state/sprints/sprints.db`` (lanes table)
+  - workflow state JSON declared in ``WORKFLOW.md``
+  - ``<workflow_root>/runtime/state/sprints/sprints.db`` engine projections
   - ``<workflow_root>/runtime/memory/sprints-alert-state.json``
 
 Each function tolerates the source being absent / corrupt and returns an
@@ -15,7 +16,6 @@ one source is unavailable.
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -114,6 +114,12 @@ def _engine_runs(
 def _resolve_issue_runner_storage_path(
     workflow_root: Path, key: str, default: str
 ) -> Path | None:
+    return _resolve_workflow_storage_path(workflow_root, key, default)
+
+
+def _resolve_workflow_storage_path(
+    workflow_root: Path, key: str, default: str
+) -> Path | None:
     try:
         contract = load_workflow_contract(Path(workflow_root))
     except (FileNotFoundError, WorkflowContractError, OSError):
@@ -124,6 +130,67 @@ def _resolve_issue_runner_storage_path(
     if not path.is_absolute():
         path = (Path(workflow_root) / path).resolve()
     return path
+
+
+def _workflow_state_payload(workflow_root: Path, workflow_name: str) -> dict[str, Any]:
+    state_path = _resolve_workflow_storage_path(
+        workflow_root, "state", f".sprints/{workflow_name}-state.json"
+    )
+    return _load_optional_json(state_path) or {}
+
+
+def _state_lanes(workflow_root: Path, workflow_name: str) -> list[dict[str, Any]]:
+    state = _workflow_state_payload(workflow_root, workflow_name)
+    lanes = state.get("lanes") if isinstance(state.get("lanes"), dict) else {}
+    return [lane for lane in lanes.values() if isinstance(lane, dict)]
+
+
+def _active_state_lanes(workflow_root: Path, workflow_name: str) -> list[dict[str, Any]]:
+    return [
+        lane
+        for lane in _state_lanes(workflow_root, workflow_name)
+        if not _lane_is_terminal(lane)
+    ]
+
+
+def _lane_is_terminal(lane: dict[str, Any]) -> bool:
+    return str(lane.get("status") or "").strip() in {
+        "complete",
+        "released",
+        "merged",
+        "closed",
+        "archived",
+    }
+
+
+def _state_lane_entry(lane: dict[str, Any], *, workflow_name: str) -> dict[str, Any]:
+    issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
+    lane_id = str(lane.get("lane_id") or issue.get("id") or "").strip()
+    identifier = str(
+        issue.get("identifier") or issue.get("number") or lane_id or "unknown"
+    )
+    status = str(lane.get("status") or "active").strip() or "active"
+    stage = str(lane.get("stage") or status).strip() or status
+    work_item = work_item_from_issue(
+        {
+            "id": issue.get("id") or lane_id or identifier,
+            "identifier": identifier,
+            "title": issue.get("title") or "",
+            "url": issue.get("url"),
+            "state": status,
+        },
+        source=workflow_name,
+    ).to_dict()
+    return {
+        "lane_id": lane_id or identifier,
+        "state": stage,
+        "workflow_state": stage,
+        "issue_number": issue.get("number"),
+        "issue_identifier": identifier,
+        "lane_status": status,
+        "kind": status,
+        "work_item": work_item,
+    }
 
 
 def recent_sprints_events(workflow_root: Path, limit: int = 50) -> list[dict[str, Any]]:
@@ -234,66 +301,10 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
             if isinstance(row, dict)
         ]
 
-    paths = runtime_paths(Path(workflow_root))
-    db_path = paths["db_path"]
-    if not db_path.exists():
-        return []
-    try:
-        conn = sqlite3.connect(db_path)
-    except sqlite3.OperationalError:
-        return []
-    try:
-        # Real columns per lane schema:
-        #   lane_id (PK), issue_number, workflow_state, lane_status, ...
-        # An earlier draft queried generic display aliases instead of the
-        # real lanes schema, which
-        # raised sqlite3.OperationalError against any real db, silently
-        # returning [] and making /sprints watch falsely report
-        # "no active lanes" even when lanes existed.
-        cur = conn.execute(
-            "SELECT lane_id, workflow_state, issue_number, lane_status "
-            "FROM lanes "
-            "WHERE lane_status NOT IN ('merged', 'closed', 'archived')"
-        )
-        out = []
-        for row in cur.fetchall():
-            lane = {
-                "lane_id": row[0],
-                # `state` is the key the renderer (observe/watch.py) consumes; we
-                # source it from workflow_state. Both names are exposed for
-                # consumers that care.
-                "state": row[1],
-                "workflow_state": row[1],
-                "issue_number": row[2],
-                "issue_identifier": f"#{row[2]}",
-                "lane_status": row[3],
-            }
-            lane["work_item"] = work_item_from_issue(
-                {
-                    "id": str(
-                        lane.get("issue_id")
-                        or lane.get("issue_identifier")
-                        or lane.get("id")
-                        or ""
-                    ),
-                    "identifier": str(
-                        lane.get("issue_identifier")
-                        or lane.get("issue_number")
-                        or lane.get("id")
-                        or ""
-                    ),
-                    "title": str(lane.get("title") or ""),
-                    "url": lane.get("url"),
-                    "state": lane.get("state"),
-                },
-                source="change-delivery",
-            ).to_dict()
-            out.append(lane)
-    except sqlite3.OperationalError:
-        out = []
-    finally:
-        conn.close()
-    return out
+    return [
+        _state_lane_entry(lane, workflow_name="change-delivery")
+        for lane in _active_state_lanes(workflow_root, "change-delivery")
+    ]
 
 
 def alert_state(workflow_root: Path) -> dict[str, Any]:
@@ -340,18 +351,23 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         totals = scheduler_payload.get("runtime_totals") or {}
         runtime_sessions = _runtime_session_entries(scheduler_payload)
         latest_runs = _engine_runs(workflow_root, "change-delivery")
+        active = _active_state_lanes(workflow_root, "change-delivery")
+        running_count = len(
+            [lane for lane in active if str(lane.get("status") or "") == "running"]
+        )
+        retry_count = len(
+            [
+                lane
+                for lane in active
+                if str(lane.get("status") or "") == "retry_queued"
+            ]
+        )
         return {
             "workflow": "change-delivery",
             "health": None,
             "updated_at": scheduler_payload.get("updated_at"),
-            "running_count": len(
-                [
-                    entry
-                    for entry in runtime_sessions
-                    if entry.get("status") == "running"
-                ]
-            ),
-            "retry_count": 0,
+            "running_count": running_count,
+            "retry_count": retry_count,
             "canceling_count": len(
                 [
                     entry

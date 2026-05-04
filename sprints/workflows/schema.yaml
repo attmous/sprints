@@ -114,6 +114,17 @@ properties:
         type: array
         items:
           type: string
+      auto-merge:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          method:
+            type: string
+            enum: [squash, merge, rebase]
+          delete-branch:
+            type: boolean
+        additionalProperties: true
     additionalProperties: true
   orchestrator:
     type: object

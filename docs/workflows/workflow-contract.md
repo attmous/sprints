@@ -55,6 +55,10 @@ notifications:
 completion:
   remove_labels: [active]
   add_labels: [done]
+  auto-merge:
+    enabled: true
+    method: squash
+    delete-branch: true
 
 orchestrator:
   actor: orchestrator
@@ -262,17 +266,26 @@ not start duplicate actor work.
 
 ### `completion`
 
-Completion cleanup is mechanical. Before a lane is marked complete, the runner
-applies configured label changes and only then releases the lane lock:
+Completion is mechanical. Before a lane is marked complete, the runner can
+optionally merge the reviewed pull request, applies configured label changes,
+and only then releases the lane lock:
 
 ```yaml
 completion:
   remove_labels: [active]
   add_labels: [done]
+  auto-merge:
+    enabled: true
+    method: squash
+    delete-branch: true
 ```
 
-If cleanup fails, the lane moves to `operator_attention` instead of being
-released silently.
+The bundled `change-delivery` template enables auto-merge. Set
+`auto-merge.enabled: false` when the workflow should stop after review approval.
+When enabled, the runner merges after review approval and before tracker label
+cleanup. Supported methods are `squash`, `merge`, and `rebase`. If merge or
+cleanup fails, the lane moves to `operator_attention` instead of being released
+silently.
 
 ### `gates`
 

@@ -442,8 +442,10 @@ implementer gets the retry handoff, the runner can post the findings as a
 formal pull request change request and to the source issue. Notification records
 are fingerprinted so repeated ticks do not repost the same review side effect.
 
-On successful completion, configured cleanup removes `active`, adds `done`, and
-releases the lane lease.
+On successful completion, the bundled change-delivery template runs runner-owned
+auto-merge first, then configured cleanup removes `active`, adds `done`, and
+releases the lane lease. If merge, checks, permissions, or cleanup block
+completion, the lane moves to `operator_attention`.
 
 ## Orchestrator Decisions
 

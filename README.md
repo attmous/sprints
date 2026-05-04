@@ -88,14 +88,15 @@ tracker criteria, completion cleanup, and output contracts.
 The default workflow template is `change-delivery`.
 
 ```text
-active issue -> deliver -> review -> done
+active issue -> deliver -> review -> merge -> done
                  |          |
                  |          `-> reviewer reviews the pull request
                  `-> implementer pulls, edits, debugs, commits, pushes, and opens the pull request
 ```
 
 By default, only open issues with label `active` are eligible. Completed issues
-have `active` removed and `done` added, so they are not selected again.
+are auto-merged, have `active` removed and `done` added, so they are not
+selected again.
 
 Default concurrency is one active lane:
 

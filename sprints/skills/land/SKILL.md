@@ -6,7 +6,9 @@ description: Support an operator or reviewer while landing a reviewed pull reque
 # Land
 
 Use this after a PR has passed review and the operator wants help getting it
-merged. This is not part of the default implementer loop.
+merged. This is not part of the default implementer loop. When workflow
+auto-merge is enabled, the runner owns the final merge after reviewer approval;
+use this skill for manual/operator landing work.
 
 ## Rules
 

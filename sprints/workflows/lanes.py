@@ -63,16 +63,7 @@ def build_lane_status(
         for lane in lanes.values()
         if isinstance(lane, dict) and not lane_is_terminal(lane)
     ]
-    runtime_sessions = [
-        {
-            **dict(lane.get("runtime_session") or {}),
-            "lane_id": lane.get("lane_id"),
-            "stage": lane.get("stage"),
-            "actor": lane.get("actor"),
-        }
-        for lane in lanes.values()
-        if isinstance(lane, dict) and isinstance(lane.get("runtime_session"), dict)
-    ]
+    runtime_sessions = _lane_runtime_session_summaries(lanes.values())
     scheduler = _engine_store(config).read_scheduler() or {}
     runtime_totals = (
         scheduler.get("runtime_totals")
@@ -760,6 +751,17 @@ def complete_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) 
             artifacts=_contract_artifacts(lane),
         )
         return
+    auto_merge = _auto_merge_completed_pull_request(config=config, lane=lane)
+    if auto_merge.get("status") == "error":
+        set_lane_operator_attention(
+            config=config,
+            lane=lane,
+            reason="auto_merge_failed",
+            message=str(auto_merge.get("error") or "auto-merge failed"),
+            artifacts={"auto_merge": auto_merge, "pull_request": lane.get("pull_request")},
+        )
+        return
+    lane["completion_auto_merge"] = auto_merge
     cleanup = _cleanup_completed_lane(config=config, lane=lane)
     if cleanup.get("status") == "error":
         set_lane_operator_attention(
@@ -775,6 +777,80 @@ def complete_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) 
     _clear_engine_retry(config=config, lane=lane)
     set_lane_status(config=config, lane=lane, status="complete", reason=reason)
     _release_lane_lease(config=config, lane=lane, reason=reason)
+
+
+def _auto_merge_completed_pull_request(
+    *, config: WorkflowConfig, lane: dict[str, Any]
+) -> dict[str, Any]:
+    cfg = _completion_auto_merge_config(config)
+    if not cfg["enabled"]:
+        return {"status": "skipped", "reason": "auto-merge disabled"}
+    existing = lane.get("completion_auto_merge")
+    if isinstance(existing, dict) and existing.get("status") == "ok":
+        return existing
+    method = str(cfg["method"] or "").strip().lower()
+    if method not in {"squash", "merge", "rebase"}:
+        return {
+            "status": "error",
+            "error": f"unsupported auto-merge method {method!r}",
+        }
+    pr_number = _pull_request_number(lane)
+    if not pr_number:
+        return {"status": "error", "error": "pull request number missing"}
+    if _pull_request_is_merged(lane):
+        return {
+            "status": "ok",
+            "method": method,
+            "delete_branch": cfg["delete_branch"],
+            "pull_request": {"number": pr_number, "already_merged": True},
+        }
+    code_host_cfg = _code_host_config(config)
+    if not code_host_cfg:
+        return {
+            "status": "error",
+            "error": "auto-merge requires code-host config",
+        }
+    try:
+        client = build_code_host_client(
+            workflow_root=config.workflow_root,
+            code_host_cfg=code_host_cfg,
+            repo_path=_repository_path(config),
+        )
+        result = client.merge_pull_request(
+            pr_number,
+            method=method,
+            squash=method == "squash",
+            delete_branch=cfg["delete_branch"],
+        )
+    except Exception as exc:
+        result = {"ok": False, "error": str(exc)}
+    payload = {
+        "status": "ok" if result.get("ok") is not False else "error",
+        "method": method,
+        "delete_branch": cfg["delete_branch"],
+        "pull_request": result,
+    }
+    if payload["status"] == "error":
+        payload["error"] = str(result.get("error") or "pull request merge failed")
+        _append_engine_event(
+            config=config,
+            lane=lane,
+            event_type=f"{config.workflow_name}.lane.auto_merge_failed",
+            payload=payload,
+            severity="error",
+        )
+        return payload
+    pull_request = lane_mapping(lane, "pull_request")
+    pull_request["state"] = "merged"
+    pull_request["merged"] = True
+    pull_request["merged_at"] = _now_iso()
+    _append_engine_event(
+        config=config,
+        lane=lane,
+        event_type=f"{config.workflow_name}.lane.auto_merged",
+        payload=payload,
+    )
+    return payload
 
 
 def release_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -> None:
@@ -847,6 +923,7 @@ def _new_lane(
         "thread_id": None,
         "turn_id": None,
         "runtime_session": {},
+        "runtime_sessions": {},
         "branch": issue.get("branch_name"),
         "pull_request": None,
         "attempt": 1,
@@ -911,7 +988,9 @@ def record_actor_runtime_start(
     runtime_meta: dict[str, Any],
 ) -> None:
     started_at = _now_iso()
-    session = lane_mapping(lane, "runtime_session")
+    session_key, session = _mutable_actor_runtime_session(
+        lane=lane, actor_name=actor_name, stage_name=stage_name
+    )
     run = _start_engine_actor_run(
         config=config,
         lane=lane,
@@ -924,6 +1003,7 @@ def record_actor_runtime_start(
         {
             **_runtime_meta_payload(runtime_meta),
             "run_id": run["run_id"],
+            "session_key": session_key,
             "actor": actor_name,
             "stage": stage_name,
             "attempt": int(lane.get("attempt") or 0),
@@ -933,6 +1013,7 @@ def record_actor_runtime_start(
         }
     )
     _apply_runtime_session_ids(lane=lane, session=session)
+    _set_latest_runtime_session(lane=lane, session_key=session_key, session=session)
     _upsert_engine_runtime_session(config=config, lane=lane)
     _append_engine_event(
         config=config,
@@ -948,11 +1029,12 @@ def record_actor_runtime_progress(
     lane: dict[str, Any],
     runtime_meta: dict[str, Any],
 ) -> None:
-    session = lane_mapping(lane, "runtime_session")
+    session_key, session = _current_runtime_session(lane)
     session.update(_runtime_meta_payload(runtime_meta))
     session["status"] = "running"
     session["updated_at"] = _now_iso()
     _apply_runtime_session_ids(lane=lane, session=session)
+    _set_latest_runtime_session(lane=lane, session_key=session_key, session=session)
     _upsert_engine_runtime_session(config=config, lane=lane)
     lane["last_progress_at"] = _now_iso()
     _append_engine_event(
@@ -971,11 +1053,12 @@ def record_actor_runtime_result(
     status: str,
 ) -> None:
     updated_at = _now_iso()
-    session = lane_mapping(lane, "runtime_session")
+    session_key, session = _current_runtime_session(lane)
     session.update(_runtime_meta_payload(runtime_meta))
     session["status"] = _normalize_runtime_session_status(status)
     session["updated_at"] = updated_at
     _apply_runtime_session_ids(lane=lane, session=session)
+    _set_latest_runtime_session(lane=lane, session_key=session_key, session=session)
     _upsert_engine_runtime_session(config=config, lane=lane)
     _finish_engine_actor_run(
         config=config,
@@ -1003,7 +1086,7 @@ def record_actor_runtime_interrupted(
     age_seconds: int,
 ) -> None:
     interrupted_at = _now_iso()
-    session = lane_mapping(lane, "runtime_session")
+    session_key, session = _current_runtime_session(lane)
     session.update(
         {
             "status": "interrupted",
@@ -1015,6 +1098,7 @@ def record_actor_runtime_interrupted(
         }
     )
     _apply_runtime_session_ids(lane=lane, session=session)
+    _set_latest_runtime_session(lane=lane, session_key=session_key, session=session)
     _upsert_engine_runtime_session(config=config, lane=lane)
     _finish_engine_actor_run(
         config=config,
@@ -1235,12 +1319,21 @@ def _pull_request_url(lane: dict[str, Any]) -> str:
     return ""
 
 
+def _pull_request_is_merged(lane: dict[str, Any]) -> bool:
+    pull_request = lane.get("pull_request")
+    if not isinstance(pull_request, dict):
+        return False
+    state = str(pull_request.get("state") or "").strip().lower()
+    return state == "merged" or bool(pull_request.get("merged"))
+
+
 def _contract_artifacts(lane: dict[str, Any]) -> dict[str, Any]:
     return {
         "stage": lane.get("stage"),
         "actor_outputs": lane.get("actor_outputs"),
         "pull_request": lane.get("pull_request"),
         "branch": lane.get("branch"),
+        "completion_auto_merge": lane.get("completion_auto_merge"),
     }
 
 
@@ -1255,6 +1348,7 @@ def lane_recovery_artifacts(
     artifacts = {
         "run_id": _lane_run_id(lane),
         "runtime_session": session or None,
+        "runtime_sessions": lane.get("runtime_sessions"),
         "thread_id": lane.get("thread_id") or session.get("thread_id"),
         "turn_id": lane.get("turn_id") or session.get("turn_id"),
         "branch": lane.get("branch"),
@@ -1263,6 +1357,62 @@ def lane_recovery_artifacts(
     }
     artifacts.update(dict(extra or {}))
     return {key: value for key, value in artifacts.items() if value not in (None, "")}
+
+
+def runtime_session_key(*, actor_name: str, stage_name: str) -> str:
+    actor = str(actor_name or "").strip()
+    stage = str(stage_name or "").strip()
+    return f"{stage}:{actor}" if actor and stage else actor or stage
+
+
+def lane_actor_runtime_session(
+    lane: dict[str, Any], *, actor_name: str, stage_name: str
+) -> dict[str, Any]:
+    key = runtime_session_key(actor_name=actor_name, stage_name=stage_name)
+    sessions = lane.get("runtime_sessions")
+    if isinstance(sessions, dict):
+        session = sessions.get(key)
+        if isinstance(session, dict):
+            return session
+    latest = lane.get("runtime_session")
+    if isinstance(latest, dict) and _runtime_session_matches(
+        latest, actor_name=actor_name, stage_name=stage_name
+    ):
+        return latest
+    return {}
+
+
+def _lane_runtime_session_summaries(lanes: Any) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        sessions = lane.get("runtime_sessions")
+        if isinstance(sessions, dict) and sessions:
+            for key, session in sessions.items():
+                if not isinstance(session, dict):
+                    continue
+                summaries.append(
+                    {
+                        **dict(session),
+                        "session_key": session.get("session_key") or key,
+                        "lane_id": lane.get("lane_id"),
+                        "lane_stage": lane.get("stage"),
+                        "lane_actor": lane.get("actor"),
+                    }
+                )
+            continue
+        latest = lane.get("runtime_session")
+        if isinstance(latest, dict):
+            summaries.append(
+                {
+                    **dict(latest),
+                    "lane_id": lane.get("lane_id"),
+                    "lane_stage": lane.get("stage"),
+                    "lane_actor": lane.get("actor"),
+                }
+            )
+    return summaries
 
 
 def lane_mapping(lane: dict[str, Any], key: str) -> dict[str, Any]:
@@ -1569,6 +1719,27 @@ def _completion_labels(config: WorkflowConfig) -> dict[str, list[str]]:
         "remove": _configured_texts(cfg, "remove_labels", "remove-labels")
         or ["active"],
         "add": _configured_texts(cfg, "add_labels", "add-labels") or ["done"],
+    }
+
+
+def _completion_auto_merge_config(config: WorkflowConfig) -> dict[str, Any]:
+    raw = config.raw.get("completion")
+    completion = raw if isinstance(raw, dict) else {}
+    raw_auto_merge = (
+        completion.get("auto-merge")
+        or completion.get("auto_merge")
+        or completion.get("automerge")
+    )
+    cfg = raw_auto_merge if isinstance(raw_auto_merge, dict) else {}
+    method = str(
+        cfg.get("method") or cfg.get("merge-method") or cfg.get("merge_method") or "squash"
+    ).strip().lower()
+    return {
+        "enabled": _configured_bool(cfg, "enabled", default=False),
+        "method": method or "squash",
+        "delete_branch": _configured_bool(
+            cfg, "delete-branch", "delete_branch", default=True
+        ),
     }
 
 
@@ -2113,13 +2284,14 @@ def _finish_engine_actor_run(
         return
     final_status = _normalize_runtime_session_status(status) or "failed"
     completed_count = 1 if final_status == "completed" else 0
+    run_error = None if final_status == "completed" else error
     try:
         _engine_store(config).finish_run(
             run_id,
             status=final_status,
             selected_count=1,
             completed_count=completed_count,
-            error=error,
+            error=run_error,
             metadata={
                 **_runtime_run_metadata(lane=lane, runtime_meta=metadata),
                 "final_status": final_status,
@@ -2264,6 +2436,8 @@ def _normalize_pull_request(value: dict[str, Any]) -> dict[str, Any]:
             "is_draft": value.get("is_draft")
             if "is_draft" in value
             else value.get("isDraft"),
+            "merged": value.get("merged") if "merged" in value else value.get("isMerged"),
+            "merged_at": value.get("merged_at") or value.get("mergedAt"),
             "updated_at": value.get("updated_at") or value.get("updatedAt"),
         }.items()
         if item not in (None, "")
@@ -2276,6 +2450,66 @@ def _runtime_meta_payload(runtime_meta: dict[str, Any]) -> dict[str, Any]:
         for key, value in dict(runtime_meta or {}).items()
         if value not in (None, "", [], {})
     }
+
+
+def _mutable_actor_runtime_session(
+    *, lane: dict[str, Any], actor_name: str, stage_name: str
+) -> tuple[str, dict[str, Any]]:
+    key = runtime_session_key(actor_name=actor_name, stage_name=stage_name)
+    sessions = lane_mapping(lane, "runtime_sessions")
+    session = sessions.get(key)
+    if not isinstance(session, dict):
+        session = {}
+        sessions[key] = session
+    session["session_key"] = key
+    return key, session
+
+
+def _current_runtime_session(lane: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    latest = (
+        lane.get("runtime_session")
+        if isinstance(lane.get("runtime_session"), dict)
+        else {}
+    )
+    key = str(latest.get("session_key") or "").strip()
+    sessions = lane_mapping(lane, "runtime_sessions")
+    if key and isinstance(sessions.get(key), dict):
+        return key, sessions[key]
+    if latest:
+        key = runtime_session_key(
+            actor_name=str(latest.get("actor") or lane.get("actor") or ""),
+            stage_name=str(latest.get("stage") or lane.get("stage") or ""),
+        )
+        if key:
+            latest["session_key"] = key
+            sessions[key] = latest
+            return key, latest
+    for candidate_key, candidate in sessions.items():
+        if isinstance(candidate, dict) and _runtime_session_is_running(candidate):
+            candidate["session_key"] = str(candidate.get("session_key") or candidate_key)
+            return str(candidate_key), candidate
+    key = "latest"
+    session = lane_mapping(lane, "runtime_session")
+    session["session_key"] = key
+    sessions[key] = session
+    return key, session
+
+
+def _set_latest_runtime_session(
+    *, lane: dict[str, Any], session_key: str, session: dict[str, Any]
+) -> None:
+    session["session_key"] = session_key
+    lane_mapping(lane, "runtime_sessions")[session_key] = session
+    lane["runtime_session"] = session
+
+
+def _runtime_session_matches(
+    session: dict[str, Any], *, actor_name: str, stage_name: str
+) -> bool:
+    return (
+        str(session.get("actor") or "").strip() == str(actor_name or "").strip()
+        and str(session.get("stage") or "").strip() == str(stage_name or "").strip()
+    )
 
 
 def _apply_runtime_session_ids(

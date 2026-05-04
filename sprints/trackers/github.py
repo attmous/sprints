@@ -661,23 +661,28 @@ class GithubCodeHostClient:
         self,
         pr_number: int | str | None,
         *,
+        method: str | None = None,
         squash: bool = True,
         delete_branch: bool = True,
     ) -> dict[str, Any]:
+        method = str(method or ("squash" if squash else "merge")).strip().lower()
+        if method not in {"squash", "merge", "rebase"}:
+            raise CodeHostConfigError(f"unsupported GitHub merge method: {method}")
         command = [
             "gh",
             "pr",
             "merge",
             _coerce_number(pr_number, field_name="pr_number"),
         ]
-        if squash:
-            command.append("--squash")
+        command.append(f"--{method}")
         if delete_branch:
             command.append("--delete-branch")
         completed = self._run(self._with_repo(command), cwd=self._repo_path)
         return {
             "ok": True,
             "pr_number": pr_number,
+            "method": method,
+            "delete_branch": delete_branch,
             "stdout": (getattr(completed, "stdout", "") or "").strip(),
         }
 
