@@ -59,9 +59,11 @@ to the actor run ID.
 code uses it to refuse duplicate actor work when a prior actor run is still
 marked `running`.
 
-`engine_retry_queue` is owned through `EngineStore.schedule_retry()`. Workflows
-decide that a lane should retry; the engine computes the next attempt, checks
-the retry limit, computes backoff, and persists the due retry projection.
+`engine_retry_queue` is owned through `EngineStore.schedule_retry()` and
+`EngineStore.clear_retry()`. Workflows decide that a lane should retry; the
+engine computes the next attempt, checks the retry limit, computes backoff, and
+persists the due retry projection. Workflow lane JSON may keep `pending_retry`
+for actor handoff, but scheduler snapshots do not rewrite retry rows.
 
 ## Deferred
 
@@ -77,5 +79,5 @@ Later engine ownership waves:
 - make actor dispatch/run/session updates transactional around engine run
   records
 - reduce or remove scheduler snapshot rebuilds once direct engine tables cover
-  status, retries, running work, and sessions
+  status, running work, and sessions
 - keep workflow policy, stages, gates, and actor contracts outside the engine

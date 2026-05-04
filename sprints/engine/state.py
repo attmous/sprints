@@ -198,7 +198,7 @@ def save_engine_scheduler_state_to_connection(
     conn: sqlite3.Connection,
     *,
     workflow: str,
-    retry_entries: dict[str, dict[str, Any]],
+    retry_entries: dict[str, dict[str, Any]] | None,
     running_entries: dict[str, dict[str, Any]],
     runtime_totals: dict[str, Any] | None,
     runtime_sessions: dict[str, dict[str, Any]],
@@ -207,7 +207,6 @@ def save_engine_scheduler_state_to_connection(
 ) -> None:
     init_engine_state(conn)
     conn.execute("DELETE FROM engine_running_work WHERE workflow=?", (workflow,))
-    conn.execute("DELETE FROM engine_retry_queue WHERE workflow=?", (workflow,))
     conn.execute("DELETE FROM engine_runtime_sessions WHERE workflow=?", (workflow,))
 
     for work_id, entry in sorted(
@@ -255,15 +254,19 @@ def save_engine_scheduler_state_to_connection(
             ),
         )
 
-    for work_id, entry in sorted(retry_entries.items(), key=lambda item: str(item[0])):
-        upsert_engine_retry_to_connection(
-            conn,
-            workflow=workflow,
-            work_id=work_id,
-            entry=entry,
-            now_iso=now_iso,
-            now_epoch=now_epoch,
-        )
+    if retry_entries is not None:
+        conn.execute("DELETE FROM engine_retry_queue WHERE workflow=?", (workflow,))
+        for work_id, entry in sorted(
+            retry_entries.items(), key=lambda item: str(item[0])
+        ):
+            upsert_engine_retry_to_connection(
+                conn,
+                workflow=workflow,
+                work_id=work_id,
+                entry=entry,
+                now_iso=now_iso,
+                now_epoch=now_epoch,
+            )
 
     for work_id, entry in sorted(
         runtime_sessions.items(), key=lambda item: str(item[0])
@@ -418,6 +421,8 @@ def upsert_engine_retry_to_connection(
         "current_attempt": current_attempt,
         "delay_type": delay_type,
         "run_id": entry.get("run_id"),
+        "updated_at": now_iso,
+        "updated_at_epoch": now_epoch,
     }
 
 
@@ -639,7 +644,7 @@ def save_engine_scheduler_state(
     db_path: Path,
     *,
     workflow: str,
-    retry_entries: dict[str, dict[str, Any]],
+    retry_entries: dict[str, dict[str, Any]] | None,
     running_entries: dict[str, dict[str, Any]],
     runtime_totals: dict[str, Any] | None,
     runtime_sessions: dict[str, dict[str, Any]],

@@ -203,6 +203,8 @@ def reconcile_runtime_lanes(
         return {"status": "skipped", "reason": "running stale detection disabled"}
     now = time.time()
     interrupted: list[str] = []
+    recovery_queued: list[str] = []
+    operator_attention: list[str] = []
     for lane in lanes:
         if str(lane.get("status") or "") != "running":
             continue
@@ -221,23 +223,34 @@ def reconcile_runtime_lanes(
             age_seconds=int(age),
         )
         session = lane_mapping(lane, "runtime_session")
-        set_lane_operator_attention(
-            config=config,
+        recovery = _runtime_recovery_record(
             lane=lane,
-            reason="actor_interrupted",
+            session=session,
+            age_seconds=int(age),
             message=(
                 "actor was still marked running from an earlier tick; "
                 f"last update was {int(age)}s ago"
             ),
-            artifacts={
-                "runtime_session": session,
-                "branch": lane.get("branch"),
-                "pull_request": lane.get("pull_request"),
-            },
         )
+        lane["runtime_recovery"] = recovery
+        queued = _queue_interrupted_actor_recovery(
+            config=config,
+            lane=lane,
+            recovery=recovery,
+            enabled=cfg["auto_retry_interrupted"],
+        )
+        if queued.get("status") == "queued":
+            recovery_queued.append(str(lane.get("lane_id") or ""))
+        else:
+            operator_attention.append(str(lane.get("lane_id") or ""))
         interrupted.append(str(lane.get("lane_id") or ""))
     if interrupted:
-        return {"status": "interrupted", "lanes": interrupted}
+        return {
+            "status": "interrupted",
+            "lanes": interrupted,
+            "recovery_queued": recovery_queued,
+            "operator_attention": operator_attention,
+        }
     return {"status": "ok", "interrupted": []}
 
 
@@ -635,17 +648,12 @@ def queue_lane_retry(
         run_id=_lane_run_id(lane),
         now_iso=_now_iso(),
     )
-    next_attempt = int(schedule.get("next_attempt") or current_attempt)
     record = _retry_record(
-        config=config,
-        lane=lane,
         decision=decision,
-        current_attempt=current_attempt,
-        next_attempt=next_attempt,
+        schedule=schedule,
     )
     retry_history = lane_list(lane, "retry_history")
     if schedule.get("status") == "limit_exceeded":
-        record["status"] = "limit_exceeded"
         retry_history.append(record)
         set_lane_operator_attention(
             config=config,
@@ -669,31 +677,12 @@ def queue_lane_retry(
             "reason": "retry_limit_exceeded",
         }
 
-    delay_seconds = int(schedule.get("delay_seconds") or 0)
-    due_at_epoch = float(schedule.get("due_at_epoch") or time.time())
-    record.update(
-        {
-            "status": "queued",
-            "delay_seconds": delay_seconds,
-            "due_at": _epoch_to_iso(due_at_epoch),
-            "due_at_epoch": due_at_epoch,
-        }
-    )
+    pending = _pending_retry_projection(decision=decision, schedule=schedule)
+    next_attempt = int(pending.get("attempt") or current_attempt)
     lane["attempt"] = next_attempt
     lane["stage"] = decision.stage
     lane["operator_attention"] = None
-    lane["pending_retry"] = {
-        "stage": decision.stage,
-        "target": decision.target,
-        "reason": decision.reason,
-        "inputs": decision.inputs,
-        "attempt": next_attempt,
-        "queued_at": record["queued_at"],
-        "delay_seconds": delay_seconds,
-        "due_at": record["due_at"],
-        "due_at_epoch": due_at_epoch,
-        "max_attempts": schedule["max_attempts"],
-    }
+    lane["pending_retry"] = pending
     retry_history.append(record)
     set_lane_status(
         config=config,
@@ -707,8 +696,87 @@ def queue_lane_retry(
         "decision": "retry",
         "status": "queued",
         "attempt": next_attempt,
-        "due_at": record["due_at"],
+        "due_at": pending["due_at"],
+        "engine_retry": pending.get("engine_retry"),
     }
+
+
+def _runtime_recovery_record(
+    *, lane: dict[str, Any], session: dict[str, Any], age_seconds: int, message: str
+) -> dict[str, Any]:
+    actor_name = str(session.get("actor") or lane.get("actor") or "").strip()
+    stage_name = str(session.get("stage") or lane.get("stage") or "").strip()
+    resume_session_id = str(
+        session.get("thread_id") or session.get("session_id") or ""
+    ).strip()
+    return {
+        "status": "pending",
+        "reason": "actor_interrupted",
+        "message": message,
+        "lane_id": lane.get("lane_id"),
+        "stage": stage_name,
+        "actor": actor_name,
+        "resume_session_id": resume_session_id or None,
+        "runtime_session": dict(session),
+        "age_seconds": age_seconds,
+        "branch": lane.get("branch"),
+        "pull_request": lane.get("pull_request"),
+        "created_at": _now_iso(),
+    }
+
+
+def _queue_interrupted_actor_recovery(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    recovery: dict[str, Any],
+    enabled: bool,
+) -> dict[str, Any]:
+    actor_name = str(recovery.get("actor") or "").strip()
+    stage_name = str(recovery.get("stage") or "").strip()
+    message = str(recovery.get("message") or "actor was interrupted")
+    if not enabled:
+        set_lane_operator_attention(
+            config=config,
+            lane=lane,
+            reason="actor_interrupted",
+            message=message,
+            artifacts={"recovery": recovery},
+        )
+        return {"status": "operator_attention", "reason": "auto recovery disabled"}
+    if not actor_name or not stage_name:
+        set_lane_operator_attention(
+            config=config,
+            lane=lane,
+            reason="actor_interrupted",
+            message="cannot recover interrupted actor without actor and stage",
+            artifacts={"recovery": recovery},
+        )
+        return {"status": "operator_attention", "reason": "missing actor or stage"}
+    decision = OrchestratorDecision(
+        decision="retry",
+        stage=stage_name,
+        lane_id=str(lane.get("lane_id") or ""),
+        target=actor_name,
+        reason="resume interrupted actor session",
+        inputs={
+            "feedback": message,
+            "recovery": recovery,
+            "resume_session_id": recovery.get("resume_session_id"),
+        },
+    )
+    queued = queue_lane_retry(config=config, lane=lane, decision=decision)
+    if queued.get("status") == "queued":
+        recovery["status"] = "queued"
+        recovery["retry"] = queued
+        _append_engine_event(
+            config=config,
+            lane=lane,
+            event_type=f"{config.workflow_name}.lane.runtime_recovery_queued",
+            payload={"recovery": recovery},
+            severity="warning",
+        )
+    return queued
 
 
 def consume_lane_retry(*, config: WorkflowConfig, lane: dict[str, Any]) -> None:
@@ -816,6 +884,24 @@ def _auto_merge_completed_pull_request(
             code_host_cfg=code_host_cfg,
             repo_path=_repository_path(config),
         )
+        readiness = _pull_request_merge_readiness(client=client, pr_number=pr_number)
+        if readiness.get("already_merged"):
+            pull_request = lane_mapping(lane, "pull_request")
+            pull_request["state"] = "merged"
+            pull_request["merged"] = True
+            return {
+                "status": "ok",
+                "method": method,
+                "delete_branch": cfg["delete_branch"],
+                "readiness": readiness,
+                "pull_request": {"number": pr_number, "already_merged": True},
+            }
+        if not readiness.get("ready"):
+            return {
+                "status": "error",
+                "error": _merge_readiness_error(readiness),
+                "readiness": readiness,
+            }
         result = client.merge_pull_request(
             pr_number,
             method=method,
@@ -851,6 +937,41 @@ def _auto_merge_completed_pull_request(
         payload=payload,
     )
     return payload
+
+
+def _pull_request_merge_readiness(client: Any, pr_number: str) -> dict[str, Any]:
+    checker = getattr(client, "pull_request_merge_status", None)
+    if not callable(checker):
+        return {
+            "ready": True,
+            "status": "skipped",
+            "reason": "code host does not expose merge readiness",
+            "blockers": [],
+        }
+    readiness = checker(pr_number)
+    if not isinstance(readiness, dict):
+        return {
+            "ready": False,
+            "status": "blocked",
+            "blockers": [
+                {
+                    "kind": "invalid_merge_readiness",
+                    "message": "code host returned invalid merge readiness payload",
+                }
+            ],
+        }
+    return readiness
+
+
+def _merge_readiness_error(readiness: dict[str, Any]) -> str:
+    blockers = readiness.get("blockers") if isinstance(readiness.get("blockers"), list) else []
+    if not blockers:
+        return "pull request is not ready to merge"
+    first = blockers[0] if isinstance(blockers[0], dict) else {}
+    message = str(first.get("message") or first.get("kind") or "").strip()
+    if len(blockers) == 1:
+        return message or "pull request is not ready to merge"
+    return f"{message or 'pull request is not ready to merge'} (+{len(blockers) - 1} more)"
 
 
 def release_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -> None:
@@ -1143,7 +1264,6 @@ def record_action_result(
 
 def save_scheduler_snapshot(*, config: WorkflowConfig, state: Any) -> None:
     running_entries: dict[str, dict[str, Any]] = {}
-    retry_entries: dict[str, dict[str, Any]] = {}
     runtime_sessions: dict[str, dict[str, Any]] = {}
     runtime_totals = {
         "input_tokens": 0,
@@ -1163,8 +1283,6 @@ def save_scheduler_snapshot(*, config: WorkflowConfig, state: Any) -> None:
         status = str(lane.get("status") or "")
         if status == "running":
             running_entries[lane_id] = entry
-        elif status == "retry_queued":
-            retry_entries[lane_id] = _retry_scheduler_entry(lane)
         session = lane.get("runtime_session")
         if isinstance(session, dict) and _runtime_session_has_identity(session):
             runtime_sessions[lane_id] = entry
@@ -1182,7 +1300,7 @@ def save_scheduler_snapshot(*, config: WorkflowConfig, state: Any) -> None:
         runtime_totals["rate_limits"] = last_rate_limits
 
     _engine_store(config).save_scheduler(
-        retry_entries=retry_entries,
+        retry_entries=None,
         running_entries=running_entries,
         runtime_totals=runtime_totals,
         runtime_sessions=runtime_sessions,
@@ -1354,6 +1472,7 @@ def lane_recovery_artifacts(
         "branch": lane.get("branch"),
         "pull_request": lane.get("pull_request"),
         "last_actor_output": lane.get("last_actor_output"),
+        "runtime_recovery": lane.get("runtime_recovery"),
     }
     artifacts.update(dict(extra or {}))
     return {key: value for key, value in artifacts.items() if value not in (None, "")}
@@ -1641,7 +1760,13 @@ def _recovery_config(config: WorkflowConfig) -> dict[str, Any]:
     return {
         "running_stale_seconds": _nonnegative_int(
             cfg, "running-stale-seconds", "running_stale_seconds", default=1800
-        )
+        ),
+        "auto_retry_interrupted": _configured_bool(
+            cfg,
+            "auto-retry-interrupted",
+            "auto_retry_interrupted",
+            default=True,
+        ),
     }
 
 
@@ -1683,23 +1808,72 @@ def _retry_policy(config: WorkflowConfig) -> RetryPolicy:
 
 def _retry_record(
     *,
-    config: WorkflowConfig,
-    lane: dict[str, Any],
     decision: OrchestratorDecision,
-    current_attempt: int,
-    next_attempt: int,
+    schedule: dict[str, Any],
 ) -> dict[str, Any]:
-    retry = _retry_config(config)
+    due_at_epoch = _schedule_due_at_epoch(schedule)
     return {
-        "queued_at": _now_iso(),
+        "status": schedule.get("status"),
+        "queued_at": _engine_retry_updated_at(schedule) or _now_iso(),
         "stage": decision.stage,
         "target": decision.target,
         "reason": decision.reason,
         "inputs": decision.inputs,
-        "current_attempt": current_attempt,
-        "next_attempt": next_attempt,
-        "max_attempts": retry["max_attempts"],
+        "current_attempt": int(schedule.get("current_attempt") or 0),
+        "next_attempt": int(schedule.get("next_attempt") or 0),
+        "max_attempts": int(schedule.get("max_attempts") or 0),
+        "delay_seconds": schedule.get("delay_seconds"),
+        "due_at": _epoch_to_iso(due_at_epoch) if due_at_epoch is not None else None,
+        "due_at_epoch": due_at_epoch,
+        "engine_retry": schedule.get("engine_retry") or None,
     }
+
+
+def _pending_retry_projection(
+    *, decision: OrchestratorDecision, schedule: dict[str, Any]
+) -> dict[str, Any]:
+    due_at_epoch = _schedule_due_at_epoch(schedule)
+    return {
+        "source": "engine_retry_queue",
+        "stage": decision.stage,
+        "target": decision.target,
+        "reason": decision.reason,
+        "inputs": decision.inputs,
+        "attempt": int(schedule.get("next_attempt") or 0),
+        "current_attempt": int(schedule.get("current_attempt") or 0),
+        "queued_at": _engine_retry_updated_at(schedule) or _now_iso(),
+        "delay_seconds": int(schedule.get("delay_seconds") or 0),
+        "due_at": _epoch_to_iso(due_at_epoch or time.time()),
+        "due_at_epoch": due_at_epoch if due_at_epoch is not None else time.time(),
+        "max_attempts": int(schedule.get("max_attempts") or 0),
+        "engine_retry": schedule.get("engine_retry") or None,
+    }
+
+
+def _engine_retry_updated_at(schedule: dict[str, Any]) -> str:
+    engine_retry = (
+        schedule.get("engine_retry")
+        if isinstance(schedule.get("engine_retry"), dict)
+        else {}
+    )
+    return str(engine_retry.get("updated_at") or "").strip()
+
+
+def _schedule_due_at_epoch(schedule: dict[str, Any]) -> float | None:
+    value = schedule.get("due_at_epoch")
+    if value in (None, ""):
+        engine_retry = (
+            schedule.get("engine_retry")
+            if isinstance(schedule.get("engine_retry"), dict)
+            else {}
+        )
+        value = engine_retry.get("due_at_epoch")
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _retry_due_at_epoch(pending_retry: dict[str, Any]) -> float:
@@ -2333,23 +2507,6 @@ def _clear_engine_retry(*, config: WorkflowConfig, lane: dict[str, Any]) -> None
     lane_id = str(lane.get("lane_id") or "").strip()
     if lane_id:
         _engine_store(config).clear_retry(work_id=lane_id)
-
-
-def _retry_scheduler_entry(lane: dict[str, Any]) -> dict[str, Any]:
-    pending = (
-        lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
-    )
-    issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
-    return {
-        **_scheduler_entry(lane),
-        "issue_id": lane.get("lane_id"),
-        "identifier": issue.get("identifier") or lane.get("lane_id"),
-        "attempt": int(pending.get("attempt") or lane.get("attempt") or 0),
-        "due_at_epoch": _retry_due_at_epoch(pending),
-        "error": pending.get("reason") or "retry queued",
-        "current_attempt": pending.get("attempt") or lane.get("attempt"),
-        "delay_type": "workflow-retry",
-    }
 
 
 def _lane_run_id(lane: dict[str, Any]) -> str | None:

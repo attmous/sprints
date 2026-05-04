@@ -118,7 +118,7 @@ class EngineStore:
     def save_scheduler(
         self,
         *,
-        retry_entries: dict[str, dict[str, Any]],
+        retry_entries: dict[str, dict[str, Any]] | None = None,
         running_entries: dict[str, dict[str, Any]],
         runtime_totals: dict[str, Any] | None,
         runtime_sessions: dict[str, dict[str, Any]],

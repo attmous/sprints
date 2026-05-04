@@ -19,6 +19,7 @@ concurrency:
   per-lane-lock: true
 recovery:
   running-stale-seconds: 1800
+  auto-retry-interrupted: true
 retry:
   max-attempts: 3
   initial-delay-seconds: 0
@@ -158,6 +159,12 @@ attempt limits, backoff, due-time planning, and the retry queue row. The lane
 keeps the target stage, target actor, feedback, attempt, due time, and retry
 history as actor handoff context. When the retry limit is reached, raise
 `operator_attention` instead of requesting another retry.
+
+When the runner marks a stale running actor as interrupted and
+`recovery.auto-retry-interrupted` is enabled, it queues a retry to the same
+stage and actor with `inputs.recovery`. Dispatch that retry when due so the
+actor can resume from the recorded runtime session. If recovery is missing actor
+or stage context, raise `operator_attention`.
 
 Return JSON only:
 

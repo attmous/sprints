@@ -657,6 +657,31 @@ class GithubCodeHostClient:
             return False
         return True
 
+    def pull_request_merge_status(
+        self, pr_number: int | str | None
+    ) -> dict[str, Any]:
+        number = _coerce_number(pr_number, field_name="pr_number")
+        view = self._run_json(
+            self._with_repo(
+                [
+                    "gh",
+                    "pr",
+                    "view",
+                    number,
+                    "--json",
+                    (
+                        "number,url,state,isDraft,mergeable,mergeStateStatus,"
+                        "reviewDecision,statusCheckRollup,headRefName,headRefOid"
+                    ),
+                ]
+            ),
+            cwd=self._repo_path,
+        )
+        if not isinstance(view, dict):
+            raise RuntimeError("expected gh pr view JSON object payload")
+        threads = self.fetch_pull_request_review_threads(number)
+        return _pull_request_merge_readiness(view=view, threads=threads)
+
     def merge_pull_request(
         self,
         pr_number: int | str | None,
@@ -754,3 +779,172 @@ class GithubCodeHostClient:
         return (((data or {}).get("data") or {}).get("repository") or {}).get(
             "pullRequest"
         ) or {}
+
+
+def _pull_request_merge_readiness(
+    *, view: dict[str, Any], threads: dict[str, Any]
+) -> dict[str, Any]:
+    blockers: list[dict[str, Any]] = []
+    state = _upper(view.get("state"))
+    if state == "MERGED":
+        return {
+            "ready": True,
+            "status": "merged",
+            "already_merged": True,
+            "blockers": [],
+            "pull_request": _pull_request_readiness_summary(view),
+        }
+    if state and state != "OPEN":
+        blockers.append(
+            {
+                "kind": "pr_not_open",
+                "message": f"pull request state is {state.lower()}",
+            }
+        )
+    if bool(view.get("isDraft")):
+        blockers.append(
+            {
+                "kind": "draft_pull_request",
+                "message": "pull request is still draft",
+            }
+        )
+    mergeable = _upper(view.get("mergeable"))
+    if mergeable in {"CONFLICTING", "FALSE"}:
+        blockers.append(
+            {
+                "kind": "merge_conflict",
+                "message": "pull request is not mergeable",
+            }
+        )
+    elif mergeable == "UNKNOWN":
+        blockers.append(
+            {
+                "kind": "mergeability_unknown",
+                "message": "GitHub has not computed mergeability yet",
+            }
+        )
+    merge_state = _upper(view.get("mergeStateStatus"))
+    if merge_state and merge_state not in {"CLEAN", "HAS_HOOKS"}:
+        blockers.append(
+            {
+                "kind": "merge_state_blocked",
+                "state": merge_state,
+                "message": f"merge state is {merge_state.lower()}",
+            }
+        )
+    review_decision = _upper(view.get("reviewDecision"))
+    if review_decision in {"CHANGES_REQUESTED", "REVIEW_REQUIRED"}:
+        blockers.append(
+            {
+                "kind": "review_not_approved",
+                "state": review_decision,
+                "message": f"review decision is {review_decision.lower()}",
+            }
+        )
+    blockers.extend(_status_check_blockers(view.get("statusCheckRollup")))
+    blockers.extend(_unresolved_review_thread_blockers(threads))
+    return {
+        "ready": not blockers,
+        "status": "ready" if not blockers else "blocked",
+        "blockers": blockers,
+        "pull_request": _pull_request_readiness_summary(view),
+    }
+
+
+def _pull_request_readiness_summary(view: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "number": view.get("number"),
+            "url": view.get("url"),
+            "state": view.get("state"),
+            "is_draft": view.get("isDraft"),
+            "mergeable": view.get("mergeable"),
+            "merge_state_status": view.get("mergeStateStatus"),
+            "review_decision": view.get("reviewDecision"),
+            "head": view.get("headRefName"),
+            "head_oid": view.get("headRefOid"),
+        }.items()
+        if value not in (None, "")
+    }
+
+
+def _status_check_blockers(value: Any) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    for check in _iter_status_checks(value):
+        conclusion = _upper(check.get("conclusion"))
+        status = _upper(check.get("status") or check.get("state"))
+        name = str(
+            check.get("name")
+            or check.get("context")
+            or check.get("workflowName")
+            or check.get("displayName")
+            or "status check"
+        )
+        if conclusion in {
+            "FAILURE",
+            "TIMED_OUT",
+            "CANCELLED",
+            "ACTION_REQUIRED",
+            "STARTUP_FAILURE",
+            "ERROR",
+        } or status in {"FAILURE", "ERROR", "FAILED"}:
+            blockers.append(
+                {
+                    "kind": "check_failed",
+                    "name": name,
+                    "status": conclusion or status,
+                    "message": f"status check failed: {name}",
+                }
+            )
+            continue
+        if conclusion in {"SUCCESS", "SKIPPED", "NEUTRAL"} or status in {
+            "SUCCESS",
+            "COMPLETED",
+        }:
+            continue
+        blockers.append(
+            {
+                "kind": "check_pending",
+                "name": name,
+                "status": status or conclusion or "UNKNOWN",
+                "message": f"status check is not complete: {name}",
+            }
+        )
+    return blockers
+
+
+def _iter_status_checks(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        for key in ("nodes", "contexts", "checkRuns"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
+def _unresolved_review_thread_blockers(threads: dict[str, Any]) -> list[dict[str, Any]]:
+    review_threads = threads.get("reviewThreads") if isinstance(threads, dict) else {}
+    nodes = review_threads.get("nodes") if isinstance(review_threads, dict) else []
+    blockers = []
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict):
+            continue
+        if bool(node.get("isResolved")) or bool(node.get("isOutdated")):
+            continue
+        blockers.append(
+            {
+                "kind": "unresolved_review_thread",
+                "thread_id": node.get("id"),
+                "path": node.get("path"),
+                "line": node.get("line"),
+                "message": "pull request has unresolved review feedback",
+            }
+        )
+    return blockers
+
+
+def _upper(value: Any) -> str:
+    return str(value or "").strip().upper()

@@ -65,6 +65,10 @@ class CodeHostClient(Protocol):
 
     def mark_pull_request_ready(self, pr_number: int | str | None) -> bool: ...
 
+    def pull_request_merge_status(
+        self, pr_number: int | str | None
+    ) -> dict[str, Any]: ...
+
     def merge_pull_request(
         self,
         pr_number: int | str | None,

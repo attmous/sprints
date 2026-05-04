@@ -39,6 +39,7 @@ concurrency:
 
 recovery:
   running-stale-seconds: 1800
+  auto-retry-interrupted: true
 
 retry:
   max-attempts: 3
@@ -213,11 +214,13 @@ during progress callbacks:
 - token and rate-limit snapshots
 
 If a later tick finds a lane still marked `running` beyond
-`running-stale-seconds`, it moves the lane to `operator_attention` with the
-runtime session artifacts attached. The runtime session row and actor run are
-marked `interrupted` before the lane is handed to the operator. This keeps
-interrupted work recoverable instead of silently dispatching duplicate actor
-work.
+`running-stale-seconds`, the runtime session row and actor run are marked
+`interrupted`. When `auto-retry-interrupted` is true, the runner queues a
+durable retry to the same stage and actor with the runtime session artifacts in
+`pending_retry.inputs.recovery`. The next dispatch resumes the same actor/stage
+session when the runtime exposes a session ID. If recovery is disabled, missing
+actor/stage context, or retry limits are exhausted, the lane moves to
+`operator_attention` with recovery artifacts.
 
 Before dispatching an actor, the runner also checks for an already-running lane,
 runtime session, or actor run for the same lane/actor/stage. A conflict moves
@@ -243,6 +246,10 @@ actor, feedback inputs, attempt, due time, and retry history. The next actor
 dispatch receives that state as `retry`. The runner rejects dispatch before
 `pending_retry.due_at` and moves the lane to `operator_attention` when the engine
 reports that the retry limit is exhausted.
+
+`pending_retry` mirrors the engine schedule; it does not own the retry queue.
+Scheduler snapshots do not rewrite retry rows, so retry state is created only by
+`EngineStore.schedule_retry()` and cleared only by `EngineStore.clear_retry()`.
 
 ### `notifications`
 
@@ -283,9 +290,11 @@ completion:
 The bundled `change-delivery` template enables auto-merge. Set
 `auto-merge.enabled: false` when the workflow should stop after review approval.
 When enabled, the runner merges after review approval and before tracker label
-cleanup. Supported methods are `squash`, `merge`, and `rebase`. If merge or
-cleanup fails, the lane moves to `operator_attention` instead of being released
-silently.
+cleanup. Before calling merge, the GitHub code-host checks PR state,
+draft/mergeability, merge state, review decision, status checks, and unresolved
+review threads. Supported methods are `squash`, `merge`, and `rebase`. If merge
+readiness, merge, or cleanup fails, the lane moves to `operator_attention`
+instead of being released silently.
 
 ### `gates`
 

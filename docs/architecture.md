@@ -445,7 +445,9 @@ are fingerprinted so repeated ticks do not repost the same review side effect.
 On successful completion, the bundled change-delivery template runs runner-owned
 auto-merge first, then configured cleanup removes `active`, adds `done`, and
 releases the lane lease. If merge, checks, permissions, or cleanup block
-completion, the lane moves to `operator_attention`.
+completion, the lane moves to `operator_attention`. GitHub auto-merge readiness
+checks PR state, draft status, mergeability, merge state, review decision,
+status checks, and unresolved review threads before calling `gh pr merge`.
 
 ## Orchestrator Decisions
 
@@ -505,7 +507,10 @@ prompt/result exchange plus metadata.
 Every actor dispatch gets a durable `engine_runs` row with `mode=actor`.
 Runtime session rows, lane runtime metadata, and runtime events all carry the
 same `run_id`. When a running lane is stale, reconciliation marks that runtime
-session and actor run `interrupted` before moving the lane to operator attention.
+session and actor run `interrupted`. With `auto-retry-interrupted` enabled, it
+then queues a durable retry to the same stage and actor with the recorded
+runtime session as recovery context. If recovery cannot be targeted safely, the
+lane moves to operator attention.
 
 Runtime session status is normalized to:
 
@@ -654,7 +659,7 @@ The current state split is intentional but transitional:
 
 Later engine waves can move more ownership into `engine/`, especially retry
 wakeups and transactional lane lifecycle transitions. Retry attempt limits,
-backoff, due-time planning, and retry queue persistence are already engine-owned.
+backoff, due-time planning, and retry queue persistence are engine-owned.
 Workflow policy should still stay outside the engine.
 
 ## Reconciliation
@@ -663,7 +668,7 @@ Before each dispatch, the runner reconciles three external realities:
 
 | Reconcile Path | What It Checks | Result |
 | --- | --- | --- |
-| Runtime reconciliation | Running lanes whose runtime session has not progressed within `recovery.running-stale-seconds`. | Marks the runtime session and actor run `interrupted`, then moves the lane to `operator_attention` with artifacts. |
+| Runtime reconciliation | Running lanes whose runtime session has not progressed within `recovery.running-stale-seconds`. | Marks the runtime session and actor run `interrupted`, then queues a recovery retry to the same actor/stage or moves the lane to `operator_attention` if recovery is unsafe. |
 | Tracker reconciliation | Active lane issue still exists and remains eligible. | Updates issue payload or releases lane. |
 | Pull request reconciliation | Open PRs matching lane branch. | Updates `lane.pull_request`. |
 
@@ -704,6 +709,10 @@ The lane keeps a workflow-facing retry projection for actor handoff:
 - queued time
 - retry history
 
+That projection is not a second scheduler. Scheduler snapshots intentionally do
+not rebuild `engine_retry_queue`; retry rows are only created through
+`EngineStore.schedule_retry()` and cleared through `EngineStore.clear_retry()`.
+
 The daemon shortens sleep when a retry is due soon. The runner validates that
 retry dispatch uses the queued target and only runs after the due time. When a
 queued retry is dispatched, the runner consumes the retry projection and clears
@@ -719,7 +728,7 @@ the engine queue row before marking the lane running.
 | Reviewer requests changes without concrete fixes | Lane becomes `operator_attention`. |
 | Runtime command fails | Lane becomes `operator_attention`; runtime result metadata is recorded when available. |
 | Duplicate dispatch guard trips | Lane becomes `operator_attention`; active session/run conflicts are recorded. |
-| Running lane goes stale | Reconciliation marks the actor run `interrupted` and the lane `operator_attention`. |
+| Running lane goes stale | Reconciliation marks the actor run `interrupted` and queues a same actor/stage recovery retry; unsafe recovery moves to `operator_attention`. |
 | Retry limit exceeded | Lane becomes `operator_attention`. |
 | Tracker cleanup fails | Completion is stopped and artifacts are recorded. |
 | Issue loses eligibility | Lane is released. |

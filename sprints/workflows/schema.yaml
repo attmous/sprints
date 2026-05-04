@@ -72,6 +72,8 @@ properties:
       running-stale-seconds:
         type: integer
         minimum: 0
+      auto-retry-interrupted:
+        type: boolean
     additionalProperties: true
   retry:
     type: object
