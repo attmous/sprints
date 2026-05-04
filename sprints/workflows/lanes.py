@@ -676,6 +676,33 @@ def _review_changes_are_pending(lane: dict[str, Any]) -> bool:
     }
 
 
+def _clear_superseded_reviewer_changes(
+    *, lane: dict[str, Any], output: dict[str, Any]
+) -> None:
+    if str(output.get("status") or "").strip().lower() != "done":
+        return
+    actor_outputs = lane_mapping(lane, "actor_outputs")
+    review = actor_outputs.get("reviewer")
+    if not isinstance(review, dict):
+        return
+    if str(review.get("status") or "").strip().lower() not in {
+        "changes_requested",
+        "needs_changes",
+    }:
+        return
+    superseded = lane_list(lane, "superseded_actor_outputs")
+    superseded.append(
+        {
+            "actor": "reviewer",
+            "stage": "review",
+            "superseded_by": "implementer",
+            "superseded_at": _now_iso(),
+            "output": review,
+        }
+    )
+    actor_outputs.pop("reviewer", None)
+
+
 def _validate_review_changes_retry(
     *, lane: dict[str, Any], decision: OrchestratorDecision
 ) -> None:
@@ -1223,6 +1250,8 @@ def record_actor_output(
     output: dict[str, Any],
 ) -> None:
     actor_outputs = lane_mapping(lane, "actor_outputs")
+    if actor_name == "implementer":
+        _clear_superseded_reviewer_changes(lane=lane, output=output)
     actor_outputs[actor_name] = output
     lane["last_actor_output"] = output
     lane["last_progress_at"] = _now_iso()
