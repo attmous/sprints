@@ -1,7 +1,7 @@
 """Workflow lane facade.
 
-The runner imports this module. The implementation is split by responsibility so
-workflow mechanics stay navigable.
+Execution modules import this facade instead of reaching into every lane
+submodule directly.
 """
 
 from __future__ import annotations
@@ -20,7 +20,13 @@ from workflows.lane_state import (
 )
 from workflows.reconcile import reconcile_lanes
 from workflows.retries import consume_lane_retry, lane_retry_inputs, queue_lane_retry
-from workflows.status import build_lane_status, build_workflow_facts
+from workflows.status import (
+    build_dispatch_audit,
+    build_lane_status,
+    build_retry_audit,
+    build_side_effect_audit,
+    build_workflow_facts,
+)
 from workflows.transitions import (
     actor_concurrency_usage,
     advance_lane,
@@ -30,6 +36,7 @@ from workflows.transitions import (
     guard_actor_dispatch,
     lane_for_decision,
     record_action_result,
+    record_actor_dispatch_planned,
     record_actor_output,
     record_actor_runtime_progress,
     record_actor_runtime_result,
@@ -47,6 +54,9 @@ __all__ = [
     "advance_lane",
     "apply_actor_output_status",
     "build_lane_status",
+    "build_dispatch_audit",
+    "build_retry_audit",
+    "build_side_effect_audit",
     "build_workflow_facts",
     "claim_new_lanes",
     "complete_lane",
@@ -64,6 +74,7 @@ __all__ = [
     "queue_lane_retry",
     "reconcile_lanes",
     "record_action_result",
+    "record_actor_dispatch_planned",
     "record_actor_output",
     "record_actor_runtime_progress",
     "record_actor_runtime_result",

@@ -12,6 +12,7 @@ operator commands.
 | --- | --- |
 | [Architecture](architecture.md) | Package shape and ownership boundaries. |
 | [Workflow Contract](workflows/workflow-contract.md) | `WORKFLOW.md` front matter and policy sections. |
+| [Runner Split Spec](workflows/runner-split-spec.md) | Implemented `workflows/runner.py` split into execution modules. |
 | [Runtimes](concepts/runtimes.md) | Runtime profiles, actors, and turn execution. |
 | [Engine](concepts/engine.md) | SQLite-backed state, leases, runs, and events. |
 | [Installation](operator/installation.md) | Install, bootstrap, validate, and run. |

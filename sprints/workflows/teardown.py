@@ -10,9 +10,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from engine import EngineStore, RetryPolicy
+from engine import (
+    EngineStore,
+    RetryPolicy,
+    pending_retry_projection,
+    retry_is_due,
+    retry_record,
+)
 from trackers import build_code_host_client, build_tracker_client
 from workflows.config import WorkflowConfig
+from workflows.effects import (
+    completed_side_effect,
+    record_side_effect_failed,
+    record_side_effect_skipped,
+    record_side_effect_started,
+    record_side_effect_succeeded,
+    side_effect_key,
+)
 from workflows.orchestrator import OrchestratorDecision
 from workflows.paths import runtime_paths
 
@@ -45,9 +59,7 @@ def complete_lane(
             artifacts=_contract_artifacts(lane),
         )
         return
-    auto_merge = _auto_merge_completed_pull_request(
-        config=config, lane=lane, ops=ops
-    )
+    auto_merge = _auto_merge_completed_pull_request(config=config, lane=lane, ops=ops)
     if auto_merge.get("status") == "waiting":
         lane["completion_auto_merge"] = auto_merge
         ops.set_lane_status(
@@ -64,7 +76,10 @@ def complete_lane(
             lane=lane,
             reason="auto_merge_failed",
             message=str(auto_merge.get("error") or "auto-merge failed"),
-            artifacts={"auto_merge": auto_merge, "pull_request": lane.get("pull_request")},
+            artifacts={
+                "auto_merge": auto_merge,
+                "pull_request": lane.get("pull_request"),
+            },
         )
         return
     lane["completion_auto_merge"] = auto_merge
@@ -139,9 +154,8 @@ def cleanup_retry_pending(lane: dict[str, Any]) -> bool:
         if isinstance(lane.get("completion_cleanup"), dict)
         else {}
     )
-    return (
-        str(lane.get("status") or "").strip() == "retry_queued"
-        and cleanup_failed(cleanup)
+    return str(lane.get("status") or "").strip() == "retry_queued" and cleanup_failed(
+        cleanup
     )
 
 
@@ -204,11 +218,33 @@ def _queue_completion_cleanup_retry(
         run_id=_lane_run_id(lane),
         now_iso=_now_iso(),
     )
-    record = _retry_record(decision=decision, schedule=schedule)
+    record = retry_record(
+        stage=decision.stage,
+        target=decision.target,
+        reason=decision.reason,
+        inputs=decision.inputs,
+        schedule=schedule,
+        now_iso=_now_iso(),
+    )
     record["source"] = "completion_cleanup"
     record["cleanup"] = cleanup
     _lane_list(lane, "retry_history").append(record)
     if schedule.get("status") == "limit_exceeded":
+        ops.append_engine_event(
+            config=config,
+            lane=lane,
+            event_type=f"{config.workflow_name}.lane.retry.limit_exceeded",
+            payload={
+                "lane_id": lane.get("lane_id"),
+                "status": "limit_exceeded",
+                "stage": decision.stage,
+                "target": "completion_cleanup",
+                "failure_reason": reason,
+                "retry": _retry_event_retry(record),
+                "cleanup": cleanup,
+            },
+            severity="error",
+        )
         ops.set_lane_operator_attention(
             config=config,
             lane=lane,
@@ -230,7 +266,14 @@ def _queue_completion_cleanup_retry(
             "reason": "completion_cleanup_failed",
         }
 
-    pending = _pending_retry_projection(decision=decision, schedule=schedule)
+    previous = _lane_transition_side(lane)
+    pending = pending_retry_projection(
+        stage=decision.stage,
+        target=decision.target,
+        reason=decision.reason,
+        inputs=decision.inputs,
+        schedule=schedule,
+    )
     pending["source"] = "completion_cleanup"
     pending["target"] = "completion_cleanup"
     lane["completion_cleanup_attempt"] = int(
@@ -244,12 +287,17 @@ def _queue_completion_cleanup_retry(
         status="retry_queued",
         reason="completion cleanup retry queued",
         actor=None,
+        previous=previous,
     )
     ops.append_engine_event(
         config=config,
         lane=lane,
         event_type=f"{config.workflow_name}.lane.completion_cleanup_retry_queued",
-        payload={"cleanup": cleanup, "retry": pending},
+        payload={
+            "cleanup": cleanup,
+            "failure_reason": reason,
+            "retry": _retry_event_retry(pending),
+        },
         severity="warning",
     )
     return {
@@ -279,11 +327,42 @@ def _auto_merge_completed_pull_request(
     pr_number = _pull_request_number(lane)
     if not pr_number:
         return {"status": "error", "error": "pull request number missing"}
-    if _pull_request_is_merged(lane):
+    effect_payload = {"method": method, "delete_branch": cfg["delete_branch"]}
+    effect_key = side_effect_key(
+        config=config,
+        lane=lane,
+        operation="code_host.merge_pull_request",
+        target=f"pull_request:{pr_number}",
+        payload=effect_payload,
+    )
+    completed = completed_side_effect(config=config, lane=lane, key=effect_key)
+    if completed:
+        _mark_pull_request_merged(lane)
         return {
             "status": "ok",
             "method": method,
             "delete_branch": cfg["delete_branch"],
+            "idempotency_key": effect_key,
+            "side_effect": completed,
+            "pull_request": {"number": pr_number, "already_merged": True},
+        }
+    if _pull_request_is_merged(lane):
+        skipped = record_side_effect_skipped(
+            config=config,
+            lane=lane,
+            key=effect_key,
+            operation="code_host.merge_pull_request",
+            target=f"pull_request:{pr_number}",
+            payload=effect_payload,
+            reason="pull request already marked merged",
+            result={"pull_request": {"number": pr_number, "already_merged": True}},
+        )
+        return {
+            "status": "ok",
+            "method": method,
+            "delete_branch": cfg["delete_branch"],
+            "idempotency_key": effect_key,
+            "side_effect": skipped,
             "pull_request": {"number": pr_number, "already_merged": True},
         }
     code_host_cfg = _code_host_config(config)
@@ -300,15 +379,24 @@ def _auto_merge_completed_pull_request(
         )
         readiness = _pull_request_merge_readiness(client, pr_number)
         if readiness.get("already_merged") or readiness.get("merged"):
-            pull_request = _lane_mapping(lane, "pull_request")
-            pull_request["state"] = "merged"
-            pull_request["merged"] = True
-            pull_request["merged_at"] = pull_request.get("merged_at") or _now_iso()
+            _mark_pull_request_merged(lane)
+            skipped = record_side_effect_skipped(
+                config=config,
+                lane=lane,
+                key=effect_key,
+                operation="code_host.merge_pull_request",
+                target=f"pull_request:{pr_number}",
+                payload=effect_payload,
+                reason="pull request already merged on code host",
+                result={"readiness": readiness},
+            )
             return {
                 "status": "ok",
                 "method": method,
                 "delete_branch": cfg["delete_branch"],
                 "readiness": readiness,
+                "idempotency_key": effect_key,
+                "side_effect": skipped,
                 "pull_request": {"number": pr_number, "already_merged": True},
             }
         if not readiness.get("ready"):
@@ -323,6 +411,14 @@ def _auto_merge_completed_pull_request(
                 "error": _merge_readiness_error(readiness),
                 "readiness": readiness,
             }
+        record_side_effect_started(
+            config=config,
+            lane=lane,
+            key=effect_key,
+            operation="code_host.merge_pull_request",
+            target=f"pull_request:{pr_number}",
+            payload=effect_payload,
+        )
         result = client.merge_pull_request(
             pr_number,
             method=method,
@@ -336,9 +432,20 @@ def _auto_merge_completed_pull_request(
         "method": method,
         "delete_branch": cfg["delete_branch"],
         "pull_request": result,
+        "idempotency_key": effect_key,
     }
     if payload["status"] == "error":
         payload["error"] = str(result.get("error") or "pull request merge failed")
+        record_side_effect_failed(
+            config=config,
+            lane=lane,
+            key=effect_key,
+            operation="code_host.merge_pull_request",
+            target=f"pull_request:{pr_number}",
+            payload=effect_payload,
+            result=payload,
+            error=payload["error"],
+        )
         ops.append_engine_event(
             config=config,
             lane=lane,
@@ -347,10 +454,16 @@ def _auto_merge_completed_pull_request(
             severity="error",
         )
         return payload
-    pull_request = _lane_mapping(lane, "pull_request")
-    pull_request["state"] = "merged"
-    pull_request["merged"] = True
-    pull_request["merged_at"] = _now_iso()
+    _mark_pull_request_merged(lane)
+    payload["side_effect"] = record_side_effect_succeeded(
+        config=config,
+        lane=lane,
+        key=effect_key,
+        operation="code_host.merge_pull_request",
+        target=f"pull_request:{pr_number}",
+        payload=effect_payload,
+        result=payload,
+    )
     ops.append_engine_event(
         config=config,
         lane=lane,
@@ -394,7 +507,9 @@ def _merge_readiness_error(readiness: dict[str, Any]) -> str:
     message = str(first.get("message") or first.get("kind") or "").strip()
     if len(blockers) == 1:
         return message or "pull request is not ready to merge"
-    return f"{message or 'pull request is not ready to merge'} (+{len(blockers) - 1} more)"
+    return (
+        f"{message or 'pull request is not ready to merge'} (+{len(blockers) - 1} more)"
+    )
 
 
 def merge_readiness_is_transient(readiness: dict[str, Any]) -> bool:
@@ -449,46 +564,49 @@ def _cleanup_completed_lane(
     removed: list[str] = []
     added: list[str] = []
     failed: list[dict[str, Any]] = []
+    side_effects: list[dict[str, Any]] = []
     if remove_labels:
-        try:
-            if client.remove_labels(issue_id, remove_labels):
-                removed = remove_labels
-                labels.difference_update(label.lower() for label in remove_labels)
-            else:
-                failed.append(
-                    {
-                        "operation": "remove_labels",
-                        "labels": remove_labels,
-                        "error": "tracker returned false",
-                    }
-                )
-        except Exception as exc:
+        result = _apply_tracker_label_side_effect(
+            config=config,
+            lane=lane,
+            operation="tracker.remove_labels",
+            issue_id=issue_id,
+            labels=remove_labels,
+            call=lambda: client.remove_labels(issue_id, remove_labels),
+        )
+        side_effects.append(result)
+        if result["ok"]:
+            removed = remove_labels
+            labels.difference_update(label.lower() for label in remove_labels)
+        else:
             failed.append(
                 {
                     "operation": "remove_labels",
                     "labels": remove_labels,
-                    "error": str(exc),
+                    "error": result.get("error"),
+                    "idempotency_key": result.get("idempotency_key"),
                 }
             )
     if add_labels:
-        try:
-            if client.add_labels(issue_id, add_labels):
-                added = add_labels
-                labels.update(label.lower() for label in add_labels)
-            else:
-                failed.append(
-                    {
-                        "operation": "add_labels",
-                        "labels": add_labels,
-                        "error": "tracker returned false",
-                    }
-                )
-        except Exception as exc:
+        result = _apply_tracker_label_side_effect(
+            config=config,
+            lane=lane,
+            operation="tracker.add_labels",
+            issue_id=issue_id,
+            labels=add_labels,
+            call=lambda: client.add_labels(issue_id, add_labels),
+        )
+        side_effects.append(result)
+        if result["ok"]:
+            added = add_labels
+            labels.update(label.lower() for label in add_labels)
+        else:
             failed.append(
                 {
                     "operation": "add_labels",
                     "labels": add_labels,
-                    "error": str(exc),
+                    "error": result.get("error"),
+                    "idempotency_key": result.get("idempotency_key"),
                 }
             )
     if isinstance(lane.get("issue"), dict):
@@ -500,6 +618,7 @@ def _cleanup_completed_lane(
         "add_labels": completion["add"],
         "removed": removed,
         "added": added,
+        "side_effects": side_effects,
         "already_removed": [
             label
             for label in completion["remove"]
@@ -521,9 +640,71 @@ def _cleanup_completed_lane(
     return result
 
 
-def _refresh_cleanup_issue(
-    *, client: Any, issue_id: str
-) -> dict[str, Any] | None:
+def _apply_tracker_label_side_effect(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    operation: str,
+    issue_id: str,
+    labels: list[str],
+    call: Callable[[], bool],
+) -> dict[str, Any]:
+    target = f"issue:{issue_id}"
+    payload = {"labels": sorted(labels)}
+    key = side_effect_key(
+        config=config,
+        lane=lane,
+        operation=operation,
+        target=target,
+        payload=payload,
+    )
+    record_side_effect_started(
+        config=config,
+        lane=lane,
+        key=key,
+        operation=operation,
+        target=target,
+        payload=payload,
+    )
+    try:
+        ok = bool(call())
+    except Exception as exc:
+        error = str(exc)
+        record_side_effect_failed(
+            config=config,
+            lane=lane,
+            key=key,
+            operation=operation,
+            target=target,
+            payload=payload,
+            error=error,
+        )
+        return {"ok": False, "error": error, "idempotency_key": key}
+    if not ok:
+        error = "tracker returned false"
+        record_side_effect_failed(
+            config=config,
+            lane=lane,
+            key=key,
+            operation=operation,
+            target=target,
+            payload=payload,
+            error=error,
+        )
+        return {"ok": False, "error": error, "idempotency_key": key}
+    side_effect = record_side_effect_succeeded(
+        config=config,
+        lane=lane,
+        key=key,
+        operation=operation,
+        target=target,
+        payload=payload,
+        result={"labels": labels},
+    )
+    return {"ok": True, "idempotency_key": key, "side_effect": side_effect}
+
+
+def _refresh_cleanup_issue(*, client: Any, issue_id: str) -> dict[str, Any] | None:
     refresh = getattr(client, "refresh", None)
     if not callable(refresh):
         return None
@@ -575,6 +756,13 @@ def _pull_request_is_merged(lane: dict[str, Any]) -> bool:
     return bool(pull_request.get("merged")) or state == "merged"
 
 
+def _mark_pull_request_merged(lane: dict[str, Any]) -> None:
+    pull_request = _lane_mapping(lane, "pull_request")
+    pull_request["state"] = "merged"
+    pull_request["merged"] = True
+    pull_request["merged_at"] = pull_request.get("merged_at") or _now_iso()
+
+
 def _pull_request_number(lane: dict[str, Any]) -> str:
     pull_request = lane.get("pull_request")
     if not isinstance(pull_request, dict):
@@ -617,9 +805,16 @@ def _completion_auto_merge_config(config: WorkflowConfig) -> dict[str, Any]:
         or completion.get("automerge")
     )
     cfg = raw_auto_merge if isinstance(raw_auto_merge, dict) else {}
-    method = str(
-        cfg.get("method") or cfg.get("merge-method") or cfg.get("merge_method") or "squash"
-    ).strip().lower()
+    method = (
+        str(
+            cfg.get("method")
+            or cfg.get("merge-method")
+            or cfg.get("merge_method")
+            or "squash"
+        )
+        .strip()
+        .lower()
+    )
     return {
         "enabled": _configured_bool(cfg, "enabled", default=False),
         "method": method or "squash",
@@ -665,50 +860,6 @@ def _retry_config(config: WorkflowConfig) -> dict[str, Any]:
     }
 
 
-def _retry_record(
-    *,
-    decision: OrchestratorDecision,
-    schedule: dict[str, Any],
-) -> dict[str, Any]:
-    due_at_epoch = _schedule_due_at_epoch(schedule)
-    return {
-        "status": schedule.get("status"),
-        "queued_at": _engine_retry_updated_at(schedule) or _now_iso(),
-        "stage": decision.stage,
-        "target": decision.target,
-        "reason": decision.reason,
-        "inputs": decision.inputs,
-        "current_attempt": int(schedule.get("current_attempt") or 0),
-        "next_attempt": int(schedule.get("next_attempt") or 0),
-        "max_attempts": int(schedule.get("max_attempts") or 0),
-        "delay_seconds": schedule.get("delay_seconds"),
-        "due_at": _epoch_to_iso(due_at_epoch) if due_at_epoch is not None else None,
-        "due_at_epoch": due_at_epoch,
-        "engine_retry": schedule.get("engine_retry") or None,
-    }
-
-
-def _pending_retry_projection(
-    *, decision: OrchestratorDecision, schedule: dict[str, Any]
-) -> dict[str, Any]:
-    due_at_epoch = _schedule_due_at_epoch(schedule)
-    return {
-        "source": "engine_retry_queue",
-        "stage": decision.stage,
-        "target": decision.target,
-        "reason": decision.reason,
-        "inputs": decision.inputs,
-        "attempt": int(schedule.get("next_attempt") or 0),
-        "current_attempt": int(schedule.get("current_attempt") or 0),
-        "queued_at": _engine_retry_updated_at(schedule) or _now_iso(),
-        "delay_seconds": int(schedule.get("delay_seconds") or 0),
-        "due_at": _epoch_to_iso(due_at_epoch or time.time()),
-        "due_at_epoch": due_at_epoch if due_at_epoch is not None else time.time(),
-        "max_attempts": int(schedule.get("max_attempts") or 0),
-        "engine_retry": schedule.get("engine_retry") or None,
-    }
-
-
 def _retry_engine_entry(lane: dict[str, Any]) -> dict[str, Any]:
     issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
     return {
@@ -719,6 +870,23 @@ def _retry_engine_entry(lane: dict[str, Any]) -> dict[str, Any]:
         "current_attempt": int(lane.get("attempt") or 0),
         "delay_type": "workflow-retry",
         "run_id": _lane_run_id(lane),
+    }
+
+
+def _retry_event_retry(retry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": retry.get("status"),
+        "stage": retry.get("stage"),
+        "target": retry.get("target"),
+        "reason": retry.get("reason"),
+        "attempt": retry.get("attempt") or retry.get("next_attempt"),
+        "current_attempt": retry.get("current_attempt"),
+        "max_attempts": retry.get("max_attempts"),
+        "delay_seconds": retry.get("delay_seconds"),
+        "backoff_seconds": retry.get("backoff_seconds") or retry.get("delay_seconds"),
+        "due_at": retry.get("due_at"),
+        "due_at_epoch": retry.get("due_at_epoch"),
+        "queued_at": retry.get("queued_at"),
     }
 
 
@@ -761,48 +929,24 @@ def _scheduler_entry(lane: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _engine_retry_updated_at(schedule: dict[str, Any]) -> str:
-    engine_retry = (
-        schedule.get("engine_retry")
-        if isinstance(schedule.get("engine_retry"), dict)
-        else {}
-    )
-    return str(engine_retry.get("updated_at") or "").strip()
-
-
-def _schedule_due_at_epoch(schedule: dict[str, Any]) -> float | None:
-    value = schedule.get("due_at_epoch")
-    if value in (None, ""):
-        engine_retry = (
-            schedule.get("engine_retry")
-            if isinstance(schedule.get("engine_retry"), dict)
-            else {}
-        )
-        value = engine_retry.get("due_at_epoch")
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _lane_retry_is_due(lane: dict[str, Any], *, now_epoch: float | None = None) -> bool:
     pending = (
         lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
     )
-    due_at_epoch = _retry_due_at_epoch(pending)
-    return (time.time() if now_epoch is None else now_epoch) >= due_at_epoch
+    return retry_is_due(pending, now_epoch=now_epoch)
 
 
-def _retry_due_at_epoch(pending_retry: dict[str, Any]) -> float:
-    value = pending_retry.get("due_at_epoch")
-    if value not in (None, ""):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            pass
-    return _iso_to_epoch(str(pending_retry.get("due_at") or ""), default=time.time())
+def _lane_transition_side(lane: dict[str, Any]) -> dict[str, Any]:
+    claim = lane.get("claim") if isinstance(lane.get("claim"), dict) else {}
+    return {
+        "status": lane.get("status"),
+        "stage": lane.get("stage"),
+        "actor": lane.get("actor"),
+        "attempt": lane.get("attempt"),
+        "claim_state": claim.get("state"),
+        "pending_retry": lane.get("pending_retry"),
+        "operator_attention": lane.get("operator_attention"),
+    }
 
 
 def _engine_store(config: WorkflowConfig) -> EngineStore:
@@ -947,10 +1091,6 @@ def _iso_to_epoch(value: str, *, default: float) -> float:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return default
-
-
-def _epoch_to_iso(value: float) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
 
 
 def _now_iso() -> str:

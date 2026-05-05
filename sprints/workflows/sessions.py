@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ from workflows.paths import runtime_paths
 _TERMINAL_LANE_STATUSES = {"complete", "released"}
 _RUNTIME_RUNNING_STATUSES = {"running"}
 _RUNTIME_FINAL_STATUSES = {"completed", "failed", "interrupted", "blocked"}
+_DISPATCH_ACTIVE_STATUSES = {"planned", "started", "running"}
+_DISPATCH_FINAL_STATUSES = {"completed", "failed", "interrupted", "blocked"}
 
 
 def actor_concurrency_usage(
@@ -73,6 +76,15 @@ def actor_concurrency_usage(
                 stage_name=session.get("stage") or stage_name,
                 run_id=session.get("run_id"),
                 source="lane_runtime_session",
+            )
+        dispatch = active_actor_dispatch(lane)
+        if dispatch:
+            add(
+                actor_name=dispatch.get("actor") or lane.get("actor"),
+                lane_id=lane_id,
+                stage_name=dispatch.get("stage") or stage_name,
+                run_id=dispatch.get("run_id") or dispatch.get("dispatch_id"),
+                source="lane_actor_dispatch",
             )
 
     for engine_session in _engine_store(config).runtime_sessions(limit=500):
@@ -133,6 +145,20 @@ def actor_dispatch_conflicts(
                 "status": session.get("status"),
             }
         )
+    dispatch = active_actor_dispatch(lane)
+    if dispatch:
+        conflicts.append(
+            {
+                "source": "lane_actor_dispatch",
+                "dispatch_id": dispatch.get("dispatch_id"),
+                "actor": dispatch.get("actor"),
+                "stage": dispatch.get("stage"),
+                "run_id": dispatch.get("run_id"),
+                "status": dispatch.get("status"),
+                "planned_at": dispatch.get("planned_at"),
+                "updated_at": dispatch.get("updated_at"),
+            }
+        )
     for engine_session in _engine_store(config).runtime_sessions(
         work_id=lane_id, limit=5
     ):
@@ -166,6 +192,104 @@ def actor_dispatch_conflicts(
     return _dedupe_conflicts(conflicts)
 
 
+def record_actor_dispatch_planned(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    actor_name: str,
+    stage_name: str,
+    runtime_meta: dict[str, Any],
+) -> dict[str, Any]:
+    planned_at = _now_iso()
+    dispatch_id = str(runtime_meta.get("dispatch_id") or uuid.uuid4().hex).strip()
+    dispatch = {
+        "dispatch_id": dispatch_id,
+        "lane_id": lane.get("lane_id"),
+        "actor": actor_name,
+        "stage": stage_name,
+        "attempt": int(lane.get("attempt") or 0),
+        "status": "planned",
+        "planned_at": planned_at,
+        "updated_at": planned_at,
+        "runtime": _runtime_meta_payload({**runtime_meta, "dispatch_id": dispatch_id}),
+        "branch": lane.get("branch"),
+        "pull_request": lane.get("pull_request"),
+    }
+    _set_actor_dispatch(lane=lane, dispatch=dispatch)
+    append_engine_event(
+        config=config,
+        lane=lane,
+        event_type=f"{config.workflow_name}.lane.actor_dispatch.planned",
+        payload={"dispatch": dispatch},
+    )
+    return dispatch
+
+
+def record_actor_dispatch_interrupted(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    reason: str,
+    message: str,
+    age_seconds: int,
+) -> dict[str, Any]:
+    dispatch = active_actor_dispatch(lane)
+    if not dispatch:
+        return {}
+    updated = _advance_actor_dispatch(
+        config=config,
+        lane=lane,
+        status="interrupted",
+        runtime_meta={
+            "last_event": reason,
+            "last_message": message,
+            "age_seconds": age_seconds,
+        },
+        message=message,
+        severity="warning",
+    )
+    return updated
+
+
+def active_actor_dispatch(lane: dict[str, Any]) -> dict[str, Any]:
+    dispatch = (
+        lane.get("actor_dispatch")
+        if isinstance(lane.get("actor_dispatch"), dict)
+        else {}
+    )
+    if actor_dispatch_is_active(dispatch):
+        return dispatch
+    for candidate in reversed(_lane_list(lane, "dispatch_journal")):
+        if isinstance(candidate, dict) and actor_dispatch_is_active(candidate):
+            return candidate
+    return {}
+
+
+def actor_dispatch_is_active(dispatch: dict[str, Any]) -> bool:
+    return (
+        normalize_actor_dispatch_status(str(dispatch.get("status") or ""))
+        in _DISPATCH_ACTIVE_STATUSES
+    )
+
+
+def actor_dispatch_updated_at(dispatch: dict[str, Any]) -> str:
+    return str(
+        dispatch.get("updated_at")
+        or dispatch.get("started_at")
+        or dispatch.get("planned_at")
+        or ""
+    ).strip()
+
+
+def normalize_actor_dispatch_status(status: str) -> str:
+    text = str(status or "").strip().lower()
+    if text in _DISPATCH_ACTIVE_STATUSES:
+        return text
+    if text in _DISPATCH_FINAL_STATUSES:
+        return text
+    return "failed" if text else ""
+
+
 def record_actor_runtime_start(
     *,
     config: WorkflowConfig,
@@ -190,6 +314,7 @@ def record_actor_runtime_start(
         {
             **_runtime_meta_payload(runtime_meta),
             "run_id": run["run_id"],
+            "dispatch_id": runtime_meta.get("dispatch_id"),
             "session_key": session_key,
             "actor": actor_name,
             "stage": stage_name,
@@ -202,6 +327,12 @@ def record_actor_runtime_start(
     _apply_runtime_session_ids(lane=lane, session=session)
     _set_latest_runtime_session(lane=lane, session_key=session_key, session=session)
     _upsert_engine_runtime_session(config=config, lane=lane)
+    _advance_actor_dispatch(
+        config=config,
+        lane=lane,
+        status="started",
+        runtime_meta={**runtime_meta, "run_id": run["run_id"]},
+    )
     append_engine_event(
         config=config,
         lane=lane,
@@ -223,6 +354,12 @@ def record_actor_runtime_progress(
     _apply_runtime_session_ids(lane=lane, session=session)
     _set_latest_runtime_session(lane=lane, session_key=session_key, session=session)
     _upsert_engine_runtime_session(config=config, lane=lane)
+    _advance_actor_dispatch(
+        config=config,
+        lane=lane,
+        status="running",
+        runtime_meta=runtime_meta,
+    )
     lane["last_progress_at"] = _now_iso()
     append_engine_event(
         config=config,
@@ -254,6 +391,14 @@ def record_actor_runtime_result(
         error=str(runtime_meta.get("last_message") or "") or None,
         metadata=_runtime_meta_payload(runtime_meta),
         completed_at=updated_at,
+    )
+    _advance_actor_dispatch(
+        config=config,
+        lane=lane,
+        status=session["status"],
+        runtime_meta=runtime_meta,
+        message=str(runtime_meta.get("last_message") or "") or None,
+        severity="warning" if session["status"] in {"failed", "blocked"} else "info",
     )
     lane["last_progress_at"] = updated_at
     append_engine_event(
@@ -294,6 +439,14 @@ def record_actor_runtime_interrupted(
         error=message,
         metadata={"reason": reason, "age_seconds": age_seconds},
         completed_at=interrupted_at,
+    )
+    _advance_actor_dispatch(
+        config=config,
+        lane=lane,
+        status="interrupted",
+        runtime_meta={"reason": reason, "age_seconds": age_seconds},
+        message=message,
+        severity="warning",
     )
     lane["last_progress_at"] = interrupted_at
     append_engine_event(
@@ -756,6 +909,113 @@ def _runtime_meta_payload(runtime_meta: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _advance_actor_dispatch(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    status: str,
+    runtime_meta: dict[str, Any],
+    message: str | None = None,
+    severity: str = "info",
+) -> dict[str, Any]:
+    dispatch_id = str(runtime_meta.get("dispatch_id") or "").strip()
+    dispatch = _actor_dispatch_for_update(lane=lane, dispatch_id=dispatch_id)
+    if not dispatch:
+        session = (
+            lane.get("runtime_session")
+            if isinstance(lane.get("runtime_session"), dict)
+            else {}
+        )
+        dispatch = {
+            "dispatch_id": dispatch_id or uuid.uuid4().hex,
+            "lane_id": lane.get("lane_id"),
+            "actor": session.get("actor") or lane.get("actor"),
+            "stage": session.get("stage") or lane.get("stage"),
+            "attempt": int(lane.get("attempt") or 0),
+            "planned_at": _now_iso(),
+        }
+    updated_at = _now_iso()
+    normalized = normalize_actor_dispatch_status(status) or status
+    dispatch.update(
+        {
+            "status": normalized,
+            "updated_at": updated_at,
+            "runtime": {
+                **dict(dispatch.get("runtime") or {}),
+                **_runtime_meta_payload(runtime_meta),
+            },
+            "run_id": runtime_meta.get("run_id") or dispatch.get("run_id"),
+            "thread_id": runtime_meta.get("thread_id") or dispatch.get("thread_id"),
+            "turn_id": runtime_meta.get("turn_id") or dispatch.get("turn_id"),
+            "session_id": runtime_meta.get("session_id") or dispatch.get("session_id"),
+        }
+    )
+    if normalized == "started":
+        dispatch["started_at"] = dispatch.get("started_at") or updated_at
+    if normalized == "running":
+        dispatch["last_progress_at"] = updated_at
+    if normalized in _DISPATCH_FINAL_STATUSES:
+        dispatch["completed_at"] = updated_at
+    if message:
+        dispatch["message"] = message
+    _set_actor_dispatch(lane=lane, dispatch=dispatch)
+    append_engine_event(
+        config=config,
+        lane=lane,
+        event_type=f"{config.workflow_name}.lane.actor_dispatch.{normalized}",
+        payload={"dispatch": dispatch},
+        severity=severity,
+    )
+    return dispatch
+
+
+def _actor_dispatch_for_update(
+    *, lane: dict[str, Any], dispatch_id: str
+) -> dict[str, Any]:
+    current = (
+        lane.get("actor_dispatch")
+        if isinstance(lane.get("actor_dispatch"), dict)
+        else {}
+    )
+    if dispatch_id and current.get("dispatch_id") == dispatch_id:
+        return current
+    if not dispatch_id and actor_dispatch_is_active(current):
+        return current
+    for record in reversed(_lane_list(lane, "dispatch_journal")):
+        if not isinstance(record, dict):
+            continue
+        if dispatch_id and record.get("dispatch_id") == dispatch_id:
+            return record
+        if not dispatch_id and actor_dispatch_is_active(record):
+            return record
+    return {}
+
+
+def _set_actor_dispatch(*, lane: dict[str, Any], dispatch: dict[str, Any]) -> None:
+    journal = _lane_list(lane, "dispatch_journal")
+    dispatch_id = str(dispatch.get("dispatch_id") or "").strip()
+    replaced = False
+    for index, record in enumerate(journal):
+        if isinstance(record, dict) and record.get("dispatch_id") == dispatch_id:
+            journal[index] = dispatch
+            replaced = True
+            break
+    if not replaced:
+        journal.append(dispatch)
+    if len(journal) > 50:
+        del journal[:-50]
+    lane["actor_dispatch"] = dispatch
+
+
+def _actor_dispatch_matches(
+    dispatch: dict[str, Any], *, actor_name: str, stage_name: str
+) -> bool:
+    return (
+        str(dispatch.get("actor") or "").strip() == str(actor_name or "").strip()
+        and str(dispatch.get("stage") or "").strip() == str(stage_name or "").strip()
+    )
+
+
 def _mutable_actor_runtime_session(
     *, lane: dict[str, Any], actor_name: str, stage_name: str
 ) -> tuple[str, dict[str, Any]]:
@@ -839,6 +1099,14 @@ def _lane_mapping(lane: dict[str, Any], key: str) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     lane[key] = {}
+    return lane[key]
+
+
+def _lane_list(lane: dict[str, Any], key: str) -> list[Any]:
+    value = lane.get(key)
+    if isinstance(value, list):
+        return value
+    lane[key] = []
     return lane[key]
 
 

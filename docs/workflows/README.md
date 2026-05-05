@@ -15,6 +15,12 @@ selects a different bundled template.
 | `sprints/workflows/templates/release.md` | Release planning and verification template. |
 | `sprints/workflows/templates/triage.md` | Incoming work triage template. |
 
+## Implementation Specs
+
+| Spec | Purpose |
+| --- | --- |
+| [Runner Split](runner-split-spec.md) | Implemented split of `sprints/workflows/runner.py` into clear execution modules. |
+
 ## Contract
 
 Use `WORKFLOW.md` in the target repo.

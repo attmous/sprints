@@ -110,20 +110,62 @@ def _run_create_pull_request(
     )
     if not body:
         body = _default_pull_request_body(inputs)
+    idempotency_key = _first_text(inputs, keys=("idempotency_key",))
+    if idempotency_key:
+        body = _with_idempotency_marker(body, idempotency_key)
     try:
         client = build_code_host_client(
             workflow_root=Path(str(inputs.get("workflow_root") or ".")),
             code_host_cfg=code_host_cfg,
             repo_path=repo_path,
         )
+        existing = _existing_pull_request_for_head(client, head)
+        if existing:
+            return ActionResult(
+                name=action.name,
+                ok=True,
+                output={
+                    "url": existing.get("url"),
+                    "head": head,
+                    "title": existing.get("title") or title,
+                    "body": body,
+                    "already_exists": True,
+                    "idempotency_key": idempotency_key,
+                },
+            )
         url = client.create_pull_request(head=head, title=title, body=body)
     except Exception as exc:
         return _action_error(action, f"pull request creation failed: {exc}")
     return ActionResult(
         name=action.name,
         ok=True,
-        output={"url": url, "head": head, "title": title, "body": body},
+        output={
+            "url": url,
+            "head": head,
+            "title": title,
+            "body": body,
+            "idempotency_key": idempotency_key,
+        },
     )
+
+
+def _existing_pull_request_for_head(client: Any, head: str) -> dict[str, Any]:
+    list_open = getattr(client, "list_open_pull_requests", None)
+    if not callable(list_open):
+        return {}
+    try:
+        pull_requests = list_open(
+            limit=100,
+            fields="number,title,url,headRefName,headRefOid,isDraft,updatedAt",
+        )
+    except Exception:
+        return {}
+    for pull_request in pull_requests:
+        if not isinstance(pull_request, dict):
+            continue
+        if str(pull_request.get("headRefName") or "").strip() == head:
+            return pull_request
+    return {}
 
 
 def _action_error(action: ActionConfig, message: str) -> ActionResult:
@@ -183,3 +225,11 @@ def _default_pull_request_body(inputs: dict[str, Any]) -> str:
         lines.append("Verification:")
         lines.extend(f"- {item}" for item in verification)
     return "\n".join(lines).strip() or "Created by Sprints change-delivery."
+
+
+def _with_idempotency_marker(body: str, key: str) -> str:
+    marker = f"<!-- sprints:idempotency-key:{key} -->"
+    text = str(body or "").strip()
+    if marker in text:
+        return text
+    return f"{text}\n\n{marker}".strip()

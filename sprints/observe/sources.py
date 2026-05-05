@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from engine import EngineStore
 from engine.state import (
     read_engine_events,
     read_engine_runs,
@@ -155,6 +156,17 @@ def _active_state_lanes(
     ]
 
 
+def _state_lanes_by_id(
+    workflow_root: Path, workflow_name: str
+) -> dict[str, dict[str, Any]]:
+    lanes: dict[str, dict[str, Any]] = {}
+    for lane in _state_lanes(workflow_root, workflow_name):
+        lane_id = str(lane.get("lane_id") or "").strip()
+        if lane_id:
+            lanes[lane_id] = lane
+    return lanes
+
+
 def _lane_is_terminal(lane: dict[str, Any]) -> bool:
     return str(lane.get("status") or "").strip() in {
         "complete",
@@ -189,6 +201,10 @@ def _state_lane_entry(lane: dict[str, Any], *, workflow_name: str) -> dict[str, 
     pending_retry = (
         lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
     )
+    retry_history = [
+        record for record in lane.get("retry_history") or [] if isinstance(record, dict)
+    ]
+    retry_latest = retry_history[-1] if retry_history else {}
     attention = (
         lane.get("operator_attention")
         if isinstance(lane.get("operator_attention"), dict)
@@ -197,6 +213,16 @@ def _state_lane_entry(lane: dict[str, Any], *, workflow_name: str) -> dict[str, 
     runtime_session = (
         lane.get("runtime_session")
         if isinstance(lane.get("runtime_session"), dict)
+        else {}
+    )
+    actor_dispatch = (
+        lane.get("actor_dispatch")
+        if isinstance(lane.get("actor_dispatch"), dict)
+        else {}
+    )
+    dispatch_runtime = (
+        actor_dispatch.get("runtime")
+        if isinstance(actor_dispatch.get("runtime"), dict)
         else {}
     )
     return {
@@ -218,14 +244,144 @@ def _state_lane_entry(lane: dict[str, Any], *, workflow_name: str) -> dict[str, 
         "retry_at": pending_retry.get("due_at"),
         "retry_target": pending_retry.get("target"),
         "retry_attempt": pending_retry.get("attempt"),
+        "retry_current_attempt": pending_retry.get("current_attempt")
+        or retry_latest.get("current_attempt"),
+        "retry_max_attempts": pending_retry.get("max_attempts")
+        or retry_latest.get("max_attempts"),
+        "retry_delay_seconds": pending_retry.get("delay_seconds")
+        or retry_latest.get("delay_seconds"),
+        "retry_backoff_seconds": pending_retry.get("delay_seconds")
+        or retry_latest.get("delay_seconds"),
+        "retry_reason": pending_retry.get("reason") or retry_latest.get("reason"),
+        "retry_history_count": len(retry_history),
         "operator_attention_reason": attention.get("reason"),
         "operator_attention_message": attention.get("message"),
         "last_progress_at": lane.get("last_progress_at"),
         "runtime_status": runtime_session.get("status"),
+        "dispatch_id": actor_dispatch.get("dispatch_id"),
+        "dispatch_status": actor_dispatch.get("status"),
+        "dispatch_actor": actor_dispatch.get("actor"),
+        "dispatch_stage": actor_dispatch.get("stage"),
+        "dispatch_mode": dispatch_runtime.get("dispatch_mode"),
+        "dispatch_updated_at": actor_dispatch.get("updated_at"),
+        "dispatch_journal_count": len(lane.get("dispatch_journal") or []),
+        "side_effect_count": len(lane.get("side_effects") or []),
         "thread_id": lane.get("thread_id") or runtime_session.get("thread_id"),
         "turn_id": lane.get("turn_id") or runtime_session.get("turn_id"),
         "kind": status,
         "work_item": work_item,
+    }
+
+
+def _engine_work_items(workflow_root: Path, workflow_name: str) -> list[dict[str, Any]]:
+    try:
+        return EngineStore(
+            db_path=runtime_paths(workflow_root)["db_path"],
+            workflow=workflow_name,
+        ).work_items(limit=500)
+    except Exception:
+        return []
+
+
+def _engine_runtime_sessions(
+    workflow_root: Path, workflow_name: str
+) -> dict[str, dict[str, Any]]:
+    try:
+        sessions = EngineStore(
+            db_path=runtime_paths(workflow_root)["db_path"],
+            workflow=workflow_name,
+        ).runtime_sessions(limit=500)
+    except Exception:
+        return {}
+    return {
+        str(session.get("work_id") or session.get("issue_id") or ""): session
+        for session in sessions
+        if isinstance(session, dict)
+    }
+
+
+def _engine_lane_entry(
+    work_item: dict[str, Any],
+    *,
+    workflow_name: str,
+    state_lane: dict[str, Any] | None,
+    runtime_session: dict[str, Any] | None,
+) -> dict[str, Any]:
+    metadata = (
+        work_item.get("metadata") if isinstance(work_item.get("metadata"), dict) else {}
+    )
+    state_entry = (
+        _state_lane_entry(state_lane, workflow_name=workflow_name)
+        if isinstance(state_lane, dict)
+        else {}
+    )
+    lane_id = str(work_item.get("work_id") or state_entry.get("lane_id") or "")
+    runtime_session = runtime_session if isinstance(runtime_session, dict) else {}
+    pull_request = metadata.get("pull_request") or state_entry.get("pull_request") or {}
+    attention = (
+        metadata.get("operator_attention")
+        if isinstance(metadata.get("operator_attention"), dict)
+        else {}
+    )
+    if not attention and state_entry.get("operator_attention_reason"):
+        attention = {
+            "reason": state_entry.get("operator_attention_reason"),
+            "message": state_entry.get("operator_attention_message"),
+        }
+    work_item_ref = work_item_from_issue(
+        {
+            "id": lane_id or work_item.get("identifier") or "unknown",
+            "identifier": work_item.get("identifier") or lane_id,
+            "title": work_item.get("title") or "",
+            "url": work_item.get("url"),
+            "state": work_item.get("state"),
+        },
+        source=workflow_name,
+    ).to_dict()
+    return {
+        **state_entry,
+        "lane_id": lane_id,
+        "state": metadata.get("stage")
+        or state_entry.get("state")
+        or work_item.get("state"),
+        "workflow_state": metadata.get("stage")
+        or state_entry.get("workflow_state")
+        or work_item.get("state"),
+        "issue_identifier": work_item.get("identifier")
+        or state_entry.get("issue_identifier")
+        or lane_id,
+        "issue_title": work_item.get("title") or state_entry.get("issue_title"),
+        "lane_status": work_item.get("state") or state_entry.get("lane_status"),
+        "status": work_item.get("state") or state_entry.get("status"),
+        "stage": metadata.get("stage") or state_entry.get("stage"),
+        "actor": metadata.get("actor") or state_entry.get("actor"),
+        "attempt": metadata.get("attempt") or state_entry.get("attempt"),
+        "branch": metadata.get("branch") or state_entry.get("branch"),
+        "pull_request": pull_request or None,
+        "pull_request_number": (pull_request or {}).get("number")
+        if isinstance(pull_request, dict)
+        else state_entry.get("pull_request_number"),
+        "pull_request_url": (pull_request or {}).get("url")
+        if isinstance(pull_request, dict)
+        else state_entry.get("pull_request_url"),
+        "operator_attention_reason": attention.get("reason"),
+        "operator_attention_message": attention.get("message"),
+        "runtime_status": runtime_session.get("status")
+        or state_entry.get("runtime_status"),
+        "thread_id": runtime_session.get("thread_id")
+        or metadata.get("thread_id")
+        or state_entry.get("thread_id"),
+        "turn_id": runtime_session.get("turn_id")
+        or metadata.get("turn_id")
+        or state_entry.get("turn_id"),
+        "last_progress_at": runtime_session.get("updated_at")
+        or work_item.get("updated_at")
+        or state_entry.get("last_progress_at"),
+        "engine_updated_at": work_item.get("updated_at"),
+        "lane_status_source": "engine_work_items",
+        "state_json_present": isinstance(state_lane, dict),
+        "kind": work_item.get("state") or state_entry.get("kind"),
+        "work_item": work_item_ref,
     }
 
 
@@ -337,10 +493,33 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
             if isinstance(row, dict)
         ]
 
-    return [
-        _state_lane_entry(lane, workflow_name="change-delivery")
-        for lane in _active_state_lanes(workflow_root, "change-delivery")
-    ]
+    state_lanes = _state_lanes_by_id(workflow_root, "change-delivery")
+    runtime_sessions = _engine_runtime_sessions(workflow_root, "change-delivery")
+    engine_entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for work_item in _engine_work_items(workflow_root, "change-delivery"):
+        if not isinstance(work_item, dict):
+            continue
+        lane_id = str(work_item.get("work_id") or "").strip()
+        if not lane_id:
+            continue
+        entry = _engine_lane_entry(
+            work_item,
+            workflow_name="change-delivery",
+            state_lane=state_lanes.get(lane_id),
+            runtime_session=runtime_sessions.get(lane_id),
+        )
+        seen.add(lane_id)
+        if not _lane_is_terminal({"status": entry.get("status")}):
+            engine_entries.append(entry)
+    for lane in _active_state_lanes(workflow_root, "change-delivery"):
+        lane_id = str(lane.get("lane_id") or "").strip()
+        if lane_id and lane_id not in seen:
+            entry = _state_lane_entry(lane, workflow_name="change-delivery")
+            entry["lane_status_source"] = "workflow_state"
+            entry["state_json_present"] = True
+            engine_entries.append(entry)
+    return engine_entries
 
 
 def alert_state(workflow_root: Path) -> dict[str, Any]:
@@ -384,6 +563,10 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         return {}
     if workflow_name == "change-delivery":
         scheduler_payload = _engine_scheduler(workflow_root, "change-delivery")
+        retry_wakeup = EngineStore(
+            db_path=runtime_paths(workflow_root)["db_path"],
+            workflow="change-delivery",
+        ).retry_wakeup()
         totals = scheduler_payload.get("runtime_totals") or {}
         runtime_sessions = _runtime_session_entries(scheduler_payload)
         latest_runs = _engine_runs(workflow_root, "change-delivery")
@@ -419,6 +602,7 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
             "decision_ready_count": decision_ready_count,
             "running_count": running_count,
             "retry_count": retry_count,
+            "retry_wakeup": retry_wakeup,
             "operator_attention_count": attention_count,
             "canceling_count": len(
                 [
@@ -444,6 +628,10 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         }
     if workflow_name != "issue-runner":
         scheduler_payload = _engine_scheduler(workflow_root, workflow_name)
+        retry_wakeup = EngineStore(
+            db_path=runtime_paths(workflow_root)["db_path"],
+            workflow=workflow_name,
+        ).retry_wakeup()
         totals = scheduler_payload.get("runtime_totals") or {}
         running = scheduler_payload.get("running") or []
         retry_queue = scheduler_payload.get("retry_queue") or []
@@ -453,6 +641,7 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
             "updated_at": scheduler_payload.get("updated_at"),
             "running_count": len(running),
             "retry_count": len(retry_queue),
+            "retry_wakeup": retry_wakeup,
             "selected_issue": None,
             "latest_runs": _engine_runs(workflow_root, workflow_name),
             "total_tokens": int(totals.get("total_tokens") or 0),

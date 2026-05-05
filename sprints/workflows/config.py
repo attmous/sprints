@@ -117,11 +117,7 @@ class WorkflowConfig:
         )
         audit_log_path = _resolve(
             root,
-            str(
-                storage_raw.get(
-                    "audit-log", f".sprints/{workflow_name}-audit.jsonl"
-                )
-            ),
+            str(storage_raw.get("audit-log", f".sprints/{workflow_name}-audit.jsonl")),
         )
         orchestrator_actor = str(dict(raw.get("orchestrator") or {}).get("actor", ""))
         config = cls(

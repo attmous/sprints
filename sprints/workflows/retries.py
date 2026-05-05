@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
+from engine import pending_retry_projection, retry_is_due, retry_record
 from workflows.config import WorkflowConfig
 from workflows.lane_state import (
-    _clear_engine_retry,
-    _completion_cleanup_retry_pending,
-    _engine_store,
-    _epoch_to_iso,
-    _iso_to_epoch,
-    _lane_run_id,
-    _now_iso,
-    _retry_engine_entry,
-    _retry_policy,
+    append_engine_event,
+    clear_engine_retry,
+    completion_cleanup_retry_pending,
+    engine_store,
+    lane_run_id,
+    lane_transition_side,
+    now_iso,
+    retry_engine_entry,
+    retry_policy,
     lane_list,
     set_lane_operator_attention,
     set_lane_status,
@@ -27,23 +27,39 @@ def queue_lane_retry(
     *, config: WorkflowConfig, lane: dict[str, Any], decision: OrchestratorDecision
 ) -> dict[str, Any]:
     current_attempt = max(int(lane.get("attempt") or 1), 1)
-    schedule = _engine_store(config).schedule_retry(
+    schedule = engine_store(config).schedule_retry(
         work_id=str(lane.get("lane_id") or ""),
-        entry=_retry_engine_entry(lane),
-        policy=_retry_policy(config),
+        entry=retry_engine_entry(lane),
+        policy=retry_policy(config),
         current_attempt=current_attempt,
         error=decision.reason or "retry requested",
         delay_type="workflow-retry",
-        run_id=_lane_run_id(lane),
-        now_iso=_now_iso(),
+        run_id=lane_run_id(lane),
+        now_iso=now_iso(),
     )
-    record = _retry_record(
-        decision=decision,
+    record = retry_record(
+        stage=decision.stage,
+        target=decision.target,
+        reason=decision.reason,
+        inputs=decision.inputs,
         schedule=schedule,
+        now_iso=now_iso(),
     )
     retry_history = lane_list(lane, "retry_history")
     if schedule.get("status") == "limit_exceeded":
         retry_history.append(record)
+        append_engine_event(
+            config=config,
+            lane=lane,
+            event_type=f"{config.workflow_name}.lane.retry.limit_exceeded",
+            payload=_retry_event_payload(
+                lane=lane,
+                decision=decision,
+                retry=record,
+                status="limit_exceeded",
+            ),
+            severity="error",
+        )
         set_lane_operator_attention(
             config=config,
             lane=lane,
@@ -66,7 +82,14 @@ def queue_lane_retry(
             "reason": "retry_limit_exceeded",
         }
 
-    pending = _pending_retry_projection(decision=decision, schedule=schedule)
+    pending = pending_retry_projection(
+        stage=decision.stage,
+        target=decision.target,
+        reason=decision.reason,
+        inputs=decision.inputs,
+        schedule=schedule,
+    )
+    previous = lane_transition_side(lane)
     next_attempt = int(pending.get("attempt") or current_attempt)
     lane["attempt"] = next_attempt
     lane["stage"] = decision.stage
@@ -79,6 +102,19 @@ def queue_lane_retry(
         status="retry_queued",
         reason=decision.reason or "retry requested",
         actor=None,
+        previous=previous,
+    )
+    append_engine_event(
+        config=config,
+        lane=lane,
+        event_type=f"{config.workflow_name}.lane.retry.scheduled",
+        payload=_retry_event_payload(
+            lane=lane,
+            decision=decision,
+            retry=pending,
+            status="queued",
+        ),
+        severity="warning",
     )
     return {
         "lane_id": lane.get("lane_id"),
@@ -94,7 +130,7 @@ def consume_lane_retry(*, config: WorkflowConfig, lane: dict[str, Any]) -> None:
     if not isinstance(lane.get("pending_retry"), dict):
         return
     lane["pending_retry"] = None
-    _clear_engine_retry(config=config, lane=lane)
+    clear_engine_retry(config=config, lane=lane)
 
 
 def lane_retry_inputs(
@@ -102,7 +138,7 @@ def lane_retry_inputs(
 ) -> dict[str, Any]:
     if str(lane.get("status") or "").strip() != "retry_queued":
         return inputs
-    if _completion_cleanup_retry_pending(lane):
+    if completion_cleanup_retry_pending(lane):
         return inputs
     pending = (
         lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
@@ -117,85 +153,35 @@ def lane_retry_is_due(lane: dict[str, Any], *, now_epoch: float | None = None) -
     pending = (
         lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
     )
-    due_at_epoch = _retry_due_at_epoch(pending)
-    return (time.time() if now_epoch is None else now_epoch) >= due_at_epoch
+    return retry_is_due(pending, now_epoch=now_epoch)
 
 
-def _retry_record(
+def _retry_event_payload(
     *,
+    lane: dict[str, Any],
     decision: OrchestratorDecision,
-    schedule: dict[str, Any],
+    retry: dict[str, Any],
+    status: str,
 ) -> dict[str, Any]:
-    due_at_epoch = _schedule_due_at_epoch(schedule)
     return {
-        "status": schedule.get("status"),
-        "queued_at": _engine_retry_updated_at(schedule) or _now_iso(),
+        "lane_id": lane.get("lane_id"),
+        "status": status,
         "stage": decision.stage,
         "target": decision.target,
-        "reason": decision.reason,
-        "inputs": decision.inputs,
-        "current_attempt": int(schedule.get("current_attempt") or 0),
-        "next_attempt": int(schedule.get("next_attempt") or 0),
-        "max_attempts": int(schedule.get("max_attempts") or 0),
-        "delay_seconds": schedule.get("delay_seconds"),
-        "due_at": _epoch_to_iso(due_at_epoch) if due_at_epoch is not None else None,
-        "due_at_epoch": due_at_epoch,
-        "engine_retry": schedule.get("engine_retry") or None,
+        "failure_reason": decision.reason,
+        "retry": {
+            "status": retry.get("status") or status,
+            "stage": retry.get("stage") or decision.stage,
+            "target": retry.get("target") or decision.target,
+            "reason": retry.get("reason") or decision.reason,
+            "attempt": retry.get("attempt") or retry.get("next_attempt"),
+            "current_attempt": retry.get("current_attempt"),
+            "max_attempts": retry.get("max_attempts"),
+            "delay_seconds": retry.get("delay_seconds"),
+            "backoff_seconds": retry.get("backoff_seconds")
+            or retry.get("delay_seconds"),
+            "due_at": retry.get("due_at"),
+            "due_at_epoch": retry.get("due_at_epoch"),
+            "queued_at": retry.get("queued_at"),
+        },
     }
-
-
-def _pending_retry_projection(
-    *, decision: OrchestratorDecision, schedule: dict[str, Any]
-) -> dict[str, Any]:
-    due_at_epoch = _schedule_due_at_epoch(schedule)
-    return {
-        "source": "engine_retry_queue",
-        "stage": decision.stage,
-        "target": decision.target,
-        "reason": decision.reason,
-        "inputs": decision.inputs,
-        "attempt": int(schedule.get("next_attempt") or 0),
-        "current_attempt": int(schedule.get("current_attempt") or 0),
-        "queued_at": _engine_retry_updated_at(schedule) or _now_iso(),
-        "delay_seconds": int(schedule.get("delay_seconds") or 0),
-        "due_at": _epoch_to_iso(due_at_epoch or time.time()),
-        "due_at_epoch": due_at_epoch if due_at_epoch is not None else time.time(),
-        "max_attempts": int(schedule.get("max_attempts") or 0),
-        "engine_retry": schedule.get("engine_retry") or None,
-    }
-
-
-def _engine_retry_updated_at(schedule: dict[str, Any]) -> str:
-    engine_retry = (
-        schedule.get("engine_retry")
-        if isinstance(schedule.get("engine_retry"), dict)
-        else {}
-    )
-    return str(engine_retry.get("updated_at") or "").strip()
-
-
-def _schedule_due_at_epoch(schedule: dict[str, Any]) -> float | None:
-    value = schedule.get("due_at_epoch")
-    if value in (None, ""):
-        engine_retry = (
-            schedule.get("engine_retry")
-            if isinstance(schedule.get("engine_retry"), dict)
-            else {}
-        )
-        value = engine_retry.get("due_at_epoch")
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _retry_due_at_epoch(pending_retry: dict[str, Any]) -> float:
-    value = pending_retry.get("due_at_epoch")
-    if value not in (None, ""):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            pass
-    return _iso_to_epoch(str(pending_retry.get("due_at") or ""), default=time.time())

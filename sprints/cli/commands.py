@@ -41,9 +41,7 @@ from workflows.daemon import (
     workflow_daemon_status,
     workflow_daemon_up,
 )
-from workflows.runner import (
-    build_status as build_workflow_status,
-)
+from workflows.status import build_status as build_workflow_status
 from runtimes.codex_service import (
     CodexAppServerError,
     DEFAULT_CODEX_APP_SERVER_HEALTHCHECK_PATH,

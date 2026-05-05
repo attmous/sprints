@@ -1,4 +1,8 @@
-"""Public loader API for repo-owned workflow contracts."""
+"""Workflow contract and policy loading."""
+
+from __future__ import annotations
+
+from pathlib import Path
 
 from workflows.contracts import (
     DEFAULT_WORKFLOW_MARKDOWN_FILENAME,
@@ -24,6 +28,12 @@ from workflows.contracts import (
     write_workflow_contract_pointer,
 )
 
+
+def load_workflow_policy(workflow_root: Path) -> WorkflowPolicy:
+    contract = load_workflow_contract(workflow_root)
+    return parse_workflow_policy(contract.prompt_template)
+
+
 __all__ = [
     "DEFAULT_WORKFLOW_MARKDOWN_FILENAME",
     "WORKFLOW_CONTRACT_POINTER_RELATIVE_PATH",
@@ -36,6 +46,7 @@ __all__ = [
     "WorkflowPolicyError",
     "find_repo_workflow_contract_path",
     "find_workflow_contract_path",
+    "load_workflow_policy",
     "load_workflow_contract",
     "load_workflow_contract_file",
     "parse_workflow_policy",

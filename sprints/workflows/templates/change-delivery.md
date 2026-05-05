@@ -156,6 +156,10 @@ ask the orchestrator to decide. The runner owns that recovery: keep the lane
 claimed, queue a durable completion-cleanup retry, and only raise
 `operator_attention` when the retry limit is exhausted.
 
+Runner-owned side effects use idempotency keys. Do not ask actors to repeat
+merge, label cleanup, action, or notification mechanics when the lane already
+contains a completed matching side effect.
+
 Move from `deliver` to `review` only when the implementer returned
 `status: done`, a concrete `pull_request.url`, and non-empty verification
 evidence. Move from `review` to `done` only when the reviewer returned
@@ -183,11 +187,11 @@ keeps the target stage, target actor, feedback, attempt, due time, and retry
 history as actor handoff context. When the retry limit is reached, raise
 `operator_attention` instead of requesting another retry.
 
-When the runner marks a stale running actor as interrupted and
-`recovery.auto-retry-interrupted` is enabled, it queues a retry to the same
-stage and actor with `inputs.recovery`. Dispatch that retry when due so the
-actor can resume from the recorded runtime session. If recovery is missing actor
-or stage context, raise `operator_attention`.
+When the runner marks a stale running actor or stale actor dispatch journal as
+interrupted and `recovery.auto-retry-interrupted` is enabled, it queues a retry
+to the same stage and actor with `inputs.recovery`. Dispatch that retry when due
+so the actor can resume from recorded runtime or dispatch artifacts. If recovery
+is missing actor or stage context, raise `operator_attention`.
 
 Return JSON only:
 

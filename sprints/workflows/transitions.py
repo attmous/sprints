@@ -8,15 +8,16 @@ from workflows import sessions
 from workflows import teardown as teardown_flow
 from workflows.config import WorkflowConfig
 from workflows.lane_state import (
-    _append_engine_event,
-    _blocker_reason,
-    _clear_engine_retry,
-    _completion_cleanup_retry_pending,
-    _concurrency_config,
-    _first_text,
-    _normalize_pull_request,
-    _now_iso,
-    _release_lane_lease,
+    append_engine_event,
+    blocker_reason,
+    clear_engine_retry,
+    completion_cleanup_retry_pending,
+    concurrency_config,
+    first_text,
+    lane_transition_side,
+    normalize_pull_request,
+    now_iso,
+    release_lane_lease,
     active_lanes,
     append_lane_event,
     lane_is_terminal,
@@ -24,11 +25,10 @@ from workflows.lane_state import (
     lane_mapping,
     lane_recovery_artifacts,
     lane_stage,
-    now_iso,
     set_lane_operator_attention,
     set_lane_status,
 )
-from workflows.notifications import _notify_review_changes_requested
+from workflows.notifications import notify_review_changes_requested
 from workflows.orchestrator import OrchestratorDecision
 from workflows.retries import lane_retry_is_due
 
@@ -81,7 +81,7 @@ def validate_decision_for_lane(
 def _validate_retry_dispatch(
     *, lane: dict[str, Any], decision: OrchestratorDecision
 ) -> None:
-    if _completion_cleanup_retry_pending(lane):
+    if completion_cleanup_retry_pending(lane):
         raise RuntimeError(
             f"lane {lane.get('lane_id')} retry is runner-owned completion cleanup"
         )
@@ -167,7 +167,7 @@ def _clear_superseded_reviewer_changes(
             "actor": "reviewer",
             "stage": "review",
             "superseded_by": "implementer",
-            "superseded_at": _now_iso(),
+            "superseded_at": now_iso(),
             "output": review,
         }
     )
@@ -202,7 +202,7 @@ def validate_actor_capacity(
     actor_name: str,
     dispatch_counts: dict[str, int],
 ) -> None:
-    concurrency = _concurrency_config(config)
+    concurrency = concurrency_config(config)
     actor_limits = (
         concurrency.get("actor_limits")
         if isinstance(concurrency.get("actor_limits"), dict)
@@ -220,7 +220,7 @@ def actor_concurrency_usage(*, config: WorkflowConfig, state: Any) -> dict[str, 
     )
 
 
-def _actor_capacity_snapshot(
+def actor_capacity_snapshot(
     *, concurrency: dict[str, Any], actor_usage: dict[str, int]
 ) -> dict[str, dict[str, int]]:
     capacities = (
@@ -301,14 +301,16 @@ def advance_lane(
         return
     if next_stage not in config.stages:
         raise RuntimeError(f"unknown target stage: {next_stage}")
+    previous = lane_transition_side(lane)
     lane["stage"] = next_stage
     lane["pending_retry"] = None
-    _clear_engine_retry(config=config, lane=lane)
+    clear_engine_retry(config=config, lane=lane)
     set_lane_status(
         config=config,
         lane=lane,
         status="waiting",
         reason=f"advanced to {next_stage}",
+        previous=previous,
     )
 
 
@@ -319,11 +321,13 @@ def decision_ready_lanes(state: Any) -> list[dict[str, Any]]:
 
 
 def lane_needs_orchestrator_decision(lane: dict[str, Any]) -> bool:
+    if sessions.active_actor_dispatch(lane):
+        return False
     status = str(lane.get("status") or "").strip().lower()
     if status in {"claimed", "waiting"}:
         return True
     if status == "retry_queued":
-        if _completion_cleanup_retry_pending(lane):
+        if completion_cleanup_retry_pending(lane):
             return False
         return lane_retry_is_due(lane)
     return False
@@ -334,23 +338,23 @@ def complete_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) 
         config=config,
         lane=lane,
         reason=reason,
-        ops=_teardown_ops(),
+        ops=teardown_ops(),
     )
 
 
-def _teardown_ops() -> teardown_flow.TeardownOps:
+def teardown_ops() -> teardown_flow.TeardownOps:
     return teardown_flow.TeardownOps(
         set_lane_status=set_lane_status,
         set_lane_operator_attention=set_lane_operator_attention,
-        clear_engine_retry=_clear_engine_retry,
-        release_lane_lease=_release_lane_lease,
-        append_engine_event=_append_engine_event,
+        clear_engine_retry=clear_engine_retry,
+        release_lane_lease=release_lane_lease,
+        append_engine_event=append_engine_event,
     )
 
 
 def release_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -> None:
     lane["pending_retry"] = None
-    _clear_engine_retry(config=config, lane=lane)
+    clear_engine_retry(config=config, lane=lane)
     set_lane_status(
         config=config,
         lane=lane,
@@ -358,7 +362,7 @@ def release_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -
         reason=reason,
         actor=None,
     )
-    _release_lane_lease(config=config, lane=lane, reason=reason)
+    release_lane_lease(config=config, lane=lane, reason=reason)
 
 
 def target_or_single(*, target: str | None, values: tuple[str, ...], kind: str) -> str:
@@ -385,29 +389,29 @@ def record_actor_output(
         _clear_superseded_reviewer_changes(lane=lane, output=output)
     actor_outputs[actor_name] = output
     lane["last_actor_output"] = output
-    lane["last_progress_at"] = _now_iso()
+    lane["last_progress_at"] = now_iso()
     lane["pending_retry"] = None
-    _clear_engine_retry(config=config, lane=lane)
+    clear_engine_retry(config=config, lane=lane)
     stage_outputs = lane_mapping(lane, "stage_outputs")
     stage_outputs[lane_stage(lane)] = {
         **dict(stage_outputs.get(lane_stage(lane)) or {}),
         "last_actor": actor_name,
     }
-    branch = _first_text(output, "branch", "branch_name", "branch-name")
+    branch = first_text(output, "branch", "branch_name", "branch-name")
     if branch:
         lane["branch"] = branch
     pull_request = output.get("pull_request") or output.get("pr")
     if isinstance(pull_request, dict):
-        lane["pull_request"] = _normalize_pull_request(pull_request)
+        lane["pull_request"] = normalize_pull_request(pull_request)
     elif pull_request:
         lane["pull_request"] = {"url": str(pull_request)}
-    thread_id = _first_text(output, "thread_id", "thread-id")
+    thread_id = first_text(output, "thread_id", "thread-id")
     if thread_id:
         lane["thread_id"] = thread_id
-    turn_id = _first_text(output, "turn_id", "turn-id")
+    turn_id = first_text(output, "turn_id", "turn-id")
     if turn_id:
         lane["turn_id"] = turn_id
-    _append_engine_event(
+    append_engine_event(
         config=config,
         lane=lane,
         event_type=f"{config.workflow_name}.lane.actor_output",
@@ -424,6 +428,23 @@ def record_actor_runtime_start(
     runtime_meta: dict[str, Any],
 ) -> None:
     sessions.record_actor_runtime_start(
+        config=config,
+        lane=lane,
+        actor_name=actor_name,
+        stage_name=stage_name,
+        runtime_meta=runtime_meta,
+    )
+
+
+def record_actor_dispatch_planned(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    actor_name: str,
+    stage_name: str,
+    runtime_meta: dict[str, Any],
+) -> dict[str, Any]:
+    return sessions.record_actor_dispatch_planned(
         config=config,
         lane=lane,
         actor_name=actor_name,
@@ -574,12 +595,12 @@ def apply_actor_output_status(
                 artifacts={"actor": actor_name, "output": output},
             )
             return
-        _notify_review_changes_requested(config=config, lane=lane, output=output)
+        notify_review_changes_requested(config=config, lane=lane, output=output)
     if status in {"blocked", "failed"} or blockers:
         set_lane_operator_attention(
             config=config,
             lane=lane,
-            reason=_blocker_reason(output) or status or "actor_blocked",
+            reason=blocker_reason(output) or status or "actor_blocked",
             message=str(
                 output.get("summary") or f"{actor_name} returned {status or 'blockers'}"
             ),

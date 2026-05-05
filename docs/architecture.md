@@ -33,6 +33,7 @@ trackers and pull requests, and exposing operator commands.
 - [Engine Design](#engine-design)
 - [Reconciliation](#reconciliation)
 - [Retry Model](#retry-model)
+- [Side Effects](#side-effects)
 - [Failure And Recovery](#failure-and-recovery)
 - [Daemon Design](#daemon-design)
 - [Invariants](#invariants)
@@ -277,11 +278,15 @@ sequenceDiagram
     participant A as Actor runtime
 
     D->>R: tick
+    R->>E: start engine run mode=tick
     R->>C: load policy and typed config
+    R->>E: append workflow.tick.policy_loaded
     R->>L: load WorkflowState
+    R->>E: append workflow.tick.state_loaded
     R->>T: refresh active lane issues
     R->>H: reconcile open PRs by branch
     R->>E: record projections and read due retries
+    R->>E: append workflow.tick.reconciled
     R->>T: list eligible candidates
     opt capacity available and no eligible candidate
         R->>T: add configured active label to next issue
@@ -290,16 +295,22 @@ sequenceDiagram
     end
     R->>E: acquire lane leases
     R->>L: add claimed lanes
+    R->>E: append workflow.tick.intake_completed
     alt no active lanes
         R->>L: save idle state
+        R->>E: finish tick run as completed
         R-->>D: idle
     else no decision-ready lanes
         R->>L: save no_decision_ready tick
+        R->>E: finish tick run as completed
         R-->>D: wait
     else active lanes exist
+        R->>E: append workflow.tick.orchestrator_started
         R->>O: orchestrator prompt with state + facts
         O-->>R: JSON decisions
+        R->>E: append workflow.tick.orchestrator_completed
         R->>R: validate one decision per lane
+        R->>E: append workflow.tick.decisions_parsed
         alt run_actor
             R->>A: actor prompt for one lane
             A-->>R: actor JSON output
@@ -317,19 +328,30 @@ sequenceDiagram
         end
         R->>L: save state
         R->>E: save scheduler snapshot
+        R->>E: append workflow.tick.completed and finish tick run
         R-->>D: tick result
     end
 ```
 
-Runner entry points live in `sprints/workflows/runner.py`:
+Workflow execution entry points are split by boundary:
 
-- `main()` defines workflow subcommands.
-- `_tick()` runs the full cycle.
-- `_run_orchestrator()` builds the orchestrator prompt.
-- `_apply_decisions()` plans and applies decisions.
-- `run_stage_actor()` renders actor prompts and dispatches runtimes.
+- `runner.py` defines workflow subcommands and routes them.
+- `ticks.py` runs the full tick cycle and applies orchestrator decisions.
+- `tick_journal.py` records `workflow.tick.*` engine run/event timelines.
+- `dispatch.py` renders actor prompts and dispatches runtimes.
+- `operator.py` owns manual retry/release/complete commands.
+- `state_io.py` owns `WorkflowState`, file IO, audit writes, and state locks.
 
-Backlog promotion is runner-owned. If `intake.auto-activate.enabled` is true,
+Every tick has an explicit engine journal. `ticks.py` creates an
+`engine_runs` row with `mode=tick`, then appends ordered `workflow.tick.*`
+events as the tick moves through policy load, state load, reconcile, intake,
+readiness evaluation, orchestrator execution, decision parsing, decision
+application, and the terminal `completed`, `idle`, `no_decision_ready`, or
+`failed` event. The JSON audit file still stores rich state snapshots, but the
+engine journal is the durable operational timeline for reconstructing what a
+tick reached before it exited.
+
+Backlog promotion is tick-owned. If `intake.auto-activate.enabled` is true,
 capacity is available, and no issue currently satisfies tracker eligibility,
 the runner adds the configured active label to the next open issue that does
 not have excluded labels. That mutation is audited in the engine event stream
@@ -347,7 +369,7 @@ runner. The mechanics are split by responsibility:
 | `workflows/intake.py` | Tracker intake, auto-activation, and lane claiming. |
 | `workflows/reconcile.py` | Runtime, tracker, and pull request reconciliation. |
 | `workflows/transitions.py` | Orchestrator decision validation, actor outputs, and lane transitions. |
-| `workflows/retries.py` | Workflow retry projection over engine retry mechanics. |
+| `workflows/retries.py` | Workflow adapter for engine-owned retry mechanics. |
 | `workflows/notifications.py` | Review feedback notification payloads. |
 | `workflows/sessions.py` | Actor sessions, heartbeats, and scheduler projections. |
 | `workflows/teardown.py` | Merge, tracker cleanup, and cleanup retry mechanics. |
@@ -553,11 +575,28 @@ beside the dispatch file. Reconciliation treats that heartbeat as the latest
 runtime timestamp, so a healthy long-running worker does not look stale just
 because lane JSON is waiting for the final output.
 
+The lane also keeps an actor dispatch journal:
+
+```text
+planned -> started -> running -> completed | failed | interrupted | blocked
+```
+
+`planned` is persisted before launching the runtime. `started` attaches the
+engine actor run and runtime session. `running` records progress metadata.
+Terminal states preserve the final runtime result. While a dispatch journal
+entry is active, the lane is locked against duplicate actor dispatch even if the
+lane has not reached `running` yet.
+
 When a running lane and its heartbeat are stale, reconciliation marks that
 runtime session and actor run `interrupted`. With `auto-retry-interrupted`
 enabled, it then queues a durable retry to the same stage and actor with the
 recorded runtime session as recovery context. If recovery cannot be targeted
 safely, the lane moves to operator attention.
+
+If a tick dies after saving `planned` but before a runtime session becomes
+active, reconciliation treats the stale dispatch journal entry the same way:
+mark it `interrupted`, keep the dispatch artifacts, and queue a retry to the
+same actor/stage when configured.
 
 Runtime session status is normalized to:
 
@@ -706,10 +745,25 @@ The current state split is intentional but transitional:
 | Policy context | `WORKFLOW.md` and lane JSON |
 | Operator inspection | engine reports plus workflow status |
 
-Later engine waves can move more ownership into `engine/`, especially retry
-wakeups and transactional lane lifecycle transitions. Retry attempt limits,
-backoff, due-time planning, and retry queue persistence are engine-owned.
-Workflow policy should still stay outside the engine.
+Operator reads are engine-first. `/sprints status` and `/sprints watch` build
+lane status, active counts, running counts, and retry/attention summaries from
+`engine_work_items` first, then enrich with lane JSON when it is present. This
+keeps inspection useful if the JSON state file is stale, missing, or only
+partially written. The runner still uses lane JSON for rich policy context until
+lane lifecycle ownership moves fully into the engine.
+
+Lane status transitions use a single workflow helper. The helper records
+previous/current lane state, updates the lane JSON, then writes the
+`engine_work_items` projection and matching `engine_events` row in one SQLite
+transaction. The lane also keeps `last_transition` and bounded
+`transition_history` for local recovery context.
+
+Retry attempt limits, backoff, due-time planning, due-time parsing, retry
+history shape, and retry queue persistence are engine-owned. Workflow code keeps
+the lane-facing `pending_retry` copy only for actor handoff and orchestrator
+context. Later engine waves can still move more ownership into `engine/`,
+especially retry wakeups and transactional lane lifecycle transitions. Workflow
+policy should stay outside the engine.
 
 ## Reconciliation
 
@@ -718,6 +772,7 @@ Before each dispatch, the runner reconciles three external realities:
 | Reconcile Path | What It Checks | Result |
 | --- | --- | --- |
 | Runtime reconciliation | Running lanes whose runtime session or background heartbeat has not progressed within `recovery.running-stale-seconds`. | Marks the runtime session and actor run `interrupted`, then queues a recovery retry to the same actor/stage or moves the lane to `operator_attention` if recovery is unsafe. |
+| Dispatch journal reconciliation | Non-running lanes with an active actor dispatch journal entry that has not progressed within `recovery.running-stale-seconds`. | Marks the dispatch `interrupted`, preserves dispatch artifacts, then queues a same actor/stage recovery retry or moves to `operator_attention`. |
 | Completion cleanup reconciliation | Lanes waiting on runner-owned `completion-cleanup` retry. | Re-applies idempotent tracker cleanup, completes and releases the lane on success, or keeps retrying until the retry limit moves it to `operator_attention`. |
 | Tracker reconciliation | Active lane issue still exists and remains eligible. | Updates issue payload or releases lane. |
 | Pull request reconciliation | Open PRs matching lane branch. | Updates `lane.pull_request`. |
@@ -735,11 +790,13 @@ flowchart LR
     Orchestrator["retry decision"]
     EngineRetry["engine schedules retry"]
     Pending["lane.pending_retry projection"]
+    Wakeup["engine retry wakeup projection"]
     Sleep["daemon sleep until due"]
     Dispatch["run retry target"]
     Limit["operator_attention"]
 
-    FailedOutput --> Orchestrator --> EngineRetry --> Pending --> Sleep --> Dispatch
+    FailedOutput --> Orchestrator --> EngineRetry --> Pending
+    EngineRetry --> Wakeup --> Sleep --> Dispatch
     EngineRetry -. "attempt >= max" .-> Limit
 ```
 
@@ -751,22 +808,67 @@ flowchart LR
 - due time
 - `engine_retry_queue` row
 
-The lane keeps a workflow-facing retry projection for actor handoff:
+The same engine retry module also builds the normalized retry record and
+`pending_retry` projection. The lane keeps that workflow-facing projection for
+actor handoff:
 
 - target stage
 - target actor/action
 - reason and feedback inputs
 - queued time
 - retry history
+- due time, max attempts, and backoff delay
 
 That projection is not a second scheduler. Scheduler snapshots intentionally do
 not rebuild `engine_retry_queue`; retry rows are only created through
 `EngineStore.schedule_retry()` and cleared through `EngineStore.clear_retry()`.
+Wake timing also comes from the engine. `EngineStore.retry_wakeup()` reads
+`engine_retry_queue` and reports queued count, due count, the next due time,
+and next retry metadata. The daemon uses that projection to decide its next
+sleep, so retry wakeups survive stale lane JSON and stale scheduler snapshots.
 
-The daemon shortens sleep when a retry is due soon. The runner validates that
+Retry visibility is part of the contract. `/sprints status` exposes
+`retry_policy`, `due_retries`, `retry_wakeup`, and `retry_audit`; each lane
+summary exposes the active retry, recent retry history, failure reason, max
+attempts, due time, and backoff delay. Workflow audit JSONL entries also
+include top-level `retry_audit`, while engine events record retry scheduling
+and retry-limit exhaustion as explicit audit events.
+
+The daemon shortens sleep from `retry_wakeup`, not from lane JSON. The runner
+validates that
 retry dispatch uses the queued target and only runs after the due time. When a
 queued retry is dispatched, the runner consumes the retry projection and clears
 the engine queue row before marking the lane running.
+
+## Side Effects
+
+Runner-owned side effects carry stable idempotency keys.
+
+```text
+operation + lane + target + normalized payload -> idempotency key
+```
+
+The key is recorded in the lane `side_effects` ledger and in `engine_events` as:
+
+```text
+started -> succeeded | failed | skipped
+```
+
+This applies to runner-owned mechanics:
+
+| Side Effect | Idempotency Behavior |
+| --- | --- |
+| Intake auto-activation label | Records a key around adding the active label. The tracker label operation is naturally idempotent. |
+| Review notification comments/reviews | Uses one key per target and adds a hidden `sprints:idempotency-key` marker to the GitHub body. |
+| Deterministic actions | Records action side effects by action name, type, stage, and inputs; repeated successful keys are skipped. |
+| Auto-merge | Keys by lane, pull request, merge method, and delete-branch setting; already-merged PRs become skipped/satisfied side effects. |
+| Completion label cleanup | Keys label add/remove operations and still reconciles actual tracker labels before acting. |
+
+Idempotency keys do not replace external reconciliation. For labels and merge,
+the runner checks the external tracker/code-host state first. For comments and
+reviews, GitHub does not provide a native idempotency API through `gh`, so the
+stable marker makes duplicates identifiable and lets completed keys skip replays
+once Sprints recorded success.
 
 ## Failure And Recovery
 
@@ -778,6 +880,7 @@ the engine queue row before marking the lane running.
 | Reviewer requests changes without concrete fixes | Lane becomes `operator_attention`. |
 | Runtime command fails | Lane becomes `operator_attention`; runtime result metadata is recorded when available. |
 | Duplicate dispatch guard trips | Lane becomes `operator_attention`; active session/run conflicts are recorded. |
+| Dispatch planned but runtime never starts | Reconciliation marks the dispatch `interrupted` and queues a same actor/stage recovery retry. |
 | Running lane goes stale | Reconciliation marks the actor run `interrupted` and queues a same actor/stage recovery retry; unsafe recovery moves to `operator_attention`. |
 | Retry limit exceeded | Lane becomes `operator_attention`. |
 | Tracker cleanup fails after merge | Runner queues `completion-cleanup` retry; retry-limit exhaustion becomes `operator_attention`. |
@@ -797,11 +900,12 @@ flowchart TD
     Lease["acquire workflow-daemon lease"]
     Tick["run workflow tick"]
     Status["read status"]
+    Wakeup["read engine retry_wakeup"]
     Sleep["sleep active/idle/retry/error interval"]
     Stop["release daemon lease"]
 
     Start --> Load --> Lease
-    Lease -->|acquired| Tick --> Status --> Sleep --> Lease
+    Lease -->|acquired| Tick --> Status --> Wakeup --> Sleep --> Lease
     Lease -->|held elsewhere| Sleep
     Sleep -->|SIGTERM/SIGINT| Stop
 ```
@@ -852,16 +956,23 @@ sprints/
 |   `-- formatters.py     # human-readable formatting
 |-- workflows/
 |   |-- contracts.py      # WORKFLOW.md load/render/policy parsing
-|   |-- loader.py         # loader facade
+|   |-- loader.py         # contract and policy loading
 |   |-- config.py         # typed front matter config
 |   |-- registry.py       # workflow object registry and CLI dispatch
-|   |-- runner.py         # tick, status, lane commands, actor/action dispatch
-|   |-- lanes.py          # lane facade used by runner.py
+|   |-- runner.py         # CLI command router
+|   |-- inspection.py     # validate, show, status, lanes commands
+|   |-- ticks.py          # tick lifecycle and decision application
+|   |-- tick_journal.py   # engine run/events for workflow.tick.*
+|   |-- state_io.py       # WorkflowState, audit, state lock
+|   |-- dispatch.py       # actor runtime dispatch and background worker
+|   |-- operator.py       # operator retry, release, complete commands
+|   |-- variables.py      # prompt variable builders
+|   |-- lanes.py          # lane facade used by workflow mechanics
 |   |-- lane_state.py     # lane state, config parsing, engine projections
 |   |-- intake.py         # tracker intake, auto-activation, lane claiming
 |   |-- reconcile.py      # runtime, tracker, PR reconciliation
 |   |-- transitions.py    # decision validation, actor outputs, lane transitions
-|   |-- retries.py        # retry projection over engine retry mechanics
+|   |-- retries.py        # workflow adapter for engine-owned retry mechanics
 |   |-- notifications.py  # review feedback notifications
 |   |-- status.py         # workflow and lane status projections
 |   |-- sessions.py       # actor sessions, heartbeats, scheduler projections
@@ -887,6 +998,10 @@ sprints/
 |   |-- reports.py        # run/event reports
 |   |-- retention.py      # event retention config
 |   `-- work.py           # work/result dataclasses
+|-- observe/
+|   |-- sources.py        # read-only status aggregation
+|   |-- stalls.py         # observe-loop stall detection helpers
+|   `-- watch.py          # terminal watch renderer
 |-- runtimes/
 |   |-- turns.py          # backend-neutral Sprints turn boundary
 |   |-- codex_app_server.py
@@ -904,9 +1019,6 @@ sprints/
 |   |-- commit/
 |   |-- push/
 |   `-- land/
-`-- observe/
-    |-- sources.py
-    `-- watch.py
 ```
 
 ## Design Pressure Points

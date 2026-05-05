@@ -198,20 +198,82 @@ def _lane_pull_request_label(lane: Mapping[str, Any]) -> str:
 
 
 def _lane_retry_label(lane: Mapping[str, Any]) -> str:
+    retry = lane.get("retry") if isinstance(lane.get("retry"), Mapping) else {}
     pending = (
         lane.get("pending_retry")
         if isinstance(lane.get("pending_retry"), Mapping)
         else {}
     )
-    retry_at = str(pending.get("due_at") or lane.get("retry_at") or "").strip()
-    target = str(pending.get("target") or lane.get("retry_target") or "").strip()
-    if retry_at and target:
-        return f"retry={target}@{retry_at[:16]}"
-    if retry_at:
-        return f"retry={retry_at[:16]}"
+    retry_at = str(
+        retry.get("due_at") or pending.get("due_at") or lane.get("retry_at") or ""
+    ).strip()
+    target = str(
+        retry.get("target") or pending.get("target") or lane.get("retry_target") or ""
+    ).strip()
+    attempt = (
+        retry.get("attempt")
+        or pending.get("attempt")
+        or lane.get("retry_attempt")
+        or EMPTY_VALUE
+    )
+    max_attempts = (
+        retry.get("max_attempts")
+        or pending.get("max_attempts")
+        or lane.get("retry_max_attempts")
+    )
+    delay = (
+        retry.get("delay_seconds")
+        or pending.get("delay_seconds")
+        or lane.get("retry_delay_seconds")
+    )
+    reason = str(
+        retry.get("failure_reason")
+        or retry.get("reason")
+        or pending.get("reason")
+        or lane.get("retry_reason")
+        or ""
+    ).strip()
+    pieces = []
     if target:
-        return f"retry={target}"
-    return ""
+        pieces.append(target)
+    if attempt != EMPTY_VALUE and max_attempts not in (None, ""):
+        pieces.append(f"{attempt}/{max_attempts}")
+    elif attempt != EMPTY_VALUE:
+        pieces.append(f"try {attempt}")
+    if retry_at:
+        pieces.append(f"due={retry_at[:16]}")
+    if delay not in (None, ""):
+        pieces.append(f"backoff={delay}s")
+    if reason:
+        pieces.append(f"reason={reason}")
+    return "retry=" + " ".join(str(piece) for piece in pieces) if pieces else ""
+
+
+def _lane_dispatch_label(lane: Mapping[str, Any]) -> str:
+    dispatch = (
+        lane.get("actor_dispatch")
+        if isinstance(lane.get("actor_dispatch"), Mapping)
+        else {}
+    )
+    status = str(dispatch.get("status") or lane.get("dispatch_status") or "").strip()
+    if not status:
+        return ""
+    runtime = (
+        dispatch.get("runtime") if isinstance(dispatch.get("runtime"), Mapping) else {}
+    )
+    actor = str(
+        dispatch.get("actor") or lane.get("dispatch_actor") or lane.get("actor") or ""
+    ).strip()
+    stage = str(dispatch.get("stage") or lane.get("dispatch_stage") or "").strip()
+    mode = str(runtime.get("dispatch_mode") or lane.get("dispatch_mode") or "").strip()
+    pieces = [status]
+    if actor:
+        pieces.append(actor)
+    if stage:
+        pieces.append(stage)
+    if mode:
+        pieces.append(mode)
+    return "dispatch=" + "/".join(pieces)
 
 
 def _lane_attention_label(lane: Mapping[str, Any]) -> str:
@@ -451,6 +513,10 @@ def format_status(
 
     lanes_rows = [
         Row(
+            label="source",
+            value=str(result.get("lane_status_source") or EMPTY_VALUE),
+        ),
+        Row(
             label="total",
             value=str(lane_count) if lane_count is not None else EMPTY_VALUE,
         ),
@@ -463,7 +529,9 @@ def format_status(
             value=str(decision_ready) if decision_ready is not None else EMPTY_VALUE,
         ),
         Row(label="running", value=str(result.get("running_count") or 0)),
+        Row(label="dispatching", value=str(result.get("active_dispatch_count") or 0)),
         Row(label="retry", value=str(result.get("retry_count") or 0)),
+        Row(label="side effects", value=str(result.get("side_effect_count") or 0)),
         Row(
             label="attention",
             value=str(result.get("operator_attention_count") or 0),
@@ -486,6 +554,10 @@ def format_status(
                 f"actor={actor}",
                 f"attempt={attempt}",
                 _lane_pull_request_label(lane),
+                _lane_dispatch_label(lane),
+                f"effects={lane.get('side_effect_count')}"
+                if lane.get("side_effect_count")
+                else "",
                 _lane_retry_label(lane),
                 _lane_attention_label(lane),
             ]
@@ -501,6 +573,50 @@ def format_status(
         )
     if not lane_rows:
         lane_rows.append(Row(label="active", value="none"))
+
+    retry_policy = (
+        result.get("retry_policy")
+        if isinstance(result.get("retry_policy"), Mapping)
+        else {}
+    )
+    retry_wakeup = (
+        result.get("retry_wakeup")
+        if isinstance(result.get("retry_wakeup"), Mapping)
+        else {}
+    )
+    retry_rows = [
+        Row(
+            label="max attempts",
+            value=str(retry_policy.get("max_attempts") or EMPTY_VALUE),
+        ),
+        Row(
+            label="initial delay",
+            value=f"{retry_policy.get('initial_delay_seconds')}s"
+            if retry_policy.get("initial_delay_seconds") is not None
+            else EMPTY_VALUE,
+        ),
+        Row(
+            label="backoff",
+            value=str(retry_policy.get("backoff_multiplier") or EMPTY_VALUE),
+        ),
+        Row(
+            label="max delay",
+            value=f"{retry_policy.get('max_delay_seconds')}s"
+            if retry_policy.get("max_delay_seconds") is not None
+            else EMPTY_VALUE,
+        ),
+        Row(label="queued", value=str(retry_wakeup.get("queued_count") or 0)),
+        Row(label="due now", value=str(retry_wakeup.get("due_count") or 0)),
+        Row(
+            label="next wakeup",
+            value=(
+                f"{float(retry_wakeup.get('next_due_in_seconds')):.1f}s"
+                if retry_wakeup.get("next_due_in_seconds") is not None
+                else EMPTY_VALUE
+            ),
+        ),
+        Row(label="history", value=str(len(result.get("retry_audit") or []))),
+    ]
 
     run_rows: list[Row] = []
     for run in (result.get("latest_runs") or [])[:5]:
@@ -518,14 +634,45 @@ def format_status(
             )
         )
 
+    tick_event_rows: list[Row] = []
+    for event in (result.get("latest_tick_events") or [])[-5:]:
+        if not isinstance(event, Mapping):
+            continue
+        payload = (
+            event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+        )
+        details = (
+            payload.get("details")
+            if isinstance(payload.get("details"), Mapping)
+            else {}
+        )
+        event_name = str(event.get("event_type") or EMPTY_VALUE).replace(
+            "workflow.tick.", ""
+        )
+        detail = (
+            details.get("reason")
+            or details.get("error")
+            or f"at={event.get('created_at') or EMPTY_VALUE}"
+        )
+        tick_event_rows.append(
+            Row(
+                label=_compact(event_name, limit=28),
+                value=str(event.get("severity") or EMPTY_VALUE),
+                detail=_compact(str(detail), limit=120),
+            )
+        )
+
     sections = [
         Section(name=None, rows=top_rows),
         Section(name="lanes", rows=lanes_rows),
         Section(name="active lanes", rows=lane_rows),
+        Section(name="retry policy", rows=retry_rows),
         Section(name="paths", rows=paths_rows),
     ]
     if run_rows:
         sections.append(Section(name="latest runs", rows=run_rows))
+    if tick_event_rows:
+        sections.append(Section(name="latest tick journal", rows=tick_event_rows))
 
     return format_panel(
         title=f"Sprints workflow - {workflow_name}",

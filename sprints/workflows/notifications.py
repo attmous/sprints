@@ -9,23 +9,32 @@ from typing import Any
 
 from trackers import build_code_host_client
 from workflows.config import WorkflowConfig
+from workflows.effects import (
+    completed_side_effect,
+    record_side_effect_failed,
+    record_side_effect_skipped,
+    record_side_effect_started,
+    record_side_effect_succeeded,
+    side_effect_key,
+    with_side_effect_marker,
+)
 from workflows.lane_state import (
-    _append_engine_event,
-    _code_host_config,
-    _now_iso,
-    _repository_path,
-    _review_notification_config,
+    append_engine_event,
+    code_host_config,
+    now_iso,
+    repository_path,
+    review_notification_config,
     lane_list,
 )
 
 
-def _notify_review_changes_requested(
+def notify_review_changes_requested(
     *, config: WorkflowConfig, lane: dict[str, Any], output: dict[str, Any]
 ) -> dict[str, Any]:
-    notification_cfg = _review_notification_config(config)
+    notification_cfg = review_notification_config(config)
     fingerprint = _review_changes_requested_fingerprint(lane=lane, output=output)
     existing = _existing_review_notification(lane=lane, fingerprint=fingerprint)
-    if existing:
+    if existing and existing.get("status") == "ok":
         return existing
     if not any(notification_cfg.values()):
         return _record_lane_notification(
@@ -38,7 +47,7 @@ def _notify_review_changes_requested(
                 "reason": "notifications disabled",
             },
         )
-    code_host_cfg = _code_host_config(config)
+    code_host_cfg = code_host_config(config)
     if not code_host_cfg:
         return _record_lane_notification(
             config=config,
@@ -56,31 +65,70 @@ def _notify_review_changes_requested(
         "status": "ok",
         "fingerprint": fingerprint,
         "targets": {},
+        "idempotency_keys": {},
     }
     try:
         client = build_code_host_client(
             workflow_root=config.workflow_root,
             code_host_cfg=code_host_cfg,
-            repo_path=_repository_path(config),
+            repo_path=repository_path(config),
         )
         if notification_cfg["pull_request_comment"]:
             pr_number = _pull_request_number(lane)
             result["targets"]["pull_request"] = (
-                client.comment_on_pull_request(pr_number, body=body)
+                _run_notification_side_effect(
+                    config=config,
+                    lane=lane,
+                    fingerprint=fingerprint,
+                    operation="notification.pull_request_comment",
+                    target=f"pull_request:{pr_number or 'missing'}",
+                    body=body,
+                    call=lambda keyed_body: (
+                        client.comment_on_pull_request(pr_number, body=keyed_body)
+                        if pr_number
+                        else {"ok": False, "error": "pull request number missing"}
+                    ),
+                )
                 if pr_number
                 else {"ok": False, "error": "pull request number missing"}
             )
         if notification_cfg["pull_request_review"]:
             pr_number = _pull_request_number(lane)
             result["targets"]["pull_request_review"] = (
-                client.request_changes_on_pull_request(pr_number, body=body)
+                _run_notification_side_effect(
+                    config=config,
+                    lane=lane,
+                    fingerprint=fingerprint,
+                    operation="notification.pull_request_review",
+                    target=f"pull_request:{pr_number or 'missing'}",
+                    body=body,
+                    call=lambda keyed_body: (
+                        client.request_changes_on_pull_request(
+                            pr_number, body=keyed_body
+                        )
+                        if pr_number
+                        else {"ok": False, "error": "pull request number missing"}
+                    ),
+                )
                 if pr_number
                 else {"ok": False, "error": "pull request number missing"}
             )
         if notification_cfg["issue_comment"]:
             issue_number = _issue_number(lane)
             result["targets"]["issue"] = (
-                client.comment_on_issue(issue_number, body=body)
+                _run_notification_side_effect(
+                    config=config,
+                    lane=lane,
+                    fingerprint=fingerprint,
+                    operation="notification.issue_comment",
+                    target=f"issue:{issue_number or 'missing'}",
+                    body=body,
+                    call=lambda keyed_body: (
+                        client.comment_on_issue(issue_number, body=keyed_body)
+                        if issue_number
+                        else {"ok": False, "error": "issue number missing"}
+                    ),
+                )
                 if issue_number
                 else {"ok": False, "error": "issue number missing"}
             )
@@ -95,7 +143,102 @@ def _notify_review_changes_requested(
         and result.get("status") == "ok"
     ):
         result["status"] = "partial"
+    result["idempotency_keys"] = {
+        name: target.get("idempotency_key")
+        for name, target in dict(result.get("targets") or {}).items()
+        if isinstance(target, dict) and target.get("idempotency_key")
+    }
     return _record_lane_notification(config=config, lane=lane, payload=result)
+
+
+def _run_notification_side_effect(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    fingerprint: str,
+    operation: str,
+    target: str,
+    body: str,
+    call: Any,
+) -> dict[str, Any]:
+    key = side_effect_key(
+        config=config,
+        lane=lane,
+        operation=operation,
+        target=target,
+        payload={"fingerprint": fingerprint},
+    )
+    completed = completed_side_effect(config=config, lane=lane, key=key)
+    if completed:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "side effect already completed",
+            "idempotency_key": key,
+        }
+    payload = {"fingerprint": fingerprint}
+    record_side_effect_started(
+        config=config,
+        lane=lane,
+        key=key,
+        operation=operation,
+        target=target,
+        payload=payload,
+    )
+    keyed_body = with_side_effect_marker(body, key)
+    try:
+        result = call(keyed_body)
+    except Exception as exc:
+        error = str(exc)
+        result = {"ok": False, "error": error, "idempotency_key": key}
+        record_side_effect_failed(
+            config=config,
+            lane=lane,
+            key=key,
+            operation=operation,
+            target=target,
+            payload=payload,
+            result=result,
+            error=error,
+        )
+        return result
+    if not isinstance(result, dict):
+        result = {"ok": True, "result": result}
+    result["idempotency_key"] = key
+    if result.get("ok") is False:
+        record_side_effect_failed(
+            config=config,
+            lane=lane,
+            key=key,
+            operation=operation,
+            target=target,
+            payload=payload,
+            result=result,
+            error=str(result.get("error") or "notification side effect failed"),
+        )
+        return result
+    if result.get("skipped"):
+        record_side_effect_skipped(
+            config=config,
+            lane=lane,
+            key=key,
+            operation=operation,
+            target=target,
+            payload=payload,
+            result=result,
+            reason=str(result.get("reason") or "notification skipped"),
+        )
+        return result
+    record_side_effect_succeeded(
+        config=config,
+        lane=lane,
+        key=key,
+        operation=operation,
+        target=target,
+        payload=payload,
+        result=result,
+    )
+    return result
 
 
 def _existing_review_notification(
@@ -133,9 +276,9 @@ def _review_changes_requested_fingerprint(
 def _record_lane_notification(
     *, config: WorkflowConfig, lane: dict[str, Any], payload: dict[str, Any]
 ) -> dict[str, Any]:
-    record = {"created_at": _now_iso(), **payload}
+    record = {"created_at": now_iso(), **payload}
     lane_list(lane, "notifications").append(record)
-    _append_engine_event(
+    append_engine_event(
         config=config,
         lane=lane,
         event_type=f"{config.workflow_name}.lane.notification",

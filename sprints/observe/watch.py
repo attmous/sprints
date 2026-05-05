@@ -28,12 +28,14 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
     t.add_column("Stage")
     t.add_column("Status")
     t.add_column("Actor")
+    t.add_column("Dispatch")
     t.add_column("Try", justify="right")
+    t.add_column("Effects", justify="right")
     t.add_column("PR")
     t.add_column("Retry")
     t.add_column("Attention")
     if not lanes:
-        t.add_row("(no active lanes)", "", "", "", "", "", "", "", "")
+        t.add_row("(no active lanes)", "", "", "", "", "", "", "", "", "", "")
         return t
     for lane in lanes:
         if lane.get("_stale"):
@@ -47,6 +49,8 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
                 "",
                 "",
                 "",
+                "",
+                "",
             )
             continue
         t.add_row(
@@ -55,7 +59,9 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
             _short(lane.get("stage") or lane.get("workflow_state"), 12),
             _short(lane.get("status") or lane.get("lane_status"), 18),
             _short(lane.get("actor"), 14),
+            _short(_dispatch_label(lane), 18),
             str(lane.get("attempt") or ""),
+            str(lane.get("side_effect_count") or ""),
             _short(_pull_request_label(lane), 16),
             _short(_retry_label(lane), 18),
             _short(lane.get("operator_attention_reason"), 22),
@@ -80,12 +86,41 @@ def _pull_request_label(lane: Mapping[str, Any]) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
 
 
+def _dispatch_label(lane: Mapping[str, Any]) -> str:
+    status = str(lane.get("dispatch_status") or "").strip()
+    if not status:
+        return ""
+    actor = str(lane.get("dispatch_actor") or lane.get("actor") or "").strip()
+    mode = str(lane.get("dispatch_mode") or "").strip()
+    pieces = [status]
+    if actor:
+        pieces.append(actor)
+    if mode:
+        pieces.append(mode)
+    return " ".join(pieces)
+
+
 def _retry_label(lane: Mapping[str, Any]) -> str:
     retry_at = str(lane.get("retry_at") or "").strip()
     target = str(lane.get("retry_target") or "").strip()
-    if retry_at and target:
-        return f"{target} @ {retry_at[:16]}"
-    return retry_at[:16] if retry_at else target
+    attempt = lane.get("retry_attempt")
+    max_attempts = lane.get("retry_max_attempts")
+    delay = lane.get("retry_delay_seconds")
+    reason = str(lane.get("retry_reason") or "").strip()
+    pieces = []
+    if target:
+        pieces.append(target)
+    if attempt not in (None, "") and max_attempts not in (None, ""):
+        pieces.append(f"{attempt}/{max_attempts}")
+    elif attempt not in (None, ""):
+        pieces.append(f"try {attempt}")
+    if retry_at:
+        pieces.append(f"@ {retry_at[:16]}")
+    if delay not in (None, ""):
+        pieces.append(f"+{delay}s")
+    if reason:
+        pieces.append(reason)
+    return " ".join(str(piece) for piece in pieces)
 
 
 def _alerts_panel(alert_state: Mapping[str, Any]) -> Panel | None:
@@ -137,6 +172,18 @@ def _workflow_status_panel(workflow_status: Mapping[str, Any]) -> Panel | None:
         f"canceling={workflow_status.get('canceling_count') or 0}",
         f"tokens={workflow_status.get('total_tokens') or 0}",
     ]
+    retry_wakeup = (
+        workflow_status.get("retry_wakeup")
+        if isinstance(workflow_status.get("retry_wakeup"), Mapping)
+        else {}
+    )
+    if retry_wakeup:
+        lines.append(
+            "retry_wakeup="
+            f"queued={retry_wakeup.get('queued_count') or 0} "
+            f"due={retry_wakeup.get('due_count') or 0} "
+            f"next={retry_wakeup.get('next_due_in_seconds')}"
+        )
     if workflow_status.get("selected_issue"):
         lines.append(f"selected={workflow_status.get('selected_issue')}")
     if workflow_status.get("rate_limits"):
@@ -283,11 +330,11 @@ def reconcile_stalls_tick(
     orchestrator,
     now: float | None = None,
 ) -> list:
-    from workflows.runner import (
+    from observe.stalls import (
         SPRINTS_STALL_DETECTED,
         SPRINTS_STALL_TERMINATED,
+        reconcile_stalls,
     )
-    from workflows.runner import reconcile_stalls
 
     if now is None:
         now = time.monotonic()

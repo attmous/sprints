@@ -487,6 +487,79 @@ def engine_due_retries_from_connection(
     ]
 
 
+def engine_retry_wakeup_from_connection(
+    conn: sqlite3.Connection,
+    *,
+    workflow: str,
+    now_epoch: float,
+) -> dict[str, Any]:
+    init_engine_state(conn)
+    counts = conn.execute(
+        """
+        SELECT
+          COUNT(*),
+          COALESCE(SUM(CASE WHEN due_at_epoch <= ? THEN 1 ELSE 0 END), 0)
+        FROM engine_retry_queue
+        WHERE workflow=?
+        """,
+        (now_epoch, workflow),
+    ).fetchone()
+    next_row = conn.execute(
+        """
+        SELECT q.work_id, w.identifier, w.state, w.title, w.url,
+               q.attempt, q.due_at_epoch, q.error, q.current_attempt,
+               q.delay_type, q.run_id, q.updated_at, q.updated_at_epoch
+        FROM engine_retry_queue q
+        LEFT JOIN engine_work_items w ON w.workflow = q.workflow AND w.work_id = q.work_id
+        WHERE q.workflow=?
+        ORDER BY q.due_at_epoch ASC, q.work_id ASC
+        LIMIT 1
+        """,
+        (workflow,),
+    ).fetchone()
+    queued_count = int((counts or (0, 0))[0] or 0)
+    due_count = int((counts or (0, 0))[1] or 0)
+    if next_row is None:
+        return {
+            "workflow": workflow,
+            "source": "engine_retry_queue",
+            "queued_count": queued_count,
+            "due_count": due_count,
+            "has_due": False,
+            "next_due_at_epoch": None,
+            "next_due_in_seconds": None,
+            "next_retry": None,
+        }
+    due_at_epoch = float(_value_or_default(next_row[6], now_epoch))
+    next_retry = {
+        "workflow": workflow,
+        "work_id": str(next_row[0]),
+        "issue_id": str(next_row[0]),
+        "identifier": next_row[1],
+        "state": next_row[2],
+        "title": next_row[3],
+        "url": next_row[4],
+        "attempt": int(next_row[5] or 0),
+        "due_at_epoch": due_at_epoch,
+        "error": next_row[7],
+        "current_attempt": next_row[8],
+        "delay_type": next_row[9] or "failure",
+        "run_id": next_row[10],
+        "updated_at": next_row[11],
+        "updated_at_epoch": float(_value_or_default(next_row[12], now_epoch)),
+    }
+    return {
+        "workflow": workflow,
+        "source": "engine_retry_queue",
+        "queued_count": queued_count,
+        "due_count": due_count,
+        "has_due": due_count > 0,
+        "next_due_at_epoch": due_at_epoch,
+        "next_due_in_seconds": max(due_at_epoch - now_epoch, 0.0),
+        "next_retry": next_retry,
+    }
+
+
 def upsert_engine_runtime_session_to_connection(
     conn: sqlite3.Connection,
     *,
@@ -1053,20 +1126,27 @@ def latest_engine_runs_from_connection(
     conn: sqlite3.Connection,
     *,
     workflow: str,
+    mode: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     init_engine_state(conn)
+    conditions = ["workflow=?"]
+    params: list[Any] = [workflow]
+    if mode:
+        conditions.append("mode=?")
+        params.append(mode)
+    params.append(max(int(limit or 10), 1))
     rows = conn.execute(
-        """
+        f"""
         SELECT workflow, run_id, mode, status, started_at, started_at_epoch,
                completed_at, completed_at_epoch, selected_count, completed_count,
                error, metadata_json
         FROM engine_runs
-        WHERE workflow=?
+        WHERE {" AND ".join(conditions)}
         ORDER BY started_at_epoch DESC, run_id DESC
         LIMIT ?
         """,
-        (workflow, max(int(limit or 10), 1)),
+        params,
     ).fetchall()
     return [_run_row_to_dict(row) for row in rows]
 
@@ -1156,6 +1236,7 @@ def read_engine_runs(
     db_path: Path,
     *,
     workflow: str,
+    mode: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     if not db_path.exists():
@@ -1167,17 +1248,23 @@ def read_engine_runs(
     try:
         if not _table_exists(conn, "engine_runs"):
             return []
+        conditions = ["workflow=?"]
+        params: list[Any] = [workflow]
+        if mode:
+            conditions.append("mode=?")
+            params.append(mode)
+        params.append(max(int(limit or 10), 1))
         rows = conn.execute(
-            """
+            f"""
             SELECT workflow, run_id, mode, status, started_at, started_at_epoch,
                    completed_at, completed_at_epoch, selected_count, completed_count,
                    error, metadata_json
             FROM engine_runs
-            WHERE workflow=?
+            WHERE {" AND ".join(conditions)}
             ORDER BY started_at_epoch DESC, run_id DESC
             LIMIT ?
             """,
-            (workflow, max(int(limit or 10), 1)),
+            params,
         ).fetchall()
         return [_run_row_to_dict(row) for row in rows]
     except sqlite3.OperationalError:
@@ -1297,6 +1384,22 @@ def engine_events_for_run_from_connection(
         (workflow, run_id, max(int(limit or 100), 1)),
     ).fetchall()
     return [_event_row_to_dict(row) for row in rows]
+
+
+def engine_event_from_connection(
+    conn: sqlite3.Connection, *, workflow: str, event_id: str
+) -> dict[str, Any] | None:
+    init_engine_state(conn)
+    row = conn.execute(
+        """
+        SELECT workflow, event_id, run_id, work_id, event_type, severity,
+               created_at, created_at_epoch, payload_json
+        FROM engine_events
+        WHERE workflow=? AND event_id=?
+        """,
+        (workflow, event_id),
+    ).fetchone()
+    return _event_row_to_dict(row) if row is not None else None
 
 
 def engine_events_from_connection(

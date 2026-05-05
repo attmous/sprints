@@ -17,7 +17,7 @@ from workflows.config import WorkflowConfig
 from workflows.contracts import load_workflow_contract
 from workflows.paths import runtime_paths
 from workflows.registry import run_cli
-from workflows.runner import build_status
+from workflows.status import build_status
 
 WORKFLOW_DAEMON_SERVICE_PREFIX = "sprints-workflow"
 DEFAULT_ACTIVE_INTERVAL_SECONDS = 15.0
@@ -509,6 +509,8 @@ def run_workflow_daemon(
                     active_lanes=status.get("active_lane_count"),
                     running=status.get("running_count"),
                     retry=status.get("retry_count"),
+                    due_retries=_retry_wakeup_due_count(status),
+                    next_retry_wakeup=_seconds_until_next_retry(status),
                     operator_attention=status.get("operator_attention_count"),
                     sleep_seconds=sleep_for,
                 )
@@ -570,26 +572,29 @@ def _next_sleep_seconds(
 
 
 def _seconds_until_next_retry(status: dict[str, Any]) -> float | None:
-    lanes = status.get("lanes") if isinstance(status.get("lanes"), dict) else {}
-    now = time.time()
-    waits: list[float] = []
-    for lane in lanes.values():
-        if not isinstance(lane, dict):
-            continue
-        if str(lane.get("status") or "") != "retry_queued":
-            continue
-        pending = lane.get("pending_retry")
-        if not isinstance(pending, dict):
-            waits.append(0.0)
-            continue
-        value = pending.get("due_at_epoch")
-        try:
-            due_at = float(value)
-        except (TypeError, ValueError):
-            waits.append(0.0)
-            continue
-        waits.append(max(due_at - now, 0.0))
-    return min(waits) if waits else None
+    retry_wakeup = (
+        status.get("retry_wakeup")
+        if isinstance(status.get("retry_wakeup"), dict)
+        else {}
+    )
+    if int(retry_wakeup.get("queued_count") or 0) <= 0:
+        return None
+    value = retry_wakeup.get("next_due_in_seconds")
+    if value in (None, ""):
+        return None
+    try:
+        return max(float(value), 0.0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_wakeup_due_count(status: dict[str, Any]) -> int:
+    retry_wakeup = (
+        status.get("retry_wakeup")
+        if isinstance(status.get("retry_wakeup"), dict)
+        else {}
+    )
+    return int(retry_wakeup.get("due_count") or 0)
 
 
 def _with_jitter(seconds: float, jitter_ratio: float) -> float:

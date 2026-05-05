@@ -31,6 +31,7 @@ from workflows.contracts import (
     workflow_named_markdown_path,
     write_workflow_contract_pointer,
 )
+from workflows.loader import load_workflow_policy
 from workflows.registry import (
     CONFIG_SCHEMA_PATH,
     DEFAULT_WORKFLOW_NAME,
@@ -78,6 +79,7 @@ __all__ = [
     "list_workflows",
     "load_workflow_contract",
     "load_workflow_contract_file",
+    "load_workflow_policy",
     "render_workflow_markdown",
     "find_repo_workflow_contract_path",
     "find_workflow_contract_path",

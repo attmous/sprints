@@ -24,12 +24,14 @@ from .state import (
     append_engine_event_to_connection,
     clear_engine_retry_to_connection,
     engine_due_retries_from_connection,
+    engine_event_from_connection,
     engine_event_stats_from_connection,
     engine_events_from_connection,
     engine_events_for_run_from_connection,
+    engine_retry_wakeup_from_connection,
     engine_runtime_sessions_from_connection,
-    engine_work_items_from_connection,
     engine_run_from_connection,
+    engine_work_items_from_connection,
     finish_engine_run_to_connection,
     latest_engine_runs_from_connection,
     load_engine_scheduler_state_from_connection,
@@ -155,6 +157,44 @@ class EngineStore:
                 now_epoch=self._now_epoch() if now_epoch is None else now_epoch,
             )
 
+    def record_work_item_event(
+        self,
+        *,
+        work_id: str,
+        entry: dict[str, Any],
+        event_type: str,
+        payload: dict[str, Any],
+        severity: str = "info",
+        run_id: str | None = None,
+        event_id: str | None = None,
+        now_iso: str | None = None,
+        now_epoch: float | None = None,
+    ) -> dict[str, Any]:
+        iso = now_iso or self._now_iso()
+        epoch = self._now_epoch() if now_epoch is None else now_epoch
+        with self.transaction() as conn:
+            work_item = upsert_engine_work_item_to_connection(
+                conn,
+                workflow=self.workflow,
+                work_id=work_id,
+                entry=entry,
+                now_iso=iso,
+                now_epoch=epoch,
+            )
+            event = append_engine_event_to_connection(
+                conn,
+                workflow=self.workflow,
+                event_type=event_type,
+                payload=payload,
+                created_at=iso,
+                created_at_epoch=epoch,
+                event_id=event_id,
+                run_id=run_id,
+                work_id=work_id,
+                severity=severity,
+            )
+        return {"work_item": work_item, "event": event}
+
     def work_items(
         self, *, state: str | None = None, limit: int = 200
     ) -> list[dict[str, Any]]:
@@ -247,6 +287,18 @@ class EngineStore:
                 if due_at_epoch is None
                 else due_at_epoch,
                 limit=limit,
+            )
+        finally:
+            conn.close()
+
+    def retry_wakeup(self, *, now_epoch: float | None = None) -> dict[str, Any]:
+        epoch = self._now_epoch() if now_epoch is None else now_epoch
+        conn = self.connect()
+        try:
+            return engine_retry_wakeup_from_connection(
+                conn,
+                workflow=self.workflow,
+                now_epoch=epoch,
             )
         finally:
             conn.close()
@@ -445,11 +497,13 @@ class EngineStore:
             now_epoch=now_epoch,
         )
 
-    def latest_runs(self, *, limit: int = 10) -> list[dict[str, Any]]:
+    def latest_runs(
+        self, *, mode: str | None = None, limit: int = 10
+    ) -> list[dict[str, Any]]:
         conn = self.connect()
         try:
             return latest_engine_runs_from_connection(
-                conn, workflow=self.workflow, limit=limit
+                conn, workflow=self.workflow, mode=mode, limit=limit
             )
         finally:
             conn.close()
@@ -538,6 +592,15 @@ class EngineStore:
         try:
             return engine_events_for_run_from_connection(
                 conn, workflow=self.workflow, run_id=run_id, limit=limit
+            )
+        finally:
+            conn.close()
+
+    def event(self, event_id: str) -> dict[str, Any] | None:
+        conn = self.connect()
+        try:
+            return engine_event_from_connection(
+                conn, workflow=self.workflow, event_id=event_id
             )
         finally:
             conn.close()
