@@ -337,11 +337,20 @@ before the issue is claimed as a lane.
 
 ## Lane Ledger
 
-The lane ledger is the rich workflow state owned by `workflows/lanes.py` and
-stored through `WorkflowState` in the workflow storage path. Runtime session
-mechanics live in `workflows/sessions.py`. Completion side-effects for
-merge, tracker cleanup, and cleanup retry live in `workflows/teardown.py` so
-lane transition logic stays separate from runtime and teardown mechanics.
+The lane ledger is the rich workflow state stored through `WorkflowState` in
+the workflow storage path. `workflows/lanes.py` is only the facade used by the
+runner. The mechanics are split by responsibility:
+
+| Module | Responsibility |
+| --- | --- |
+| `workflows/lane_state.py` | Lane shape, status updates, config parsing, engine projections. |
+| `workflows/intake.py` | Tracker intake, auto-activation, and lane claiming. |
+| `workflows/reconcile.py` | Runtime, tracker, and pull request reconciliation. |
+| `workflows/transitions.py` | Orchestrator decision validation, actor outputs, and lane transitions. |
+| `workflows/retries.py` | Workflow retry projection over engine retry mechanics. |
+| `workflows/notifications.py` | Review feedback notification payloads. |
+| `workflows/sessions.py` | Actor sessions, heartbeats, and scheduler projections. |
+| `workflows/teardown.py` | Merge, tracker cleanup, and cleanup retry mechanics. |
 
 New lanes are shaped like this:
 
@@ -690,7 +699,7 @@ The current state split is intentional but transitional:
 
 | State | Current Owner |
 | --- | --- |
-| Rich lane JSON | `workflows/lanes.py` and workflow storage file |
+| Rich lane JSON | `WorkflowState`, workflow storage file, and `workflows/lane_state.py` |
 | Runtime sessions and heartbeats | `workflows/sessions.py` plus engine runtime rows |
 | Teardown side-effects | `workflows/teardown.py` plus engine retry rows |
 | Durable projections | `engine/` SQLite tables |
@@ -847,7 +856,14 @@ sprints/
 |   |-- config.py         # typed front matter config
 |   |-- registry.py       # workflow object registry and CLI dispatch
 |   |-- runner.py         # tick, status, lane commands, actor/action dispatch
-|   |-- lanes.py          # lane ledger, reconciliation, transitions
+|   |-- lanes.py          # lane facade used by runner.py
+|   |-- lane_state.py     # lane state, config parsing, engine projections
+|   |-- intake.py         # tracker intake, auto-activation, lane claiming
+|   |-- reconcile.py      # runtime, tracker, PR reconciliation
+|   |-- transitions.py    # decision validation, actor outputs, lane transitions
+|   |-- retries.py        # retry projection over engine retry mechanics
+|   |-- notifications.py  # review feedback notifications
+|   |-- status.py         # workflow and lane status projections
 |   |-- sessions.py       # actor sessions, heartbeats, scheduler projections
 |   |-- teardown.py       # merge, tracker cleanup, cleanup retry mechanics
 |   |-- daemon.py         # daemon loop and systemd controls

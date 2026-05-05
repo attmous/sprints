@@ -145,7 +145,9 @@ def _state_lanes(workflow_root: Path, workflow_name: str) -> list[dict[str, Any]
     return [lane for lane in lanes.values() if isinstance(lane, dict)]
 
 
-def _active_state_lanes(workflow_root: Path, workflow_name: str) -> list[dict[str, Any]]:
+def _active_state_lanes(
+    workflow_root: Path, workflow_name: str
+) -> list[dict[str, Any]]:
     return [
         lane
         for lane in _state_lanes(workflow_root, workflow_name)
@@ -181,13 +183,47 @@ def _state_lane_entry(lane: dict[str, Any], *, workflow_name: str) -> dict[str, 
         },
         source=workflow_name,
     ).to_dict()
+    pull_request = (
+        lane.get("pull_request") if isinstance(lane.get("pull_request"), dict) else {}
+    )
+    pending_retry = (
+        lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
+    )
+    attention = (
+        lane.get("operator_attention")
+        if isinstance(lane.get("operator_attention"), dict)
+        else {}
+    )
+    runtime_session = (
+        lane.get("runtime_session")
+        if isinstance(lane.get("runtime_session"), dict)
+        else {}
+    )
     return {
         "lane_id": lane_id or identifier,
         "state": stage,
         "workflow_state": stage,
         "issue_number": issue.get("number"),
         "issue_identifier": identifier,
+        "issue_title": issue.get("title"),
         "lane_status": status,
+        "status": status,
+        "stage": stage,
+        "actor": lane.get("actor"),
+        "attempt": lane.get("attempt"),
+        "branch": lane.get("branch"),
+        "pull_request": pull_request or None,
+        "pull_request_number": pull_request.get("number"),
+        "pull_request_url": pull_request.get("url"),
+        "retry_at": pending_retry.get("due_at"),
+        "retry_target": pending_retry.get("target"),
+        "retry_attempt": pending_retry.get("attempt"),
+        "operator_attention_reason": attention.get("reason"),
+        "operator_attention_message": attention.get("message"),
+        "last_progress_at": lane.get("last_progress_at"),
+        "runtime_status": runtime_session.get("status"),
+        "thread_id": lane.get("thread_id") or runtime_session.get("thread_id"),
+        "turn_id": lane.get("turn_id") or runtime_session.get("turn_id"),
         "kind": status,
         "work_item": work_item,
     }
@@ -352,22 +388,38 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         runtime_sessions = _runtime_session_entries(scheduler_payload)
         latest_runs = _engine_runs(workflow_root, "change-delivery")
         active = _active_state_lanes(workflow_root, "change-delivery")
+        active_entries = [
+            _state_lane_entry(lane, workflow_name="change-delivery") for lane in active
+        ]
         running_count = len(
             [lane for lane in active if str(lane.get("status") or "") == "running"]
         )
         retry_count = len(
+            [lane for lane in active if str(lane.get("status") or "") == "retry_queued"]
+        )
+        attention_count = len(
             [
                 lane
                 for lane in active
-                if str(lane.get("status") or "") == "retry_queued"
+                if str(lane.get("status") or "") == "operator_attention"
+            ]
+        )
+        decision_ready_count = len(
+            [
+                lane
+                for lane in active
+                if str(lane.get("status") or "") in {"claimed", "waiting"}
             ]
         )
         return {
             "workflow": "change-delivery",
             "health": None,
             "updated_at": scheduler_payload.get("updated_at"),
+            "active_lane_count": len(active),
+            "decision_ready_count": decision_ready_count,
             "running_count": running_count,
             "retry_count": retry_count,
+            "operator_attention_count": attention_count,
             "canceling_count": len(
                 [
                     entry
@@ -380,6 +432,15 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
             "latest_runs": latest_runs,
             "total_tokens": int(totals.get("total_tokens") or 0),
             "rate_limits": totals.get("rate_limits"),
+            "active_lanes": active_entries,
+            "operator_attention_lanes": [
+                lane
+                for lane in active_entries
+                if lane.get("status") == "operator_attention"
+            ],
+            "retry_lanes": [
+                lane for lane in active_entries if lane.get("status") == "retry_queued"
+            ],
         }
     if workflow_name != "issue-runner":
         scheduler_payload = _engine_scheduler(workflow_root, workflow_name)

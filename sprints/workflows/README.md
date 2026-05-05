@@ -23,7 +23,14 @@ workflows/
 |-- daemon.py                # workflow tick loop and service controls
 |-- orchestrator.py          # orchestrator prompt + decision schema
 |-- runner.py                # CLI tick loop and actor/action dispatch
-|-- lanes.py                 # lane ledger, reconciliation, and transitions
+|-- lanes.py                 # lane facade used by runner.py
+|-- lane_state.py            # lane ledger state, config parsing, engine projections
+|-- intake.py                # tracker intake, auto-activation, lane claiming
+|-- reconcile.py             # runtime, tracker, and pull request reconciliation
+|-- transitions.py           # lane decisions, transitions, actor output handling
+|-- retries.py               # workflow retry projection over engine retry mechanics
+|-- notifications.py         # review feedback notifications
+|-- status.py                # workflow and lane status projections
 |-- sessions.py              # actor sessions, heartbeats, and scheduler projections
 |-- teardown.py              # merge, tracker cleanup, and cleanup retry mechanics
 |-- actors.py                # actor runtime dispatch

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from io import StringIO
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -23,21 +24,68 @@ from rich.table import Table
 def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
     t = Table(title="Active lanes", expand=True)
     t.add_column("Lane")
-    t.add_column("State")
-    t.add_column("Identifier")
+    t.add_column("Issue")
+    t.add_column("Stage")
+    t.add_column("Status")
+    t.add_column("Actor")
+    t.add_column("Try", justify="right")
+    t.add_column("PR")
+    t.add_column("Retry")
+    t.add_column("Attention")
     if not lanes:
-        t.add_row("(no active lanes)", "", "")
+        t.add_row("(no active lanes)", "", "", "", "", "", "", "", "")
         return t
     for lane in lanes:
         if lane.get("_stale"):
-            t.add_row(_esc("[stale]"), _esc("[stale]"), _esc("[stale]"))
+            t.add_row(
+                _esc("[stale]"),
+                _esc("[stale]"),
+                _esc("[stale]"),
+                _esc("[stale]"),
+                "",
+                "",
+                "",
+                "",
+                "",
+            )
             continue
         t.add_row(
-            str(lane.get("lane_id") or ""),
-            str(lane.get("state") or ""),
-            str(lane.get("issue_identifier") or lane.get("issue_number") or ""),
+            _short(lane.get("lane_id"), 18),
+            _short(lane.get("issue_identifier") or lane.get("issue_number"), 14),
+            _short(lane.get("stage") or lane.get("workflow_state"), 12),
+            _short(lane.get("status") or lane.get("lane_status"), 18),
+            _short(lane.get("actor"), 14),
+            str(lane.get("attempt") or ""),
+            _short(_pull_request_label(lane), 16),
+            _short(_retry_label(lane), 18),
+            _short(lane.get("operator_attention_reason"), 22),
         )
     return t
+
+
+def _short(value: Any, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)] + "."
+
+
+def _pull_request_label(lane: Mapping[str, Any]) -> str:
+    number = lane.get("pull_request_number")
+    if number not in (None, ""):
+        return f"#{number}"
+    url = str(lane.get("pull_request_url") or "").strip()
+    if not url:
+        return ""
+    return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def _retry_label(lane: Mapping[str, Any]) -> str:
+    retry_at = str(lane.get("retry_at") or "").strip()
+    target = str(lane.get("retry_target") or "").strip()
+    if retry_at and target:
+        return f"{target} @ {retry_at[:16]}"
+    return retry_at[:16] if retry_at else target
 
 
 def _alerts_panel(alert_state: Mapping[str, Any]) -> Panel | None:
@@ -81,8 +129,11 @@ def _workflow_status_panel(workflow_status: Mapping[str, Any]) -> Panel | None:
     lines = [
         f"workflow={workflow_status.get('workflow') or '?'}",
         f"health={workflow_status.get('health') or '?'}",
+        f"active={workflow_status.get('active_lane_count') or 0}",
+        f"decision_ready={workflow_status.get('decision_ready_count') or 0}",
         f"running={workflow_status.get('running_count') or 0}",
         f"retry={workflow_status.get('retry_count') or 0}",
+        f"operator_attention={workflow_status.get('operator_attention_count') or 0}",
         f"canceling={workflow_status.get('canceling_count') or 0}",
         f"tokens={workflow_status.get('total_tokens') or 0}",
     ]
@@ -113,7 +164,12 @@ def _workflow_status_panel(workflow_status: Mapping[str, Any]) -> Panel | None:
 
 def render_frame_to_string(snapshot: Mapping[str, Any]) -> str:
     """Render one TUI frame as a plain string (suitable for tests + no-TTY)."""
-    console = Console(record=True, width=120, force_terminal=False)
+    console = Console(
+        record=True,
+        width=120,
+        force_terminal=False,
+        file=StringIO(),
+    )
     console.print(Panel("Sprints active lanes", style="bold"))
     console.print(_lanes_table(snapshot.get("active_lanes") or []))
     workflow_status_panel = _workflow_status_panel(
@@ -198,12 +254,11 @@ def cmd_watch(args, parser) -> str:
             console=console,
             refresh_per_second=4,
             screen=True,
-        ):
+        ) as live:
             while True:
                 sleep(interval)
                 snapshot = build_snapshot(workflow_root)
-                # rich.live can take Renderable; we render to text inside the live update for simplicity
-                console.print(render_frame_to_string(snapshot))
+                live.update(render_frame_to_string(snapshot))
     except KeyboardInterrupt:
         return ""
     return ""

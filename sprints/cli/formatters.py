@@ -153,6 +153,92 @@ def format_timestamp(iso_str: str, *, now_iso: str | None = None) -> str:
     return f"{clock} ({_humanize_age_seconds(age)})"
 
 
+def _compact(value: Any, *, limit: int = 80) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return EMPTY_VALUE
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)] + "."
+
+
+def _status_lanes(result: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    lanes = result.get("lanes")
+    if isinstance(lanes, Mapping):
+        return [lane for lane in lanes.values() if isinstance(lane, Mapping)]
+    if isinstance(lanes, list):
+        return [lane for lane in lanes if isinstance(lane, Mapping)]
+    return []
+
+
+def _lane_issue_label(lane: Mapping[str, Any]) -> str:
+    issue = lane.get("issue") if isinstance(lane.get("issue"), Mapping) else {}
+    return str(
+        issue.get("identifier")
+        or issue.get("number")
+        or lane.get("issue_identifier")
+        or lane.get("lane_id")
+        or EMPTY_VALUE
+    )
+
+
+def _lane_pull_request_label(lane: Mapping[str, Any]) -> str:
+    pull_request = (
+        lane.get("pull_request")
+        if isinstance(lane.get("pull_request"), Mapping)
+        else {}
+    )
+    number = pull_request.get("number") or lane.get("pull_request_number")
+    if number not in (None, ""):
+        return f"pr=#{number}"
+    url = str(pull_request.get("url") or lane.get("pull_request_url") or "").strip()
+    if not url:
+        return ""
+    return f"pr={url.rstrip('/').rsplit('/', 1)[-1]}"
+
+
+def _lane_retry_label(lane: Mapping[str, Any]) -> str:
+    pending = (
+        lane.get("pending_retry")
+        if isinstance(lane.get("pending_retry"), Mapping)
+        else {}
+    )
+    retry_at = str(pending.get("due_at") or lane.get("retry_at") or "").strip()
+    target = str(pending.get("target") or lane.get("retry_target") or "").strip()
+    if retry_at and target:
+        return f"retry={target}@{retry_at[:16]}"
+    if retry_at:
+        return f"retry={retry_at[:16]}"
+    if target:
+        return f"retry={target}"
+    return ""
+
+
+def _lane_attention_label(lane: Mapping[str, Any]) -> str:
+    attention = (
+        lane.get("operator_attention")
+        if isinstance(lane.get("operator_attention"), Mapping)
+        else {}
+    )
+    reason = str(
+        attention.get("reason") or lane.get("operator_attention_reason") or ""
+    ).strip()
+    return f"attention={reason}" if reason else ""
+
+
+def _lane_status_glyph(
+    lane: Mapping[str, Any],
+) -> Literal["pass", "fail", "warn", "info"]:
+    status = str(lane.get("status") or lane.get("lane_status") or "").strip()
+    if status == "operator_attention":
+        return "fail"
+    if status in {"retry_queued", "running"}:
+        return "warn"
+    if status in {"complete", "released"}:
+        return "pass"
+    return "info"
+
+
 # ─── Section / Row dataclasses ────────────────────────────────────────
 
 
@@ -335,51 +421,115 @@ def format_status(
             use_color=use_color,
         )
 
-    runtime_state = result.get("runtime_status") or EMPTY_VALUE
-    mode = result.get("current_mode")
-    if mode:
-        state_value = f"{runtime_state} ({mode} mode)"
-    else:
-        state_value = runtime_state
-
-    schema_version = result.get("schema_version")
-    schema_value = f"v{schema_version}" if schema_version else EMPTY_VALUE
-
-    owner = result.get("active_orchestrator_instance_id") or EMPTY_VALUE
-    lane_count = result.get("lane_count")
-    lanes_str = str(lane_count) if lane_count is not None else EMPTY_VALUE
-
-    instance_label = (
-        result.get("instance_id") or result.get("workflow_root_name") or "workflow"
+    workflow_name = str(result.get("workflow") or "workflow")
+    status_value = str(
+        result.get("status") or result.get("runtime_status") or EMPTY_VALUE
     )
+    if result.get("current_mode"):
+        status_value = f"{status_value} ({result.get('current_mode')} mode)"
+    health = str(result.get("health") or EMPTY_VALUE)
+    idle_reason = str(result.get("idle_reason") or EMPTY_VALUE)
 
-    # Build sections
+    lane_count = result.get("lane_count")
+    active_count = result.get("active_lane_count")
+    decision_ready = result.get("decision_ready_count")
+
     top_rows = [
-        Row(label="state", value=state_value),
-        Row(label="owner", value=owner),
-        Row(label="schema", value=schema_value),
+        Row(label="workflow", value=workflow_name),
+        Row(label="health", value=health),
+        Row(label="state", value=status_value),
+        Row(label="idle", value=idle_reason),
+        Row(label="tokens", value=str(int(result.get("total_tokens") or 0))),
     ]
 
     paths_rows = [
-        Row(label="db", value=format_path(result.get("db_path"))),
-        Row(label="events", value=format_path(result.get("event_log_path"))),
+        Row(label="workflow", value=format_path(result.get("workflow_root"))),
+        Row(label="contract", value=format_path(result.get("contract_path"))),
+        Row(label="state", value=format_path(result.get("state_path"))),
+        Row(label="audit", value=format_path(result.get("audit_log_path"))),
     ]
 
-    heartbeat_value = format_timestamp(
-        result.get("latest_heartbeat_at") or "", now_iso=now_iso
-    )
-    heartbeat_rows = [Row(label="last", value=heartbeat_value)]
+    lanes_rows = [
+        Row(
+            label="total",
+            value=str(lane_count) if lane_count is not None else EMPTY_VALUE,
+        ),
+        Row(
+            label="active",
+            value=str(active_count) if active_count is not None else EMPTY_VALUE,
+        ),
+        Row(
+            label="decision ready",
+            value=str(decision_ready) if decision_ready is not None else EMPTY_VALUE,
+        ),
+        Row(label="running", value=str(result.get("running_count") or 0)),
+        Row(label="retry", value=str(result.get("retry_count") or 0)),
+        Row(
+            label="attention",
+            value=str(result.get("operator_attention_count") or 0),
+            status="fail" if result.get("operator_attention_count") else None,
+        ),
+    ]
 
-    lanes_rows = [Row(label="total", value=lanes_str)]
+    lane_rows: list[Row] = []
+    for lane in _status_lanes(result)[:8]:
+        lane_id = str(lane.get("lane_id") or EMPTY_VALUE)
+        status = str(lane.get("status") or lane.get("lane_status") or EMPTY_VALUE)
+        stage = str(lane.get("stage") or EMPTY_VALUE)
+        actor = str(lane.get("actor") or EMPTY_VALUE)
+        attempt = str(lane.get("attempt") or EMPTY_VALUE)
+        detail_parts = [
+            part
+            for part in [
+                f"stage={stage}",
+                f"status={status}",
+                f"actor={actor}",
+                f"attempt={attempt}",
+                _lane_pull_request_label(lane),
+                _lane_retry_label(lane),
+                _lane_attention_label(lane),
+            ]
+            if part and not part.endswith(f"={EMPTY_VALUE}")
+        ]
+        lane_rows.append(
+            Row(
+                label=_compact(lane_id, limit=24),
+                value=_compact(_lane_issue_label(lane), limit=24),
+                status=_lane_status_glyph(lane),
+                detail=_compact(" ".join(detail_parts), limit=140),
+            )
+        )
+    if not lane_rows:
+        lane_rows.append(Row(label="active", value="none"))
+
+    run_rows: list[Row] = []
+    for run in (result.get("latest_runs") or [])[:5]:
+        if not isinstance(run, Mapping):
+            continue
+        run_rows.append(
+            Row(
+                label=str(run.get("mode") or "run"),
+                value=str(run.get("status") or EMPTY_VALUE),
+                detail=_compact(
+                    f"id={run.get('run_id') or EMPTY_VALUE} "
+                    f"started={run.get('started_at') or EMPTY_VALUE}",
+                    limit=120,
+                ),
+            )
+        )
+
+    sections = [
+        Section(name=None, rows=top_rows),
+        Section(name="lanes", rows=lanes_rows),
+        Section(name="active lanes", rows=lane_rows),
+        Section(name="paths", rows=paths_rows),
+    ]
+    if run_rows:
+        sections.append(Section(name="latest runs", rows=run_rows))
 
     return format_panel(
-        title=f"Sprints runtime — {instance_label}",
-        sections=[
-            Section(name=None, rows=top_rows),
-            Section(name="paths", rows=paths_rows),
-            Section(name="heartbeat", rows=heartbeat_rows),
-            Section(name="lanes", rows=lanes_rows),
-        ],
+        title=f"Sprints workflow - {workflow_name}",
+        sections=sections,
         use_color=use_color,
     )
 
