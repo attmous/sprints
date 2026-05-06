@@ -4,33 +4,29 @@ from __future__ import annotations
 
 from typing import Any
 
-from sprints.workflows import sessions
-from sprints.workflows import teardown as teardown_flow
+from sprints.workflows import runtime_sessions as sessions
+from sprints.workflows import lane_teardown as teardown_flow
 from sprints.core.config import WorkflowConfig
+from sprints.workflows.actor_outputs import contract_artifacts, delivery_contract_failure
 from sprints.workflows.lane_state import (
     append_engine_event,
-    blocker_reason,
     clear_engine_retry,
     completion_cleanup_retry_pending,
     concurrency_config,
-    first_text,
     lane_transition_side,
-    normalize_pull_request,
     now_iso,
     release_lane_lease,
     active_lanes,
     append_lane_event,
     lane_is_terminal,
-    lane_list,
     lane_mapping,
     lane_recovery_artifacts,
     lane_stage,
     set_lane_operator_attention,
     set_lane_status,
 )
-from sprints.workflows.notifications import notify_review_changes_requested
-from sprints.workflows.orchestrator import OrchestratorDecision
-from sprints.workflows.retries import lane_retry_is_due
+from sprints.workflows.route_orchestrator import OrchestratorDecision
+from sprints.workflows.state_retries import lane_retry_is_due
 
 
 def lane_for_decision(*, state: Any, decision: OrchestratorDecision) -> dict[str, Any]:
@@ -147,33 +143,6 @@ def _stale_reviewer_changes_were_superseded(
     return int(lane.get("attempt") or 1) > 1
 
 
-def _clear_superseded_reviewer_changes(
-    *, lane: dict[str, Any], output: dict[str, Any]
-) -> None:
-    if str(output.get("status") or "").strip().lower() != "done":
-        return
-    actor_outputs = lane_mapping(lane, "actor_outputs")
-    review = actor_outputs.get("reviewer")
-    if not isinstance(review, dict):
-        return
-    if str(review.get("status") or "").strip().lower() not in {
-        "changes_requested",
-        "needs_changes",
-    }:
-        return
-    superseded = lane_list(lane, "superseded_actor_outputs")
-    superseded.append(
-        {
-            "actor": "reviewer",
-            "stage": "review",
-            "superseded_by": "implementer",
-            "superseded_at": now_iso(),
-            "output": review,
-        }
-    )
-    actor_outputs.pop("reviewer", None)
-
-
 def _validate_review_changes_retry(
     *, lane: dict[str, Any], decision: OrchestratorDecision
 ) -> None:
@@ -286,14 +255,14 @@ def advance_lane(
     if not next_stage:
         raise RuntimeError(f"stage {lane_stage(lane)} has no next stage")
     if lane_stage(lane) == "deliver" and next_stage == "review":
-        failure = _delivery_contract_failure(lane)
+        failure = delivery_contract_failure(lane)
         if failure:
             set_lane_operator_attention(
                 config=config,
                 lane=lane,
                 reason="delivery_contract_failed",
                 message=failure,
-                artifacts=_contract_artifacts(lane),
+                artifacts=contract_artifacts(lane),
             )
             return
     if next_stage == "done":
@@ -375,48 +344,6 @@ def target_or_single(*, target: str | None, values: tuple[str, ...], kind: str) 
     if len(values) == 1:
         return values[0]
     raise RuntimeError(f"orchestrator decision must target one {kind}")
-
-
-def record_actor_output(
-    *,
-    config: WorkflowConfig,
-    lane: dict[str, Any],
-    actor_name: str,
-    output: dict[str, Any],
-) -> None:
-    actor_outputs = lane_mapping(lane, "actor_outputs")
-    if actor_name == "implementer":
-        _clear_superseded_reviewer_changes(lane=lane, output=output)
-    actor_outputs[actor_name] = output
-    lane["last_actor_output"] = output
-    lane["last_progress_at"] = now_iso()
-    lane["pending_retry"] = None
-    clear_engine_retry(config=config, lane=lane)
-    stage_outputs = lane_mapping(lane, "stage_outputs")
-    stage_outputs[lane_stage(lane)] = {
-        **dict(stage_outputs.get(lane_stage(lane)) or {}),
-        "last_actor": actor_name,
-    }
-    branch = first_text(output, "branch", "branch_name", "branch-name")
-    if branch:
-        lane["branch"] = branch
-    pull_request = output.get("pull_request") or output.get("pr")
-    if isinstance(pull_request, dict):
-        lane["pull_request"] = normalize_pull_request(pull_request)
-    elif pull_request:
-        lane["pull_request"] = {"url": str(pull_request)}
-    thread_id = first_text(output, "thread_id", "thread-id")
-    if thread_id:
-        lane["thread_id"] = thread_id
-    turn_id = first_text(output, "turn_id", "turn-id")
-    if turn_id:
-        lane["turn_id"] = turn_id
-    append_engine_event(
-        config=config,
-        lane=lane,
-        event_type=f"{config.workflow_name}.lane.actor_output",
-        payload={"actor": actor_name, "output": output},
-    )
 
 
 def record_actor_runtime_start(
@@ -528,128 +455,3 @@ def save_scheduler_snapshot(*, config: WorkflowConfig, state: Any) -> None:
     )
 
 
-def apply_actor_output_status(
-    *,
-    config: WorkflowConfig,
-    lane: dict[str, Any],
-    actor_name: str,
-    output: dict[str, Any],
-) -> None:
-    status = str(output.get("status") or "").strip().lower()
-    blockers = (
-        output.get("blockers") if isinstance(output.get("blockers"), list) else []
-    )
-    if not status:
-        set_lane_operator_attention(
-            config=config,
-            lane=lane,
-            reason="actor_output_contract_failed",
-            message=f"{actor_name} output is missing status",
-            artifacts={"actor": actor_name, "output": output},
-        )
-        return
-    if actor_name == "implementer":
-        if status not in {"done", "blocked", "failed"}:
-            set_lane_operator_attention(
-                config=config,
-                lane=lane,
-                reason="actor_output_contract_failed",
-                message=f"implementer returned unsupported status {status!r}",
-                artifacts={"actor": actor_name, "output": output},
-            )
-            return
-        if status == "done":
-            failure = _delivery_contract_failure(lane)
-            if failure:
-                set_lane_operator_attention(
-                    config=config,
-                    lane=lane,
-                    reason="actor_output_contract_failed",
-                    message=failure,
-                    artifacts=_contract_artifacts(lane),
-                )
-                return
-    if actor_name == "reviewer" and status not in {
-        "approved",
-        "blocked",
-        "failed",
-        "changes_requested",
-        "needs_changes",
-    }:
-        set_lane_operator_attention(
-            config=config,
-            lane=lane,
-            reason="actor_output_contract_failed",
-            message=f"reviewer returned unsupported status {status!r}",
-            artifacts={"actor": actor_name, "output": output},
-        )
-        return
-    if actor_name == "reviewer" and status in {"changes_requested", "needs_changes"}:
-        required_fixes = output.get("required_fixes")
-        if not isinstance(required_fixes, list) or not required_fixes:
-            set_lane_operator_attention(
-                config=config,
-                lane=lane,
-                reason="actor_output_contract_failed",
-                message="review changes require non-empty required_fixes",
-                artifacts={"actor": actor_name, "output": output},
-            )
-            return
-        notify_review_changes_requested(config=config, lane=lane, output=output)
-    if status in {"blocked", "failed"} or blockers:
-        set_lane_operator_attention(
-            config=config,
-            lane=lane,
-            reason=blocker_reason(output) or status or "actor_blocked",
-            message=str(
-                output.get("summary") or f"{actor_name} returned {status or 'blockers'}"
-            ),
-            artifacts={
-                "actor": actor_name,
-                "blockers": blockers,
-                "branch": lane.get("branch"),
-                "pull_request": lane.get("pull_request"),
-                "artifacts": output.get("artifacts")
-                if isinstance(output.get("artifacts"), dict)
-                else {},
-            },
-        )
-        return
-    set_lane_status(
-        config=config,
-        lane=lane,
-        status="waiting",
-        actor=None,
-        reason=f"{actor_name} returned output",
-    )
-
-
-def _delivery_contract_failure(lane: dict[str, Any]) -> str:
-    implementation = lane_mapping(lane, "actor_outputs").get("implementer")
-    if not isinstance(implementation, dict):
-        return "delivery cannot advance before implementer output exists"
-    if str(implementation.get("status") or "").strip().lower() != "done":
-        return "delivery requires implementer status `done`"
-    if not _pull_request_url(lane):
-        return "delivery requires pull_request.url"
-    verification = implementation.get("verification")
-    if not isinstance(verification, list) or not verification:
-        return "delivery requires non-empty verification evidence"
-    return ""
-
-
-def _pull_request_url(lane: dict[str, Any]) -> str:
-    pull_request = lane.get("pull_request")
-    if isinstance(pull_request, dict):
-        return str(pull_request.get("url") or "").strip()
-    return ""
-
-
-def _contract_artifacts(lane: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "stage": lane.get("stage"),
-        "actor_outputs": lane.get("actor_outputs"),
-        "pull_request": lane.get("pull_request"),
-        "branch": lane.get("branch"),
-        "completion_auto_merge": lane.get("completion_auto_merge"),
-    }

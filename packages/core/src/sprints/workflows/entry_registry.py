@@ -45,7 +45,7 @@ class SprintsWorkflow:
         return make_workspace(workflow_root=workflow_root, config=config)
 
     def run_cli(self, *, workspace: object, argv: list[str]) -> int:
-        from sprints.workflows.runner import main
+        from sprints.workflows.entry_runner import main
 
         return main(workspace, argv)
 

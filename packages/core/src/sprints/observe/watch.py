@@ -27,17 +27,16 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
     t = Table(title="Active lanes", expand=True)
     t.add_column("Lane")
     t.add_column("Issue")
+    t.add_column("Board")
     t.add_column("Stage")
     t.add_column("Status")
     t.add_column("Actor")
-    t.add_column("Dispatch")
-    t.add_column("Try", justify="right")
-    t.add_column("Effects", justify="right")
     t.add_column("PR")
+    t.add_column("Review")
     t.add_column("Retry")
     t.add_column("Attention")
     if not lanes:
-        t.add_row("(no active lanes)", "", "", "", "", "", "", "", "", "", "")
+        t.add_row("(no active lanes)", "", "", "", "", "", "", "", "", "")
         return t
     for lane in lanes:
         if lane.get("_stale"):
@@ -52,19 +51,17 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
                 "",
                 "",
                 "",
-                "",
             )
             continue
         t.add_row(
             _short(lane.get("lane_id"), 18),
             _short(lane.get("issue_identifier") or lane.get("issue_number"), 14),
+            _short(lane.get("board_state"), 12),
             _short(lane.get("stage") or lane.get("workflow_state"), 12),
             _short(lane.get("status") or lane.get("lane_status"), 18),
-            _short(lane.get("actor"), 14),
-            _short(_dispatch_label(lane), 18),
-            str(lane.get("attempt") or ""),
-            str(lane.get("side_effect_count") or ""),
+            _short(_actor_label(lane), 18),
             _short(_pull_request_label(lane), 16),
+            _short(_review_label(lane), 22),
             _short(_retry_label(lane), 18),
             _short(lane.get("operator_attention_reason"), 22),
         )
@@ -86,6 +83,20 @@ def _pull_request_label(lane: Mapping[str, Any]) -> str:
     if not url:
         return ""
     return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def _actor_label(lane: Mapping[str, Any]) -> str:
+    pieces = []
+    actor = str(lane.get("actor") or "").strip()
+    mode = str(lane.get("actor_mode") or "").strip()
+    dispatch = _dispatch_label(lane)
+    if actor:
+        pieces.append(actor)
+    if mode:
+        pieces.append(mode)
+    if dispatch:
+        pieces.append(dispatch)
+    return " ".join(pieces)
 
 
 def _dispatch_label(lane: Mapping[str, Any]) -> str:
@@ -122,6 +133,26 @@ def _retry_label(lane: Mapping[str, Any]) -> str:
         pieces.append(f"+{delay}s")
     if reason:
         pieces.append(reason)
+    return " ".join(str(piece) for piece in pieces)
+
+
+def _review_label(lane: Mapping[str, Any]) -> str:
+    signals = (
+        lane.get("review_signals")
+        if isinstance(lane.get("review_signals"), Mapping)
+        else {}
+    )
+    pieces = []
+    phase = str(signals.get("phase") or signals.get("status") or "")
+    if phase:
+        pieces.append(phase)
+    required = lane.get("review_required_change_count")
+    if required not in (None, "", 0):
+        pieces.append(f"fixes={required}")
+    if lane.get("reviewer_actor_running"):
+        pieces.append("reviewer=running")
+    if lane.get("merge_signal_seen"):
+        pieces.append("merge=seen")
     return " ".join(str(piece) for piece in pieces)
 
 

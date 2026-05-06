@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,8 +47,9 @@ class ActorPolicy:
 
 @dataclass(frozen=True)
 class WorkflowPolicy:
-    orchestrator: str
-    actors: dict[str, ActorPolicy]
+    orchestrator: str | None = None
+    actors: dict[str, ActorPolicy] = field(default_factory=dict)
+    workflow: str | None = None
 
 
 def workflow_markdown_path(workflow_root: Path) -> Path:
@@ -242,21 +243,26 @@ def parse_workflow_policy(markdown_body: str) -> WorkflowPolicy:
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
         sections.append((match.group(1).strip(), body[start:end].strip()))
-    orchestrator = ""
+    workflow: str | None = None
+    orchestrator: str | None = None
     actors: dict[str, ActorPolicy] = {}
     for title, section_body in sections:
-        if title == "Orchestrator Policy":
+        if title == "Workflow Policy":
+            workflow = section_body
+        elif title == "Orchestrator Policy":
             orchestrator = section_body
         elif title.startswith("Actor:"):
             name = title.split(":", 1)[1].strip()
             if not name:
                 raise WorkflowPolicyError("actor policy heading is missing a name")
             actors[name] = ActorPolicy(name=name, body=section_body)
-    if not orchestrator:
-        raise WorkflowPolicyError("missing # Orchestrator Policy section")
+    if not orchestrator and not workflow:
+        raise WorkflowPolicyError(
+            "missing # Orchestrator Policy or # Workflow Policy section"
+        )
     if not actors:
         raise WorkflowPolicyError("missing # Actor: <name> policy sections")
-    return WorkflowPolicy(orchestrator=orchestrator, actors=actors)
+    return WorkflowPolicy(workflow=workflow, orchestrator=orchestrator, actors=actors)
 
 
 def _repo_workflow_candidates(repo_root: Path) -> list[Path]:

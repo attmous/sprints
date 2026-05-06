@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from typing import Any
 
 from sprints.trackers import build_code_host_client
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.effects import (
+from sprints.workflows.state_effects import (
     completed_side_effect,
     record_side_effect_failed,
     record_side_effect_skipped,
@@ -25,6 +24,10 @@ from sprints.workflows.lane_state import (
     repository_path,
     review_notification_config,
     lane_list,
+)
+from sprints.workflows.surface_pull_request import (
+    pull_request_number as _pull_request_number,
+    trailing_number as _trailing_number,
 )
 
 
@@ -336,23 +339,6 @@ def _markdown_item_text(item: Any) -> str:
     return str(item)
 
 
-def _pull_request_number(lane: dict[str, Any]) -> str:
-    pull_request = lane.get("pull_request")
-    if not isinstance(pull_request, dict):
-        return ""
-    for key in ("number", "pr_number"):
-        value = pull_request.get(key)
-        if value not in (None, ""):
-            number = _trailing_number(value)
-            if number:
-                return number
-    url = str(pull_request.get("url") or "").strip()
-    match = re.search(r"/pull/([0-9]+)(?:$|[/?#])", url)
-    if match:
-        return match.group(1)
-    return _trailing_number(pull_request.get("id"))
-
-
 def _issue_number(lane: dict[str, Any]) -> str:
     issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
     for key in ("number", "id", "identifier"):
@@ -364,7 +350,3 @@ def _issue_number(lane: dict[str, Any]) -> str:
     return ""
 
 
-def _trailing_number(value: Any) -> str:
-    text = str(value or "").strip().lstrip("#")
-    match = re.search(r"([0-9]+)$", text)
-    return match.group(1) if match else ""

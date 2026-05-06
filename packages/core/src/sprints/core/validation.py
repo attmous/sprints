@@ -13,7 +13,7 @@ from sprints.core.contracts import (
     WorkflowContractError,
     load_workflow_contract,
 )
-from sprints.workflows.registry import Workflow, load_workflow_object
+from sprints.workflows.entry_registry import Workflow, load_workflow_object
 from sprints.core.bindings import (
     runtime_availability_checks,
     runtime_binding_checks,

@@ -16,7 +16,7 @@ from sprints.core.paths import (
     derive_workflow_instance_name,
     repo_local_workflow_pointer_path,
 )
-from sprints.workflows.registry import SUPPORTED_WORKFLOW_NAMES
+from sprints.workflows.entry_registry import SUPPORTED_WORKFLOW_NAMES
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
 

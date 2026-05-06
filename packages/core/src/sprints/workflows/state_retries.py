@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from sprints.engine import pending_retry_projection, retry_is_due, retry_record
@@ -11,20 +12,28 @@ from sprints.workflows.lane_state import (
     clear_engine_retry,
     completion_cleanup_retry_pending,
     engine_store,
+    lane_list,
     lane_run_id,
     lane_transition_side,
     now_iso,
     retry_engine_entry,
     retry_policy,
-    lane_list,
     set_lane_operator_attention,
     set_lane_status,
 )
-from sprints.workflows.orchestrator import OrchestratorDecision
+
+
+@dataclass(frozen=True)
+class RetryRequest:
+    stage: str
+    target: str | None = None
+    lane_id: str | None = None
+    reason: str = ""
+    inputs: dict[str, Any] = field(default_factory=dict)
 
 
 def queue_lane_retry(
-    *, config: WorkflowConfig, lane: dict[str, Any], decision: OrchestratorDecision
+    *, config: WorkflowConfig, lane: dict[str, Any], request: RetryRequest
 ) -> dict[str, Any]:
     current_attempt = max(int(lane.get("attempt") or 1), 1)
     schedule = engine_store(config).schedule_retry(
@@ -32,16 +41,16 @@ def queue_lane_retry(
         entry=retry_engine_entry(lane),
         policy=retry_policy(config),
         current_attempt=current_attempt,
-        error=decision.reason or "retry requested",
+        error=request.reason or "retry requested",
         delay_type="workflow-retry",
         run_id=lane_run_id(lane),
         now_iso=now_iso(),
     )
     record = retry_record(
-        stage=decision.stage,
-        target=decision.target,
-        reason=decision.reason,
-        inputs=decision.inputs,
+        stage=request.stage,
+        target=request.target,
+        reason=request.reason,
+        inputs=request.inputs,
         schedule=schedule,
         now_iso=now_iso(),
     )
@@ -54,7 +63,7 @@ def queue_lane_retry(
             event_type=f"{config.workflow_name}.lane.retry.limit_exceeded",
             payload=_retry_event_payload(
                 lane=lane,
-                decision=decision,
+                request=request,
                 retry=record,
                 status="limit_exceeded",
             ),
@@ -65,7 +74,7 @@ def queue_lane_retry(
             lane=lane,
             reason="retry_limit_exceeded",
             message=(
-                f"retry limit exceeded for stage {decision.stage!r}; "
+                f"retry limit exceeded for stage {request.stage!r}; "
                 f"attempt {current_attempt} reached max {schedule['max_attempts']}"
             ),
             artifacts={
@@ -83,16 +92,16 @@ def queue_lane_retry(
         }
 
     pending = pending_retry_projection(
-        stage=decision.stage,
-        target=decision.target,
-        reason=decision.reason,
-        inputs=decision.inputs,
+        stage=request.stage,
+        target=request.target,
+        reason=request.reason,
+        inputs=request.inputs,
         schedule=schedule,
     )
     previous = lane_transition_side(lane)
     next_attempt = int(pending.get("attempt") or current_attempt)
     lane["attempt"] = next_attempt
-    lane["stage"] = decision.stage
+    lane["stage"] = request.stage
     lane["operator_attention"] = None
     lane["pending_retry"] = pending
     retry_history.append(record)
@@ -100,7 +109,7 @@ def queue_lane_retry(
         config=config,
         lane=lane,
         status="retry_queued",
-        reason=decision.reason or "retry requested",
+        reason=request.reason or "retry requested",
         actor=None,
         previous=previous,
     )
@@ -110,7 +119,7 @@ def queue_lane_retry(
         event_type=f"{config.workflow_name}.lane.retry.scheduled",
         payload=_retry_event_payload(
             lane=lane,
-            decision=decision,
+            request=request,
             retry=pending,
             status="queued",
         ),
@@ -159,21 +168,21 @@ def lane_retry_is_due(lane: dict[str, Any], *, now_epoch: float | None = None) -
 def _retry_event_payload(
     *,
     lane: dict[str, Any],
-    decision: OrchestratorDecision,
+    request: RetryRequest,
     retry: dict[str, Any],
     status: str,
 ) -> dict[str, Any]:
     return {
         "lane_id": lane.get("lane_id"),
         "status": status,
-        "stage": decision.stage,
-        "target": decision.target,
-        "failure_reason": decision.reason,
+        "stage": request.stage,
+        "target": request.target,
+        "failure_reason": request.reason,
         "retry": {
             "status": retry.get("status") or status,
-            "stage": retry.get("stage") or decision.stage,
-            "target": retry.get("target") or decision.target,
-            "reason": retry.get("reason") or decision.reason,
+            "stage": retry.get("stage") or request.stage,
+            "target": retry.get("target") or request.target,
+            "reason": retry.get("reason") or request.reason,
             "attempt": retry.get("attempt") or retry.get("next_attempt"),
             "current_attempt": retry.get("current_attempt"),
             "max_attempts": retry.get("max_attempts"),

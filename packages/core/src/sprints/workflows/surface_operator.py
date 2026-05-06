@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.orchestrator import OrchestratorDecision
+from sprints.workflows.state_retries import RetryRequest
 from sprints.workflows.state_io import (
     WorkflowState,
     load_state,
@@ -14,7 +14,7 @@ from sprints.workflows.state_io import (
     save_state_event,
     with_state_lock,
 )
-from sprints.workflows.lanes import (
+from sprints.workflows.entry_lanes import (
     complete_lane,
     lane_by_id,
     lane_stage,
@@ -62,15 +62,14 @@ def operator_retry_locked(
         raise RuntimeError(f"lane {lane_id} already has a queued retry")
     if status in {"complete", "released"}:
         raise RuntimeError(f"lane {lane_id} is terminal")
-    decision = OrchestratorDecision(
-        decision="retry",
+    request = RetryRequest(
         stage=lane_stage(lane) or config.first_stage,
         lane_id=lane_id,
         target=target,
         reason=reason,
         inputs={"feedback": reason, "operator_requested": True},
     )
-    result = queue_lane_retry(config=config, lane=lane, decision=decision)
+    result = queue_lane_retry(config=config, lane=lane, request=request)
     refresh_state_status(state, idle_reason="no active lanes")
     _save_operator_event(
         config=config,

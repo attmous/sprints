@@ -15,7 +15,7 @@ from sprints.engine import EngineStore
 from sprints.core.config import WorkflowConfig, WorkflowConfigError
 from sprints.core.contracts import load_workflow_contract
 from sprints.core.paths import runtime_paths
-from sprints.workflows.lanes import (
+from sprints.workflows.entry_lanes import (
     active_lanes,
     build_dispatch_audit,
     build_retry_audit,

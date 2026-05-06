@@ -16,8 +16,8 @@ from sprints.engine import EngineStore
 from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import load_workflow_contract
 from sprints.core.paths import runtime_paths
-from sprints.workflows.registry import run_cli
-from sprints.workflows.status import build_status
+from sprints.workflows.entry_registry import run_cli
+from sprints.workflows.state_status import build_status
 
 WORKFLOW_DAEMON_SERVICE_PREFIX = "sprints-workflow"
 DEFAULT_ACTIVE_INTERVAL_SECONDS = 15.0

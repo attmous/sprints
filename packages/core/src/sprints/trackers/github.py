@@ -4,7 +4,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from . import (
     CodeHostConfigError,
@@ -174,6 +174,12 @@ def _configured_states(tracker_cfg: dict[str, Any], *keys: str) -> list[str]:
     return []
 
 
+def _state_source_kind(tracker_cfg: dict[str, Any]) -> str:
+    raw = tracker_cfg.get("state-source", tracker_cfg.get("state_source"))
+    source = raw if isinstance(raw, dict) else {}
+    return str(source.get("kind") or "").strip().lower()
+
+
 def validate_github_tracker_config(
     *,
     workflow_root: Path,
@@ -196,18 +202,21 @@ def validate_github_tracker_config(
             f"repository.local-path does not exist for tracker.kind='github': {resolved_repo_path}"
         )
 
-    active_states = _configured_states(tracker_cfg, "active_states", "active-states")
-    terminal_states = _configured_states(
-        tracker_cfg, "terminal_states", "terminal-states"
-    )
-    if not active_states or set(active_states) != {"open"}:
-        raise TrackerConfigError(
-            "tracker.kind='github' requires tracker.active_states: [open]"
+    if _state_source_kind(tracker_cfg) != "labels":
+        active_states = _configured_states(
+            tracker_cfg, "active_states", "active-states"
         )
-    if not terminal_states or set(terminal_states) != {"closed"}:
-        raise TrackerConfigError(
-            "tracker.kind='github' requires tracker.terminal_states: [closed]"
+        terminal_states = _configured_states(
+            tracker_cfg, "terminal_states", "terminal-states"
         )
+        if not active_states or set(active_states) != {"open"}:
+            raise TrackerConfigError(
+                "tracker.kind='github' requires tracker.active_states: [open]"
+            )
+        if not terminal_states or set(terminal_states) != {"closed"}:
+            raise TrackerConfigError(
+                "tracker.kind='github' requires tracker.terminal_states: [closed]"
+            )
 
     for key in (
         "required_labels",
@@ -303,6 +312,8 @@ class GithubTrackerClient:
             required=github_slug_from_config(tracker_cfg) is None,
         )
         self._repo_slug = github_slug_from_config(tracker_cfg)
+        self._name_with_owner = github_name_with_owner_from_slug(self._repo_slug)
+        self._auth_host = github_auth_host_from_slug(self._repo_slug)
         self._run = run or _subprocess_run
         self._run_json = run_json or _subprocess_run_json
 
@@ -318,6 +329,20 @@ class GithubTrackerClient:
         if not self._repo_slug:
             return command
         return [*command, "--repo", self._repo_slug]
+
+    def _with_api_hostname(self, command: list[str]) -> list[str]:
+        if not self._repo_slug or self._repo_slug.count("/") < 2:
+            return command
+        return [*command, "--hostname", str(self._auth_host)]
+
+    def _api_repo(self) -> str:
+        if not self._name_with_owner:
+            payload = self.repo_view_payload()
+            repo = str(payload.get("nameWithOwner") or "").strip()
+            if not repo:
+                raise RuntimeError("gh repo view did not return nameWithOwner")
+            return repo
+        return self._name_with_owner
 
     def list_issue_payloads(
         self,
@@ -420,6 +445,18 @@ class GithubTrackerClient:
             issues[issue["id"]] = issue
         return sorted(issues.values(), key=issue_priority_sort_key)
 
+    def list_for_state_labels(self) -> list[dict[str, Any]]:
+        issues = {}
+        for state in ("open", "closed"):
+            for payload in self.list_issue_payloads(
+                state=state,
+                limit=1000,
+                fields="number,title,url,body,labels,createdAt,updatedAt,state",
+            ):
+                issue = normalize_github_issue(payload)
+                issues[issue["id"]] = issue
+        return sorted(issues.values(), key=issue_priority_sort_key)
+
     def list_candidates(self) -> list[dict[str, Any]]:
         issues = [
             normalize_github_issue(payload)
@@ -500,6 +537,93 @@ class GithubTrackerClient:
             cwd=self._repo_path,
         )
         return True
+
+    def set_issue_state_label(
+        self,
+        issue_id: str | int | None,
+        *,
+        add: Sequence[str],
+        remove: Sequence[str],
+    ) -> bool:
+        issue_number = _coerce_issue_number(issue_id)
+        if issue_number is None:
+            return False
+        remove_labels = [str(label).strip() for label in remove if str(label).strip()]
+        add_labels = [str(label).strip() for label in add if str(label).strip()]
+        changed = False
+        if remove_labels:
+            changed = self.remove_labels(issue_number, remove_labels) or changed
+        if add_labels:
+            changed = self.add_labels(issue_number, add_labels) or changed
+        return changed or not remove_labels and not add_labels
+
+    def list_issue_comments(self, issue_id: str | int | None) -> list[dict[str, Any]]:
+        issue_number = _coerce_issue_number(issue_id)
+        if issue_number is None:
+            return []
+        payload = self._run_json(
+            self._with_api_hostname(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{self._api_repo()}/issues/{issue_number}/comments",
+                    "--paginate",
+                    "--slurp",
+                ]
+            ),
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("expected gh issue comments JSON array payload")
+        return _flatten_comment_pages(payload)
+
+    def create_issue_comment(
+        self, issue_id: str | int | None, body: str
+    ) -> dict[str, Any]:
+        issue_number = _coerce_issue_number(issue_id)
+        if issue_number is None:
+            raise TrackerConfigError("issue_id is required to create issue comment")
+        payload = self._run_json(
+            self._with_api_hostname(
+                [
+                    "gh",
+                    "api",
+                    "-X",
+                    "POST",
+                    f"repos/{self._api_repo()}/issues/{issue_number}/comments",
+                    "--raw-field",
+                    f"body={body}",
+                ]
+            ),
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("expected gh issue comment JSON object payload")
+        return payload
+
+    def update_issue_comment(
+        self, comment_id: str | int | None, body: str
+    ) -> dict[str, Any]:
+        comment = str(comment_id or "").strip()
+        if not comment:
+            raise TrackerConfigError("comment_id is required to update issue comment")
+        payload = self._run_json(
+            self._with_api_hostname(
+                [
+                    "gh",
+                    "api",
+                    "-X",
+                    "PATCH",
+                    f"repos/{self._api_repo()}/issues/comments/{comment}",
+                    "--raw-field",
+                    f"body={body}",
+                ]
+            ),
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("expected gh issue comment JSON object payload")
+        return payload
 
 
 @register_code_host("github")
@@ -780,6 +904,46 @@ class GithubCodeHostClient:
             "pullRequest"
         ) or {}
 
+    def fetch_pull_request_reviews(
+        self, pr_number: int | str | None
+    ) -> list[dict[str, Any]]:
+        number = _coerce_number(pr_number, field_name="pr_number")
+        payload = self._run_json(
+            self._with_api_hostname(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{self._name_with_owner}/pulls/{number}/reviews",
+                    "--paginate",
+                    "--slurp",
+                ]
+            ),
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("expected gh pull request reviews JSON array payload")
+        return _flatten_comment_pages(payload)
+
+    def fetch_pull_request_comments(
+        self, pr_number: int | str | None
+    ) -> list[dict[str, Any]]:
+        number = _coerce_number(pr_number, field_name="pr_number")
+        payload = self._run_json(
+            self._with_api_hostname(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{self._name_with_owner}/issues/{number}/comments",
+                    "--paginate",
+                    "--slurp",
+                ]
+            ),
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("expected gh pull request comments JSON array payload")
+        return _flatten_comment_pages(payload)
+
 
 def _pull_request_merge_readiness(
     *, view: dict[str, Any], threads: dict[str, Any]
@@ -948,3 +1112,13 @@ def _unresolved_review_thread_blockers(threads: dict[str, Any]) -> list[dict[str
 
 def _upper(value: Any) -> str:
     return str(value or "").strip().upper()
+
+
+def _flatten_comment_pages(payload: list[Any]) -> list[dict[str, Any]]:
+    comments: list[dict[str, Any]] = []
+    for item in payload:
+        if isinstance(item, dict):
+            comments.append(item)
+        elif isinstance(item, list):
+            comments.extend(comment for comment in item if isinstance(comment, dict))
+    return comments

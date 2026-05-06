@@ -6,19 +6,11 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from sprints.engine import EngineStore
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.orchestrator import OrchestratorDecision
-from sprints.core.paths import runtime_paths
+from sprints.workflows.route_orchestrator import OrchestratorDecision
+from sprints.workflows.state_helpers import engine_store as _engine_store
 from sprints.workflows.state_io import WorkflowState
-from sprints.workflows.lanes import active_lanes, decision_ready_lanes
-
-
-def _engine_store(config: WorkflowConfig) -> EngineStore:
-    return EngineStore(
-        db_path=runtime_paths(config.workflow_root)["db_path"],
-        workflow=config.workflow_name,
-    )
+from sprints.workflows.entry_lanes import active_lanes, decision_ready_lanes
 
 
 @dataclass(frozen=True)

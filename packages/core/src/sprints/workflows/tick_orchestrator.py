@@ -6,16 +6,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sprints.workflows.actions import run_action
-from sprints.workflows.actors import build_actor_runtime
+from sprints.workflows.action_handlers import run_action
+from sprints.workflows.actor_runtime import build_actor_runtime
 from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import WorkflowPolicy
-from sprints.workflows.dispatch import (
+from sprints.workflows.runtime_dispatch import (
     actor_dispatch_mode,
     dispatch_stage_actor_background,
     run_stage_actor,
 )
-from sprints.workflows.effects import (
+from sprints.workflows.state_effects import (
     completed_side_effect,
     record_side_effect_failed,
     record_side_effect_started,
@@ -23,7 +23,7 @@ from sprints.workflows.effects import (
     side_effect_key,
 )
 from sprints.core.loader import load_workflow_policy
-from sprints.workflows.orchestrator import (
+from sprints.workflows.route_orchestrator import (
     OrchestratorDecision,
     parse_orchestrator_decisions,
     prepare_orchestrator_prompt,
@@ -46,8 +46,8 @@ from sprints.workflows.tick_journal import (
     start_tick_journal,
     TickJournal,
 )
-from sprints.workflows.variables import action_variables
-from sprints.workflows.lanes import (
+from sprints.workflows.prompt_variables import action_variables
+from sprints.workflows.entry_lanes import (
     active_lanes,
     advance_lane,
     actor_concurrency_usage,
@@ -70,6 +70,7 @@ from sprints.workflows.lanes import (
     validate_actor_capacity,
     validate_decision_for_lane,
 )
+from sprints.workflows.state_retries import RetryRequest
 
 
 def apply_action_result(
@@ -161,6 +162,13 @@ def tick(config: WorkflowConfig, *, orchestrator_output: str) -> int:
 
 
 def tick_locked(config: WorkflowConfig, *, orchestrator_output: str) -> int:
+    if config.is_actor_driven():
+        from sprints.workflows.tick_actor_driven import tick_actor_driven_locked
+
+        return tick_actor_driven_locked(
+            config=config,
+            orchestrator_output=orchestrator_output,
+        )
     journal = start_tick_journal(
         config=config,
         orchestrator_output=orchestrator_output,
@@ -574,7 +582,17 @@ def apply_decision(
         )
         return {"lane_id": lane["lane_id"], "decision": "operator_attention"}
     if decision.decision == "retry":
-        return queue_lane_retry(config=config, lane=lane, decision=decision)
+        return queue_lane_retry(
+            config=config,
+            lane=lane,
+            request=RetryRequest(
+                stage=decision.stage,
+                target=decision.target,
+                lane_id=decision.lane_id,
+                reason=decision.reason,
+                inputs=decision.inputs,
+            ),
+        )
     if decision.decision == "advance":
         target_stage = (
             decision.target if decision.target in config.stages else decision.stage

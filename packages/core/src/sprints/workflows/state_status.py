@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sprints.workflows import sessions
+from sprints.workflows import runtime_sessions as sessions
 from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import load_workflow_contract
-from sprints.workflows.intake import tracker_facts
+from sprints.workflows.lane_intake import tracker_facts
 from sprints.workflows.lane_state import (
     active_lanes,
     actor_dispatch_summary,
@@ -24,14 +24,16 @@ from sprints.workflows.lane_state import (
     retry_summary,
     side_effects_summary,
 )
-from sprints.workflows.transitions import (
+from sprints.workflows.state_projection import (
+    project_engine_first_lanes,
+    projected_lane_is_terminal,
+)
+from sprints.workflows.lane_transitions import (
     actor_capacity_snapshot,
     actor_concurrency_usage,
     decision_ready_lanes,
     lane_needs_orchestrator_decision,
 )
-
-_TERMINAL_ENGINE_STATES = {"complete", "released", "merged", "closed", "archived"}
 
 
 def build_status(workflow_root: Path) -> dict[str, Any]:
@@ -62,7 +64,7 @@ def build_workflow_facts(config: WorkflowConfig, state: Any) -> dict[str, Any]:
     concurrency = concurrency_config(config)
     actor_usage = actor_concurrency_usage(config=config, state=state)
     current_active_lanes = active_lanes(state)
-    current_decision_ready_lanes = decision_ready_lanes(state)
+    current_decision_ready_lanes = _ready_lanes(config=config, state=state)
     terminal_lanes = [
         lane
         for lane in state.lanes.values()
@@ -127,15 +129,11 @@ def build_lane_status(
     store = engine_store(config)
     engine_work_items = store.work_items(limit=500)
     engine_runtime_sessions = store.runtime_sessions(limit=500)
-    projected_lanes = _engine_first_lanes(
-        state_lanes=lanes,
-        engine_work_items=engine_work_items,
-        engine_runtime_sessions=engine_runtime_sessions,
-    )
+    projected_lanes = project_engine_first_lanes(config=config, state=state)
     active = [
         lane
         for lane in projected_lanes.values()
-        if isinstance(lane, dict) and not _projected_lane_is_terminal(lane)
+        if isinstance(lane, dict) and not projected_lane_is_terminal(lane)
     ]
     runtime_session_summaries = (
         engine_runtime_sessions
@@ -170,7 +168,8 @@ def build_lane_status(
             [
                 lane
                 for lane in state_active
-                if isinstance(lane, dict) and lane_needs_orchestrator_decision(lane)
+                if isinstance(lane, dict)
+                and _lane_needs_runner_decision(config=config, lane=lane)
             ]
         ),
         "running_count": count_lanes_with_status(active, "running"),
@@ -214,111 +213,22 @@ def build_lane_status(
     }
 
 
-def _engine_first_lanes(
-    *,
-    state_lanes: dict[str, Any],
-    engine_work_items: list[dict[str, Any]],
-    engine_runtime_sessions: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    runtime_by_work_id = {
-        str(session.get("work_id") or session.get("issue_id") or ""): session
-        for session in engine_runtime_sessions
-        if isinstance(session, dict)
-    }
-    projected: dict[str, dict[str, Any]] = {}
-    for work_item in engine_work_items:
-        if not isinstance(work_item, dict):
-            continue
-        lane_id = str(work_item.get("work_id") or work_item.get("issue_id") or "")
-        if not lane_id:
-            continue
-        state_lane = state_lanes.get(lane_id)
-        projected[lane_id] = _engine_lane_summary(
-            work_item=work_item,
-            state_lane=state_lane if isinstance(state_lane, dict) else {},
-            runtime_session=runtime_by_work_id.get(lane_id) or {},
-        )
-    for lane_id, lane in state_lanes.items():
-        if lane_id in projected or not isinstance(lane, dict):
-            continue
-        projected[lane_id] = {
-            **lane_summary(lane),
-            "lane_status_source": "workflow_state",
-            "state_json_present": True,
-        }
-    return projected
+def _ready_lanes(*, config: WorkflowConfig, state: Any) -> list[dict[str, Any]]:
+    if config.is_actor_driven():
+        from sprints.workflows.route_rules import actor_driven_ready_lanes
+
+        return actor_driven_ready_lanes(config=config, state=state)
+    return decision_ready_lanes(state)
 
 
-def _engine_lane_summary(
-    *,
-    work_item: dict[str, Any],
-    state_lane: dict[str, Any],
-    runtime_session: dict[str, Any],
-) -> dict[str, Any]:
-    metadata = (
-        work_item.get("metadata") if isinstance(work_item.get("metadata"), dict) else {}
-    )
-    state_summary = lane_summary(state_lane) if state_lane else {}
-    lane_id = str(work_item.get("work_id") or state_summary.get("lane_id") or "")
-    issue = (
-        state_summary.get("issue")
-        if isinstance(state_summary.get("issue"), dict)
-        else {}
-    )
-    pull_request = metadata.get("pull_request") or state_summary.get("pull_request")
-    pending_retry = metadata.get("pending_retry") or state_summary.get("pending_retry")
-    operator_attention = metadata.get("operator_attention") or state_summary.get(
-        "operator_attention"
-    )
-    runtime_metadata = (
-        runtime_session.get("metadata")
-        if isinstance(runtime_session.get("metadata"), dict)
-        else {}
-    )
-    return {
-        **state_summary,
-        "lane_id": lane_id,
-        "status": work_item.get("state") or state_summary.get("status"),
-        "stage": metadata.get("stage") or state_summary.get("stage"),
-        "actor": metadata.get("actor") or state_summary.get("actor"),
-        "attempt": metadata.get("attempt") or state_summary.get("attempt"),
-        "issue": {
-            "identifier": work_item.get("identifier")
-            or issue.get("identifier")
-            or lane_id,
-            "title": work_item.get("title") or issue.get("title"),
-            "url": work_item.get("url") or issue.get("url"),
-        },
-        "branch": metadata.get("branch") or state_summary.get("branch"),
-        "pull_request": pull_request,
-        "operator_attention": operator_attention,
-        "pending_retry": pending_retry,
-        "last_transition": metadata.get("last_transition")
-        or state_summary.get("last_transition"),
-        "transition_history_count": metadata.get("transition_history_count")
-        or state_summary.get("transition_history_count"),
-        "thread_id": runtime_session.get("thread_id")
-        or metadata.get("thread_id")
-        or runtime_metadata.get("thread_id")
-        or state_summary.get("thread_id"),
-        "turn_id": runtime_session.get("turn_id")
-        or metadata.get("turn_id")
-        or runtime_metadata.get("turn_id")
-        or state_summary.get("turn_id"),
-        "runtime_status": runtime_session.get("status"),
-        "runtime_session": runtime_session or None,
-        "last_progress_at": runtime_session.get("updated_at")
-        or work_item.get("updated_at")
-        or state_summary.get("last_progress_at"),
-        "engine_updated_at": work_item.get("updated_at"),
-        "engine_work_item": work_item,
-        "lane_status_source": "engine_work_items",
-        "state_json_present": bool(state_lane),
-    }
+def _lane_needs_runner_decision(
+    *, config: WorkflowConfig, lane: dict[str, Any]
+) -> bool:
+    if config.is_actor_driven():
+        from sprints.workflows.route_rules import lane_needs_actor_driven_route
 
-
-def _projected_lane_is_terminal(lane: dict[str, Any]) -> bool:
-    return str(lane.get("status") or "").strip().lower() in _TERMINAL_ENGINE_STATES
+        return lane_needs_actor_driven_route(config=config, lane=lane)
+    return lane_needs_orchestrator_decision(lane)
 
 
 def build_retry_audit(state: dict[str, Any]) -> list[dict[str, Any]]:

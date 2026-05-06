@@ -25,7 +25,7 @@ from sprints.core.contracts import (
     snapshot_workflow_contract,
 )
 from sprints.core.paths import derive_workflow_instance_name, repo_local_workflow_pointer_path
-from sprints.workflows.registry import DEFAULT_WORKFLOW_NAME, SUPPORTED_WORKFLOW_NAMES
+from sprints.workflows.entry_registry import DEFAULT_WORKFLOW_NAME, SUPPORTED_WORKFLOW_NAMES
 from sprints.core.validation import validate_workflow_contract
 
 
@@ -43,7 +43,7 @@ class InitAnswers:
     runtime_preset: str
     runtime_name: str
     model: str | None
-    active_label: str
+    todo_label: str
     done_label: str
     exclude_labels: tuple[str, ...]
     max_lanes: int
@@ -63,7 +63,7 @@ def run_init_wizard(
     runtime_preset: str | None,
     runtime_name: str | None,
     model: str | None,
-    active_label: str | None,
+    todo_label: str | None,
     done_label: str | None,
     exclude_labels: list[str] | None,
     max_lanes: int | None,
@@ -83,7 +83,7 @@ def run_init_wizard(
         runtime_preset=runtime_preset,
         runtime_name=runtime_name,
         model=model,
-        active_label=active_label,
+        todo_label=todo_label,
         done_label=done_label,
         exclude_labels=exclude_labels,
         max_lanes=max_lanes,
@@ -99,7 +99,7 @@ def run_init_wizard(
         output_fn(f"- workflow root: {answers.workflow_root}")
         output_fn(f"- tracker: {answers.tracker}")
         output_fn(f"- runtime: {answers.runtime_name} ({answers.runtime_preset})")
-        output_fn(f"- labels: {answers.active_label} -> {answers.done_label}")
+        output_fn(f"- state labels: {answers.todo_label} -> {answers.done_label}")
         output_fn(f"- concurrency: {answers.max_lanes} lane(s)")
         if not _confirm("Create workflow now?", default=True, input_fn=input_fn):
             raise WorkflowInitError("init cancelled")
@@ -153,7 +153,7 @@ def _collect_answers(
     runtime_preset: str | None,
     runtime_name: str | None,
     model: str | None,
-    active_label: str | None,
+    todo_label: str | None,
     done_label: str | None,
     exclude_labels: list[str] | None,
     max_lanes: int | None,
@@ -233,9 +233,9 @@ def _collect_answers(
     resolved_model = _blank_to_none(
         _prompt("Model override", model or "", ask=ask, input_fn=input_fn)
     )
-    resolved_active = _prompt(
-        "Active label",
-        active_label or "active",
+    resolved_todo = _prompt(
+        "Todo label",
+        todo_label or "todo",
         ask=ask,
         input_fn=input_fn,
     )
@@ -274,7 +274,7 @@ def _collect_answers(
         runtime_preset=resolved_runtime_preset,
         runtime_name=resolved_runtime_name,
         model=resolved_model,
-        active_label=resolved_active,
+        todo_label=resolved_todo,
         done_label=resolved_done,
         exclude_labels=resolved_excludes,
         max_lanes=resolved_max_lanes,
@@ -291,22 +291,50 @@ def _apply_answers(*, config: dict[str, Any], answers: InitAnswers) -> dict[str,
     tracker_cfg["kind"] = answers.tracker
     if answers.tracker == "github":
         tracker_cfg["github_slug"] = answers.repo_slug
-    tracker_cfg["required_labels"] = [answers.active_label]
-    tracker_cfg["exclude_labels"] = list(answers.exclude_labels)
 
     code_host_cfg = updated.setdefault("code-host", {})
     if answers.tracker == "github":
         code_host_cfg["kind"] = "github"
         code_host_cfg["github_slug"] = answers.repo_slug
 
-    intake_cfg = updated.setdefault("intake", {}).setdefault("auto-activate", {})
-    intake_cfg["enabled"] = True
-    intake_cfg["add_label"] = answers.active_label
-    intake_cfg["exclude_labels"] = list(answers.exclude_labels)
-
-    completion_cfg = updated.setdefault("completion", {})
-    completion_cfg["remove_labels"] = [answers.active_label]
-    completion_cfg["add_labels"] = [answers.done_label]
+    if _is_actor_driven(updated):
+        tracker_cfg.pop("required_labels", None)
+        tracker_cfg.pop("required-labels", None)
+        tracker_cfg.pop("exclude_labels", None)
+        tracker_cfg.pop("exclude-labels", None)
+        updated.pop("intake", None)
+        state_source = tracker_cfg.setdefault("state-source", {})
+        state_source["kind"] = "labels"
+        labels = state_source.setdefault("labels", {})
+        labels.setdefault("backlog", "backlog")
+        labels["todo"] = answers.todo_label
+        labels.setdefault("in-progress", "in-progress")
+        labels.setdefault("review", "review")
+        labels.setdefault("rework", "rework")
+        labels.setdefault("merging", "merging")
+        labels["done"] = answers.done_label
+        completion_cfg = updated.setdefault("completion", {})
+        completion_cfg["owner"] = "implementer"
+        completion_cfg["mode"] = "land"
+        completion_cfg["skill"] = "land"
+        cleanup = completion_cfg.setdefault("cleanup", {})
+        cleanup["remove_labels"] = [
+            labels["in-progress"],
+            labels["review"],
+            labels["rework"],
+            labels["merging"],
+        ]
+        cleanup["add_labels"] = [answers.done_label]
+    else:
+        tracker_cfg["required_labels"] = [answers.todo_label]
+        tracker_cfg["exclude_labels"] = list(answers.exclude_labels)
+        intake_cfg = updated.setdefault("intake", {}).setdefault("auto-activate", {})
+        intake_cfg["enabled"] = True
+        intake_cfg["add_label"] = answers.todo_label
+        intake_cfg["exclude_labels"] = list(answers.exclude_labels)
+        completion_cfg = updated.setdefault("completion", {})
+        completion_cfg["remove_labels"] = [answers.todo_label]
+        completion_cfg["add_labels"] = [answers.done_label]
 
     concurrency_cfg = updated.setdefault("concurrency", {})
     concurrency_cfg["max-lanes"] = answers.max_lanes
@@ -417,7 +445,7 @@ def _answers_payload(answers: InitAnswers) -> dict[str, Any]:
         "runtime_preset": answers.runtime_preset,
         "runtime_name": answers.runtime_name,
         "model": answers.model,
-        "active_label": answers.active_label,
+        "todo_label": answers.todo_label,
         "done_label": answers.done_label,
         "exclude_labels": list(answers.exclude_labels),
         "max_lanes": answers.max_lanes,
@@ -434,3 +462,9 @@ def _next_steps(answers: InitAnswers) -> list[str]:
         steps.insert(1, "hermes sprints codex-app-server up")
     steps.append("hermes sprints daemon up")
     return steps
+
+
+def _is_actor_driven(config: dict[str, Any]) -> bool:
+    orchestration = config.get("orchestration")
+    raw = orchestration if isinstance(orchestration, dict) else {}
+    return str(raw.get("mode") or "").strip() == "actor-driven"

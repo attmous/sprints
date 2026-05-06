@@ -9,7 +9,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, Sequence
 
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -22,12 +22,18 @@ class TrackerConfigError(RuntimeError):
     """Raised when the tracker section is missing or invalid."""
 
 
+class WorkpadUnsupported(NotImplementedError):
+    """Raised when a tracker does not support persistent workpad comments."""
+
+
 class TrackerClient(Protocol):
     kind: str
 
     def list_all(self) -> list[dict[str, Any]]: ...
 
     def list_candidates(self) -> list[dict[str, Any]]: ...
+
+    def list_for_state_labels(self) -> list[dict[str, Any]]: ...
 
     def refresh(self, issue_ids: list[str]) -> dict[str, dict[str, Any]]: ...
 
@@ -36,6 +42,24 @@ class TrackerClient(Protocol):
     def add_labels(self, issue_id: str | int | None, labels: list[str]) -> bool: ...
 
     def remove_labels(self, issue_id: str | int | None, labels: list[str]) -> bool: ...
+
+    def set_issue_state_label(
+        self,
+        issue_id: str | int | None,
+        *,
+        add: Sequence[str],
+        remove: Sequence[str],
+    ) -> bool: ...
+
+    def list_issue_comments(self, issue_id: str | int | None) -> list[dict[str, Any]]: ...
+
+    def create_issue_comment(
+        self, issue_id: str | int | None, body: str
+    ) -> dict[str, Any]: ...
+
+    def update_issue_comment(
+        self, comment_id: str | int | None, body: str
+    ) -> dict[str, Any]: ...
 
 
 class CodeHostConfigError(RuntimeError):
@@ -87,6 +111,14 @@ class CodeHostClient(Protocol):
     def fetch_pull_request_review_threads(
         self, pr_number: int | str | None
     ) -> dict[str, Any]: ...
+
+    def fetch_pull_request_reviews(
+        self, pr_number: int | str | None
+    ) -> list[dict[str, Any]]: ...
+
+    def fetch_pull_request_comments(
+        self, pr_number: int | str | None
+    ) -> list[dict[str, Any]]: ...
 
 
 _TRACKER_KINDS: dict[str, type] = {}

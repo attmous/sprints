@@ -32,7 +32,7 @@ from sprints.core.contracts import (
     write_workflow_contract_pointer,
 )
 from sprints.core.loader import load_workflow_policy
-from sprints.workflows.registry import (
+from sprints.workflows.entry_registry import (
     CONFIG_SCHEMA_PATH,
     DEFAULT_WORKFLOW_NAME,
     NAME,
@@ -48,7 +48,7 @@ from sprints.workflows.registry import (
     make_workspace,
     run_cli,
 )
-from sprints.workflows.runner import main as cli_main
+from sprints.workflows.entry_runner import main as cli_main
 from sprints.core.validation import (
     build_readiness_recommendations,
     validate_workflow_contract,

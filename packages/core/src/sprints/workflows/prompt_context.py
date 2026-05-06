@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from sprints.core.config import WorkflowConfig
+from sprints.workflows.state_helpers import (
+    nonnegative_int as _nonnegative_int,
+    positive_int as _positive_int,
+)
 
 APP_SERVER_INPUT_LIMIT_CHARS = 1_048_576
 DEFAULT_ORCHESTRATOR_LIMIT_CHARS = 900_000
@@ -414,6 +418,8 @@ def _compact_runtime_session(value: Any, *, budget: PromptBudget) -> dict[str, A
         "updated_at",
         "completed_at",
         "error",
+        "actor_mode",
+        "mode",
     )
     return _drop_empty(
         {key: compact_value(session.get(key), budget=budget) for key in keep}
@@ -474,6 +480,8 @@ def actor_dispatch_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
             "stage": dispatch.get("stage"),
             "attempt": dispatch.get("attempt"),
             "mode": runtime.get("dispatch_mode"),
+            "dispatch_mode": runtime.get("dispatch_mode"),
+            "actor_mode": runtime.get("actor_mode") or runtime.get("mode"),
             "planned_at": dispatch.get("planned_at"),
             "started_at": dispatch.get("started_at"),
             "last_progress_at": dispatch.get("last_progress_at"),
@@ -642,30 +650,6 @@ def _truncate(value: Any, *, max_chars: int) -> str | None:
 
 def _drop_empty(value: dict[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if item not in (None, "", [], {})}
-
-
-def _positive_int(config: dict[str, Any], *keys: str, default: int) -> int:
-    for key in keys:
-        value = config.get(key)
-        if value in (None, ""):
-            continue
-        try:
-            return max(int(value), 1)
-        except (TypeError, ValueError):
-            return default
-    return default
-
-
-def _nonnegative_int(config: dict[str, Any], *keys: str, default: int) -> int:
-    for key in keys:
-        value = config.get(key)
-        if value in (None, ""):
-            continue
-        try:
-            return max(int(value), 0)
-        except (TypeError, ValueError):
-            return default
-    return default
 
 
 def json_size(value: Any) -> int:

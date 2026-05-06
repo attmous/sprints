@@ -3,20 +3,31 @@
 from __future__ import annotations
 
 import os
-import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sprints.engine import EngineStore, RetryPolicy
-from sprints.workflows import sessions
-from sprints.workflows import teardown as teardown_flow
+from sprints.engine import RetryPolicy
 from sprints.core.config import WorkflowConfig
-from sprints.core.paths import runtime_paths
+from sprints.workflows import runtime_sessions as sessions
+from sprints.workflows.state_helpers import (
+    TERMINAL_LANE_STATUSES as _TERMINAL_LANE_STATUSES,
+    configured_bool as _configured_bool,
+    engine_store as _shared_engine_store,
+    iso_to_epoch as _iso_to_epoch,
+    nonnegative_int as _nonnegative_int,
+    now_iso as _now_iso,
+    positive_float as _positive_float,
+    positive_int as _positive_int,
+)
+from sprints.workflows.surface_board_state import (
+    ACTIVE_BOARD_STATES,
+    board_metadata,
+    state_from_labels,
+    uses_label_state_source,
+)
 
 _RUNNER_INSTANCE_ID = f"{os.getpid()}:{uuid.uuid4().hex[:12]}"
-_TERMINAL_LANE_STATUSES = {"complete", "released"}
 
 
 def new_lane(
@@ -26,7 +37,7 @@ def new_lane(
     issue: dict[str, Any],
     lease: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    lane = {
         "lane_id": lane_id,
         "issue": issue,
         "stage": config.first_stage,
@@ -49,6 +60,8 @@ def new_lane(
         "operator_attention": None,
         "claim": {"state": "Claimed", "lease": lease},
     }
+    refresh_lane_board_metadata(config=config, lane=lane, issue=issue)
+    return lane
 
 
 def lane_recovery_artifacts(
@@ -78,12 +91,17 @@ def lane_recovery_artifacts(
 
 
 def lane_actor_runtime_session(
-    lane: dict[str, Any], *, actor_name: str, stage_name: str
+    lane: dict[str, Any],
+    *,
+    actor_name: str,
+    stage_name: str,
+    actor_mode: str | None = None,
 ) -> dict[str, Any]:
     return sessions.lane_actor_runtime_session(
         lane,
         actor_name=actor_name,
         stage_name=stage_name,
+        actor_mode=actor_mode,
     )
 
 
@@ -171,6 +189,18 @@ def retry_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def refresh_lane_board_metadata(
+    *, config: WorkflowConfig, lane: dict[str, Any], issue: dict[str, Any] | None = None
+) -> None:
+    if not uses_label_state_source(config):
+        return
+    source_issue = issue if isinstance(issue, dict) else lane.get("issue")
+    if not isinstance(source_issue, dict):
+        return
+    tracker = lane_mapping(lane, "tracker")
+    tracker.update(board_metadata(source_issue, config))
+
+
 def actor_dispatch_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
     dispatch = (
         lane.get("actor_dispatch")
@@ -191,6 +221,7 @@ def actor_dispatch_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
             "stage": dispatch.get("stage"),
             "attempt": dispatch.get("attempt"),
             "mode": runtime.get("dispatch_mode"),
+            "actor_mode": runtime.get("actor_mode") or runtime.get("mode"),
             "planned_at": dispatch.get("planned_at"),
             "started_at": dispatch.get("started_at"),
             "last_progress_at": dispatch.get("last_progress_at"),
@@ -278,6 +309,12 @@ def _lane_summary(lane: dict[str, Any]) -> dict[str, Any]:
         },
         "branch": lane.get("branch"),
         "pull_request": lane.get("pull_request"),
+        "review_signals": lane.get("review_signals")
+        if isinstance(lane.get("review_signals"), dict)
+        else None,
+        "merge_signal": lane.get("merge_signal")
+        if isinstance(lane.get("merge_signal"), dict)
+        else None,
         "operator_attention": attention or None,
         "pending_retry": pending_retry or None,
         "retry": retry,
@@ -319,6 +356,10 @@ def append_lane_event(
 
 def now_iso() -> str:
     return _now_iso()
+
+
+def iso_to_epoch(value: str, *, default: float) -> float:
+    return _iso_to_epoch(value, default=default)
 
 
 def set_lane_status(
@@ -446,7 +487,10 @@ def has_open_blockers(issue: dict[str, Any], *, terminal_states: set[str]) -> bo
 
 
 def issue_is_still_active(
-    *, tracker_cfg: dict[str, Any], issue: dict[str, Any]
+    *,
+    tracker_cfg: dict[str, Any],
+    issue: dict[str, Any],
+    config: WorkflowConfig | None = None,
 ) -> bool:
     active_states = set(configured_texts(tracker_cfg, "active_states", "active-states"))
     required_labels = set(
@@ -456,9 +500,16 @@ def issue_is_still_active(
         configured_texts(tracker_cfg, "exclude_labels", "exclude-labels")
     )
     state = str(issue.get("state") or "").strip().lower()
+    labels = issue_labels(issue)
+    if (
+        config is not None
+        and config.is_actor_driven()
+        and uses_label_state_source(config)
+    ):
+        board_state = state_from_labels(labels, config)
+        return board_state in ACTIVE_BOARD_STATES
     if active_states and state not in active_states:
         return False
-    labels = issue_labels(issue)
     if required_labels and not required_labels.issubset(labels):
         return False
     if exclude_labels.intersection(labels):
@@ -606,6 +657,7 @@ def retry_config(config: WorkflowConfig) -> dict[str, Any]:
             "backoff-multiplier",
             "backoff_multiplier",
             default=2.0,
+            min_value=1.0,
         ),
         "max_delay_seconds": _nonnegative_int(
             cfg,
@@ -627,7 +679,23 @@ def retry_policy(config: WorkflowConfig) -> RetryPolicy:
 
 
 def completion_cleanup_retry_pending(lane: dict[str, Any]) -> bool:
-    return teardown_flow.cleanup_retry_pending(lane)
+    pending = (
+        lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
+    )
+    if str(pending.get("source") or "").strip() == "completion_cleanup":
+        return True
+    if str(pending.get("target") or "").strip() == "completion_cleanup":
+        return True
+    cleanup = (
+        lane.get("completion_cleanup")
+        if isinstance(lane.get("completion_cleanup"), dict)
+        else {}
+    )
+    cleanup_status = str(cleanup.get("status") or "").strip().lower()
+    return str(lane.get("status") or "").strip() == "retry_queued" and cleanup_status in {
+        "error",
+        "partial",
+    }
 
 
 def review_notification_config(config: WorkflowConfig) -> dict[str, bool]:
@@ -650,14 +718,6 @@ def review_notification_config(config: WorkflowConfig) -> dict[str, bool]:
     }
 
 
-def _positive_int(config: dict[str, Any], *keys: str, default: int) -> int:
-    for key in keys:
-        parsed = _positive_int_value(config.get(key))
-        if parsed is not None:
-            return parsed
-    return default
-
-
 def _configured_positive_int(config: dict[str, Any], *keys: str) -> int | None:
     for key in keys:
         parsed = _positive_int_value(config.get(key))
@@ -673,43 +733,6 @@ def _positive_int_value(value: Any) -> int | None:
         return max(int(value), 1)
     except (TypeError, ValueError):
         return None
-
-
-def _nonnegative_int(config: dict[str, Any], *keys: str, default: int) -> int:
-    for key in keys:
-        value = config.get(key)
-        if value not in (None, ""):
-            try:
-                return max(int(value), 0)
-            except (TypeError, ValueError):
-                return default
-    return default
-
-
-def _positive_float(config: dict[str, Any], *keys: str, default: float) -> float:
-    for key in keys:
-        value = config.get(key)
-        if value not in (None, ""):
-            try:
-                return max(float(value), 1.0)
-            except (TypeError, ValueError):
-                return default
-    return default
-
-
-def _configured_bool(config: dict[str, Any], *keys: str, default: bool) -> bool:
-    for key in keys:
-        value = config.get(key)
-        if value in (None, ""):
-            continue
-        if isinstance(value, bool):
-            return value
-        text = str(value).strip().lower()
-        if text in {"1", "true", "yes", "on"}:
-            return True
-        if text in {"0", "false", "no", "off"}:
-            return False
-    return default
 
 
 def tracker_config(config: WorkflowConfig) -> dict[str, Any]:
@@ -733,11 +756,8 @@ def repository_path(config: WorkflowConfig) -> Path | None:
     return path if path.is_absolute() else (config.workflow_root / path).resolve()
 
 
-def engine_store(config: WorkflowConfig) -> EngineStore:
-    return EngineStore(
-        db_path=runtime_paths(config.workflow_root)["db_path"],
-        workflow=config.workflow_name,
-    )
+def engine_store(config: WorkflowConfig) -> Any:
+    return _shared_engine_store(config)
 
 
 def record_engine_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> None:
@@ -778,7 +798,10 @@ def _engine_lane_entry(
             "turn_id": lane.get("turn_id"),
             "operator_attention": lane.get("operator_attention"),
             "pending_retry": lane.get("pending_retry"),
+            "review_signals": lane.get("review_signals"),
+            "merge_signal": lane.get("merge_signal"),
             "claim": lane.get("claim"),
+            "tracker": lane.get("tracker"),
             "last_transition": latest_transition,
             "transition_history_count": transition_count,
         },
@@ -891,20 +914,6 @@ def normalize_pull_request(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def iso_to_epoch(value: str, *, default: float) -> float:
-    text = str(value or "").strip()
-    if not text:
-        return default
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return default
-
-
-def _epoch_to_iso(value: float) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
-
-
 def blocker_reason(output: dict[str, Any]) -> str:
     blockers = (
         output.get("blockers") if isinstance(output.get("blockers"), list) else []
@@ -916,7 +925,3 @@ def blocker_reason(output: dict[str, Any]) -> str:
         if kind:
             return kind
     return ""
-
-
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

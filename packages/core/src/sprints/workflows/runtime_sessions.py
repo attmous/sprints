@@ -6,15 +6,21 @@ import json
 import os
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sprints.engine import EngineStore
 from sprints.core.config import WorkflowConfig
-from sprints.core.paths import runtime_paths
+from sprints.workflows.state_helpers import (
+    engine_store as _engine_store,
+    epoch_to_iso as _epoch_to_iso,
+    iso_to_epoch as _iso_to_epoch,
+    lane_is_terminal as _lane_is_terminal,
+    lane_list as _lane_list,
+    lane_mapping as _lane_mapping,
+    lane_stage as _lane_stage,
+    now_iso as _now_iso,
+)
 
-_TERMINAL_LANE_STATUSES = {"complete", "released"}
 _RUNTIME_RUNNING_STATUSES = {"running"}
 _RUNTIME_FINAL_STATUSES = {"completed", "failed", "interrupted", "blocked"}
 _DISPATCH_ACTIVE_STATUSES = {"planned", "started", "running"}
@@ -300,7 +306,12 @@ def record_actor_runtime_start(
 ) -> None:
     started_at = _now_iso()
     session_key, session = _mutable_actor_runtime_session(
-        lane=lane, actor_name=actor_name, stage_name=stage_name
+        lane=lane,
+        actor_name=actor_name,
+        stage_name=stage_name,
+        actor_mode=str(
+            runtime_meta.get("actor_mode") or runtime_meta.get("mode") or ""
+        ),
     )
     run = _start_engine_actor_run(
         config=config,
@@ -503,24 +514,46 @@ def save_scheduler_snapshot(*, config: WorkflowConfig, lanes: Any) -> None:
     )
 
 
-def runtime_session_key(*, actor_name: str, stage_name: str) -> str:
+def runtime_session_key(
+    *, actor_name: str, stage_name: str, actor_mode: str | None = None
+) -> str:
     actor = str(actor_name or "").strip()
     stage = str(stage_name or "").strip()
-    return f"{stage}:{actor}" if actor and stage else actor or stage
+    base = f"{stage}:{actor}" if actor and stage else actor or stage
+    mode = str(actor_mode or "").strip()
+    return f"{base}:{mode}" if base and mode else base
 
 
 def lane_actor_runtime_session(
-    lane: dict[str, Any], *, actor_name: str, stage_name: str
+    lane: dict[str, Any],
+    *,
+    actor_name: str,
+    stage_name: str,
+    actor_mode: str | None = None,
 ) -> dict[str, Any]:
-    key = runtime_session_key(actor_name=actor_name, stage_name=stage_name)
+    key = runtime_session_key(
+        actor_name=actor_name, stage_name=stage_name, actor_mode=actor_mode
+    )
     sessions = lane.get("runtime_sessions")
     if isinstance(sessions, dict):
         session = sessions.get(key)
         if isinstance(session, dict):
             return session
+        legacy_key = runtime_session_key(actor_name=actor_name, stage_name=stage_name)
+        legacy_session = sessions.get(legacy_key)
+        if isinstance(legacy_session, dict) and _legacy_session_can_resume(
+            legacy_session, actor_name=actor_name, actor_mode=actor_mode
+        ):
+            return legacy_session
     latest = lane.get("runtime_session")
-    if isinstance(latest, dict) and _runtime_session_matches(
-        latest, actor_name=actor_name, stage_name=stage_name
+    if (
+        isinstance(latest, dict)
+        and _runtime_session_matches(
+            latest, actor_name=actor_name, stage_name=stage_name
+        )
+        and _legacy_session_can_resume(
+            latest, actor_name=actor_name, actor_mode=actor_mode
+        )
     ):
         return latest
     return {}
@@ -710,6 +743,7 @@ def scheduler_entry(lane: dict[str, Any]) -> dict[str, Any]:
         "status": session.get("status") or lane.get("status"),
         "run_id": session.get("run_id"),
         "actor": session.get("actor") or lane.get("actor"),
+        "actor_mode": session.get("actor_mode") or session.get("mode"),
         "stage": session.get("stage") or lane.get("stage"),
         "branch": lane.get("branch"),
         "pull_request": lane.get("pull_request"),
@@ -745,6 +779,7 @@ def runtime_session_entry(lane: dict[str, Any]) -> dict[str, Any]:
         "run_id": session.get("run_id"),
         "updated_at": session.get("updated_at") or lane.get("last_progress_at"),
         "actor": session.get("actor") or lane.get("actor"),
+        "actor_mode": session.get("actor_mode") or session.get("mode"),
         "stage": session.get("stage") or lane.get("stage"),
         "attempt": session.get("attempt") or lane.get("attempt"),
         "tokens": session.get("tokens"),
@@ -896,6 +931,7 @@ def _runtime_run_metadata(
         "branch": lane.get("branch"),
         "pull_request": lane.get("pull_request"),
         "runtime": _runtime_meta_payload(runtime_meta),
+        "actor_mode": runtime_meta.get("actor_mode") or runtime_meta.get("mode"),
         "thread_id": lane.get("thread_id") or session.get("thread_id"),
         "turn_id": lane.get("turn_id") or session.get("turn_id"),
     }
@@ -1017,9 +1053,15 @@ def _actor_dispatch_matches(
 
 
 def _mutable_actor_runtime_session(
-    *, lane: dict[str, Any], actor_name: str, stage_name: str
+    *,
+    lane: dict[str, Any],
+    actor_name: str,
+    stage_name: str,
+    actor_mode: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    key = runtime_session_key(actor_name=actor_name, stage_name=stage_name)
+    key = runtime_session_key(
+        actor_name=actor_name, stage_name=stage_name, actor_mode=actor_mode
+    )
     sessions = _lane_mapping(lane, "runtime_sessions")
     session = sessions.get(key)
     if not isinstance(session, dict):
@@ -1043,6 +1085,7 @@ def _current_runtime_session(lane: dict[str, Any]) -> tuple[str, dict[str, Any]]
         key = runtime_session_key(
             actor_name=str(latest.get("actor") or lane.get("actor") or ""),
             stage_name=str(latest.get("stage") or lane.get("stage") or ""),
+            actor_mode=str(latest.get("actor_mode") or latest.get("mode") or ""),
         )
         if key:
             latest["session_key"] = key
@@ -1078,6 +1121,29 @@ def _runtime_session_matches(
     )
 
 
+def _legacy_session_can_resume(
+    session: dict[str, Any], *, actor_name: str, actor_mode: str | None
+) -> bool:
+    requested_mode = str(actor_mode or "").strip().lower()
+    if not requested_mode:
+        return True
+    stored_mode = (
+        str(session.get("actor_mode") or session.get("mode") or "").strip().lower()
+    )
+    if stored_mode:
+        return stored_mode == requested_mode
+    return requested_mode == _default_actor_mode(actor_name)
+
+
+def _default_actor_mode(actor_name: str) -> str:
+    actor = str(actor_name or "").strip().lower()
+    if actor == "reviewer":
+        return "review"
+    if actor == "implementer":
+        return "implement"
+    return ""
+
+
 def _apply_runtime_session_ids(
     *, lane: dict[str, Any], session: dict[str, Any]
 ) -> None:
@@ -1094,50 +1160,3 @@ def _apply_runtime_session_ids(
         lane["turn_id"] = turn_id
 
 
-def _lane_mapping(lane: dict[str, Any], key: str) -> dict[str, Any]:
-    value = lane.get(key)
-    if isinstance(value, dict):
-        return value
-    lane[key] = {}
-    return lane[key]
-
-
-def _lane_list(lane: dict[str, Any], key: str) -> list[Any]:
-    value = lane.get(key)
-    if isinstance(value, list):
-        return value
-    lane[key] = []
-    return lane[key]
-
-
-def _lane_stage(lane: dict[str, Any]) -> str:
-    return str(lane.get("stage") or "").strip()
-
-
-def _lane_is_terminal(lane: dict[str, Any]) -> bool:
-    return str(lane.get("status") or "").strip() in _TERMINAL_LANE_STATUSES
-
-
-def _engine_store(config: WorkflowConfig) -> EngineStore:
-    return EngineStore(
-        db_path=runtime_paths(config.workflow_root)["db_path"],
-        workflow=config.workflow_name,
-    )
-
-
-def _iso_to_epoch(value: str, *, default: float) -> float:
-    text = str(value or "").strip()
-    if not text:
-        return default
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return default
-
-
-def _epoch_to_iso(value: float) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
-
-
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

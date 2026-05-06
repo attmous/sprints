@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 class WorkflowConfigError(RuntimeError):
@@ -57,10 +57,17 @@ class StorageConfig:
 
 
 @dataclass(frozen=True)
+class OrchestrationConfig:
+    mode: Literal["orchestrator", "actor-driven"] = "orchestrator"
+    actor: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkflowConfig:
     workflow_root: Path
     workflow_name: str
     raw: dict[str, Any]
+    orchestration: OrchestrationConfig
     orchestrator_actor: str
     runtimes: dict[str, RuntimeConfig]
     actors: dict[str, ActorConfig]
@@ -119,11 +126,22 @@ class WorkflowConfig:
             root,
             str(storage_raw.get("audit-log", f".sprints/{workflow_name}-audit.jsonl")),
         )
-        orchestrator_actor = str(dict(raw.get("orchestrator") or {}).get("actor", ""))
+        orchestration = _orchestration_config(raw)
+        orchestrator_actor = orchestration.actor or ""
+        normalized_raw = dict(raw)
+        normalized_raw["orchestration"] = {
+            key: value
+            for key, value in {
+                "mode": orchestration.mode,
+                "actor": orchestration.actor,
+            }.items()
+            if value is not None
+        }
         config = cls(
             workflow_root=root,
             workflow_name=workflow_name,
-            raw=dict(raw),
+            raw=normalized_raw,
+            orchestration=orchestration,
             orchestrator_actor=orchestrator_actor,
             runtimes=runtimes,
             actors=actors,
@@ -142,8 +160,17 @@ class WorkflowConfig:
         except StopIteration as exc:
             raise WorkflowConfigError("workflow requires at least one stage") from exc
 
+    def is_actor_driven(self) -> bool:
+        return self.orchestration.mode == "actor-driven"
+
+    def requires_orchestrator_actor(self) -> bool:
+        return self.orchestration.mode == "orchestrator"
+
     def validate_references(self) -> None:
-        if self.orchestrator_actor not in self.actors:
+        if (
+            self.requires_orchestrator_actor()
+            and self.orchestrator_actor not in self.actors
+        ):
             raise WorkflowConfigError(
                 f"unknown orchestrator actor: {self.orchestrator_actor}"
             )
@@ -181,3 +208,19 @@ class WorkflowConfig:
 def _resolve(root: Path, value: str) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else root / path
+
+
+def _orchestration_config(raw: dict[str, Any]) -> OrchestrationConfig:
+    legacy_orchestrator = dict(raw.get("orchestrator") or {})
+    orchestration_raw = dict(raw.get("orchestration") or {})
+    mode = str(orchestration_raw.get("mode") or "orchestrator").strip()
+    if mode not in {"orchestrator", "actor-driven"}:
+        raise WorkflowConfigError(
+            "orchestration.mode must be 'orchestrator' or 'actor-driven'"
+        )
+    if mode == "actor-driven":
+        return OrchestrationConfig(mode="actor-driven")
+    actor = str(
+        orchestration_raw.get("actor") or legacy_orchestrator.get("actor") or ""
+    ).strip()
+    return OrchestrationConfig(mode="orchestrator", actor=actor or None)

@@ -2,11 +2,29 @@ type: object
 required:
   - workflow
   - schema-version
-  - orchestrator
   - runtimes
   - actors
   - stages
   - gates
+allOf:
+  - if:
+      required: [orchestration]
+      properties:
+        orchestration:
+          type: object
+          required: [mode]
+          properties:
+            mode:
+              const: actor-driven
+    then: {}
+    else:
+      anyOf:
+        - required: [orchestrator]
+        - required: [orchestration]
+          properties:
+            orchestration:
+              type: object
+              required: [actor]
 properties:
   workflow:
     enum: [change-delivery, issue-runner, release, triage]
@@ -76,6 +94,15 @@ properties:
       actor-dispatch:
         type: string
         enum: [auto, inline, background]
+    additionalProperties: true
+  orchestration:
+    type: object
+    properties:
+      mode:
+        type: string
+        enum: [orchestrator, actor-driven]
+      actor:
+        type: string
     additionalProperties: true
   concurrency:
     type: object

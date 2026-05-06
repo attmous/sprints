@@ -13,38 +13,42 @@ orchestrator decisions, and writing state.
 workflows/
 |-- __init__.py              # public workflow exports
 |-- __main__.py              # `python -m workflows --workflow-root <path> ...`
-|-- loader.py                # WORKFLOW.md contract and policy loader
-|-- contracts.py             # WORKFLOW.md loading, rendering, and policy sections
-|-- registry.py              # workflow object registry and CLI dispatch
-|-- config.py                # typed front matter config
-|-- bindings.py              # actor/runtime binding and runtime checks
-|-- validation.py            # contract validation and readiness recommendations
-|-- bootstrap.py             # repo bootstrap and scaffold mechanics
-|-- daemon.py                # workflow tick loop and service controls
-|-- orchestrator.py          # orchestrator prompt + decision schema
-|-- prompt_context.py        # compact state/facts for runtime prompts
-|-- runner.py                # CLI command router
-|-- inspection.py            # validate, show, status, and lanes commands
-|-- ticks.py                 # tick lifecycle and orchestrator invocation
+|-- entry_registry.py        # workflow object registry and CLI dispatch
+|-- entry_runner.py          # CLI command router
+|-- entry_inspection.py      # validate, show, status, and lanes commands
+|-- entry_lanes.py           # lane facade used by workflow mechanics
+|-- tick_orchestrator.py     # orchestrator-mode tick lifecycle
+|-- tick_actor_driven.py     # actor-driven tick lifecycle
 |-- tick_journal.py          # engine run/events for workflow.tick.*
-|-- state_io.py              # WorkflowState, state IO, audit, and state lock
-|-- dispatch.py              # actor dispatch, background worker, heartbeats
-|-- operator.py              # operator retry, release, and complete commands
-|-- variables.py             # prompt variable builders
-|-- lanes.py                 # lane facade used by workflow mechanics
+|-- route_orchestrator.py    # orchestrator prompt + decision schema
+|-- route_rules.py           # declarative actor-driven route selection
+|-- route_effects.py         # execute selected actor-driven route
+|-- lane_intake.py           # tracker intake, auto-activation, lane claiming
+|-- lane_reconcile.py        # runtime, tracker, and pull request reconciliation
+|-- lane_transitions.py      # lane decisions, transitions, release mechanics
+|-- lane_teardown.py         # merge, tracker cleanup, and cleanup retry mechanics
+|-- lane_completion.py       # actor-driven completion verification
 |-- lane_state.py            # lane ledger state, config parsing, engine projections
-|-- intake.py                # tracker intake, auto-activation, lane claiming
-|-- reconcile.py             # runtime, tracker, and pull request reconciliation
-|-- transitions.py           # lane decisions, transitions, actor output handling
-|-- retries.py               # workflow adapter for engine-owned retry mechanics
-|-- notifications.py         # review feedback notifications
-|-- effects.py               # idempotency keys for external side effects
-|-- status.py                # engine-first workflow and lane status projections
-|-- sessions.py              # actor dispatch journal, sessions, heartbeats, scheduler projections
-|-- teardown.py              # merge, tracker cleanup, and cleanup retry mechanics
-|-- actors.py                # actor runtime dispatch
-|-- actions.py               # deterministic action execution
-|-- paths.py                 # workflow root and runtime path helpers
+|-- runtime_dispatch.py      # actor dispatch, background worker, heartbeats
+|-- runtime_sessions.py      # actor dispatch journal, sessions, scheduler projections
+|-- actor_runtime.py         # actor runtime construction
+|-- actor_outputs.py         # actor output recording and contract handling
+|-- action_handlers.py       # deterministic action execution
+|-- state_io.py              # WorkflowState, state IO, audit, and state lock
+|-- state_retries.py         # workflow adapter for engine-owned retry mechanics
+|-- state_effects.py         # idempotency keys for external side effects
+|-- state_projection.py      # engine-first lane projections
+|-- state_status.py          # workflow and lane status payloads
+|-- prompt_context.py        # compact state/facts for runtime prompts
+|-- prompt_variables.py      # prompt variable builders
+|-- surface_board.py         # board label mutation mechanics
+|-- surface_board_state.py   # label-backed board state mapping
+|-- surface_review_state.py  # review signal building
+|-- surface_review_context.py # pull request review/comment collection
+|-- surface_notifications.py # review feedback notifications
+|-- surface_workpad.py       # compact Sprints workpad comment
+|-- surface_operator.py      # operator retry, release, and complete commands
+|-- surface_worktrees.py     # lane worktree helpers
 |-- schema.yaml              # workflow config schema
 `-- templates/               # bundled WORKFLOW.md policy templates
     |-- issue-runner.md
@@ -61,9 +65,13 @@ workflows/
 - `# Orchestrator Policy` for transition authority.
 - `# Actor: <name>` sections for actor-specific policy and output shape.
 
-The orchestrator decides whether to run an actor, run an action, advance,
-retry, complete, or raise operator attention. `ticks.py` validates and applies
-that decision.
+In orchestrator mode, the orchestrator decides whether to run an actor, run an
+action, advance, retry, complete, or raise operator attention.
+`tick_orchestrator.py` validates and applies that decision.
+
+In actor-driven mode, route policy lives in the workflow front matter as
+`routing.actor-driven.rules`. `route_rules.py` selects a route from that table,
+and `route_effects.py` executes it.
 
 The orchestrator does not receive raw workflow state. `prompt_context.py`
 builds a compact prompt payload:
@@ -94,7 +102,7 @@ tick journal events.
 
 ## Retry Wakeups
 
-`workflows/retries.py` is only the workflow adapter around engine retry
+`workflows/state_retries.py` is only the workflow adapter around engine retry
 mechanics. It asks the engine to schedule or clear retry rows, then keeps
 `lane.pending_retry` as actor/orchestrator context.
 
