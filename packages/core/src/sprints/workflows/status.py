@@ -62,7 +62,7 @@ def build_workflow_facts(config: WorkflowConfig, state: Any) -> dict[str, Any]:
     concurrency = concurrency_config(config)
     actor_usage = actor_concurrency_usage(config=config, state=state)
     current_active_lanes = active_lanes(state)
-    current_decision_ready_lanes = decision_ready_lanes(state)
+    current_decision_ready_lanes = _ready_lanes(config=config, state=state)
     terminal_lanes = [
         lane
         for lane in state.lanes.values()
@@ -170,7 +170,8 @@ def build_lane_status(
             [
                 lane
                 for lane in state_active
-                if isinstance(lane, dict) and lane_needs_orchestrator_decision(lane)
+                if isinstance(lane, dict)
+                and _lane_needs_runner_decision(config=config, lane=lane)
             ]
         ),
         "running_count": count_lanes_with_status(active, "running"),
@@ -319,6 +320,24 @@ def _engine_lane_summary(
 
 def _projected_lane_is_terminal(lane: dict[str, Any]) -> bool:
     return str(lane.get("status") or "").strip().lower() in _TERMINAL_ENGINE_STATES
+
+
+def _ready_lanes(*, config: WorkflowConfig, state: Any) -> list[dict[str, Any]]:
+    if config.is_actor_driven():
+        from sprints.workflows.actor_driven import actor_driven_ready_lanes
+
+        return actor_driven_ready_lanes(config=config, state=state)
+    return decision_ready_lanes(state)
+
+
+def _lane_needs_runner_decision(
+    *, config: WorkflowConfig, lane: dict[str, Any]
+) -> bool:
+    if config.is_actor_driven():
+        from sprints.workflows.actor_driven import lane_needs_actor_driven_route
+
+        return lane_needs_actor_driven_route(config=config, lane=lane)
+    return lane_needs_orchestrator_decision(lane)
 
 
 def build_retry_audit(state: dict[str, Any]) -> list[dict[str, Any]]:

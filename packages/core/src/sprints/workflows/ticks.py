@@ -153,8 +153,6 @@ def apply_action_result(
 
 
 def tick(config: WorkflowConfig, *, orchestrator_output: str) -> int:
-    if config.is_actor_driven():
-        raise RuntimeError("actor-driven workflow execution is not wired yet")
     return with_state_lock(
         config=config,
         owner_role="workflow-tick",
@@ -163,6 +161,13 @@ def tick(config: WorkflowConfig, *, orchestrator_output: str) -> int:
 
 
 def tick_locked(config: WorkflowConfig, *, orchestrator_output: str) -> int:
+    if config.is_actor_driven():
+        from sprints.workflows.actor_driven import tick_actor_driven_locked
+
+        return tick_actor_driven_locked(
+            config=config,
+            orchestrator_output=orchestrator_output,
+        )
     journal = start_tick_journal(
         config=config,
         orchestrator_output=orchestrator_output,

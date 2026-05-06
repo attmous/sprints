@@ -28,6 +28,7 @@ from sprints.workflows.lane_state import (
     set_lane_operator_attention,
     set_lane_status,
 )
+from sprints.workflows.board_state import BoardState, state_from_labels
 from sprints.workflows.orchestrator import OrchestratorDecision
 from sprints.workflows.retries import queue_lane_retry
 from sprints.workflows.sessions import record_actor_runtime_interrupted
@@ -212,6 +213,12 @@ def _reconcile_tracker_lanes(
         lane["issue"] = fresh
         refresh_lane_board_metadata(config=config, lane=lane, issue=fresh)
         updated.append(str(lane.get("lane_id") or ""))
+        if (
+            config.is_actor_driven()
+            and state_from_labels(fresh.get("labels") or [], config)
+            == BoardState.DONE.value
+        ):
+            continue
         if not issue_is_still_active(
             config=config, tracker_cfg=tracker_cfg, issue=fresh
         ):
