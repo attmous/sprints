@@ -243,10 +243,8 @@ runtimes:
 actors:
   implementer:
     runtime: codex
-    skills: [pull, debug, commit, push, land]
   reviewer:
     runtime: codex
-    skills: [review]
 stages:
   deliver:
     actors: [implementer]
@@ -322,6 +320,8 @@ unrelated dirty files that cannot be isolated, repeated retry exhaustion, or a
 merge/review conflict that cannot be resolved from GitHub state.
 
 # Actor: implementer
+
+Bundled skills available to this actor: `pull`, `debug`, `commit`, `push`, `land`.
 
 ## Input
 
@@ -483,6 +483,8 @@ For `land`, return JSON only:
 }
 
 # Actor: reviewer
+
+Bundled skills available to this actor: `review`.
 
 ## Input
 
