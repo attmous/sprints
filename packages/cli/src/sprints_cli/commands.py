@@ -238,9 +238,9 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     )
     init_cmd.add_argument(
         "--model",
-        help="Optional actor model override written to orchestrator, implementer, and reviewer.",
+        help="Optional actor model override written to workflow actors.",
     )
-    init_cmd.add_argument("--active-label", default="active")
+    init_cmd.add_argument("--todo-label", default="todo")
     init_cmd.add_argument("--done-label", default="done")
     init_cmd.add_argument(
         "--exclude-labels",
@@ -947,7 +947,7 @@ def cmd_init_workflow(args, parser) -> str:
             runtime_preset=args.runtime,
             runtime_name=args.runtime_name,
             model=args.model,
-            active_label=args.active_label,
+            todo_label=args.todo_label,
             done_label=args.done_label,
             exclude_labels=_split_arg_csv(args.exclude_labels),
             max_lanes=args.max_lanes,

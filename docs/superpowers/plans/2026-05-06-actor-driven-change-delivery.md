@@ -10,6 +10,34 @@
 
 ---
 
+## Locked Mental Model
+
+This plan is now locked to the Symphony-inspired split:
+
+- Python is the coded orchestrator. It owns ticks, intake, reconciliation,
+  lane claims, leases, retries, runtime sessions, prompt assembly, compaction,
+  dispatch, observe/status, audit, and final verification.
+- The implementer is a prompted delivery worker for exactly one lane. It owns
+  `implement`, `rework`, and `land` modes inside that lane only.
+- The reviewer is a prompted fresh-context review worker for exactly one PR/lane.
+  It must not resume implementer context.
+- `WORKFLOW.md` is config plus policy. It does not create an orchestrator actor
+  for actor-driven `change-delivery`.
+- The engine is durable memory. GitHub labels/project automation are the external
+  operator surface.
+
+The boundary rule is:
+
+```text
+Python decides which lane, actor, and mode should run.
+Actors decide how to complete their scoped lane work.
+```
+
+PR #110 currently contains the foundation slice: actor-driven config support,
+label-backed board state helpers, durable workpads, explicit actor modes, and
+deterministic tick routing. The remaining work is the hard cutoff from the old
+default template and runner-owned completion behavior.
+
 ## Operator Constraints
 
 - Do not create new test files. The operator has explicitly rejected tests for this repo.
@@ -577,7 +605,7 @@ Files:
 
 Steps:
 
-- [ ] Update template front matter:
+- [x] Update template front matter:
 
   ```yaml
   workflow: change-delivery
@@ -633,26 +661,26 @@ Steps:
       skills: [review]
   ```
 
-- [ ] Replace `# Orchestrator Policy` with `# Workflow Policy`.
-- [ ] Implementer policy must include:
-  - [ ] implement mode responsibilities
-  - [ ] rework mode responsibilities
-  - [ ] land mode responsibilities
-  - [ ] required JSON output for each mode
-  - [ ] no interactive escalation
-  - [ ] blocked output shape for auth/permissions/tooling failures
-- [ ] Reviewer policy must include:
-  - [ ] review scope
-  - [ ] approval vs changes requested
-  - [ ] concrete required fixes
-  - [ ] no merge or label cleanup authority
-- [ ] Workflow policy must document:
-  - [ ] board states
-  - [ ] conflict priority
-  - [ ] merge authority
-  - [ ] runner verification
-  - [ ] operator attention rules
-- [ ] Update bootstrap/init wizard so default bootstrapped `WORKFLOW.md` is actor-driven `change-delivery`.
+- [x] Replace `# Orchestrator Policy` with `# Workflow Policy`.
+- [x] Implementer policy must include:
+  - [x] implement mode responsibilities
+  - [x] rework mode responsibilities
+  - [x] land mode responsibilities
+  - [x] required JSON output for each mode
+  - [x] no interactive escalation
+  - [x] blocked output shape for auth/permissions/tooling failures
+- [x] Reviewer policy must include:
+  - [x] review scope
+  - [x] approval vs changes requested
+  - [x] concrete required fixes
+  - [x] no merge or label cleanup authority
+- [x] Workflow policy must document:
+  - [x] board states
+  - [x] conflict priority
+  - [x] merge authority
+  - [x] runner verification
+  - [x] operator attention rules
+- [x] Update bootstrap/init wizard so default bootstrapped `WORKFLOW.md` is actor-driven `change-delivery`.
 - [ ] Verification:
 
   ```powershell

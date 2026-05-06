@@ -612,7 +612,9 @@ def _eligible_candidates(
         if lane_id in known_lane_ids:
             continue
         issue_state = str(issue.get("state") or "").strip().lower()
-        if not actor_label_board and active_states and issue_state not in active_states:
+        if terminal_states and issue_state in terminal_states:
+            continue
+        if active_states and issue_state not in active_states:
             continue
         labels = issue_labels(issue)
         if actor_label_board:

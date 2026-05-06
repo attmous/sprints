@@ -1096,7 +1096,7 @@ def _actor_output_runtime_status(
         or str(lane.get("status") or "").strip() == "operator_attention"
     ):
         return "blocked"
-    if actor_name == "implementer" and status == "done":
+    if actor_name == "implementer" and status in {"done", "merged", "waiting"}:
         return "completed"
     if actor_name == "reviewer" and status in {
         "approved",

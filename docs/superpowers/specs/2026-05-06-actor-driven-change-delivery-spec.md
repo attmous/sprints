@@ -145,7 +145,7 @@ Startup sequence:
 1. Claim the lane with engine lease.
 2. Move or ensure the issue is in `In Progress`.
 3. Ensure the Sprints workpad comment exists.
-4. Dispatch implementer in `deliver` mode.
+4. Dispatch implementer in `implement` mode.
 
 The state update happens before actor work starts so humans can see that the
 lane is owned.
@@ -155,7 +155,7 @@ lane is owned.
 The implementer owns delivery.
 
 If a lane is in progress and no actor is running, Python dispatches or resumes
-the implementer in `deliver` mode. If a PR already exists for the branch, the
+the implementer in `implement` mode. If a PR already exists for the branch, the
 implementer starts by inspecting open PR comments and existing feedback.
 
 When the implementer returns a valid PR and verification evidence, the runner

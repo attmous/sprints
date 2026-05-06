@@ -30,7 +30,7 @@ from sprints.workflows.lane_state import (
 )
 from sprints.workflows.notifications import notify_review_changes_requested
 from sprints.workflows.orchestrator import OrchestratorDecision
-from sprints.workflows.retries import lane_retry_is_due
+from sprints.workflows.retries import lane_retry_is_due, queue_lane_retry
 
 
 def lane_for_decision(*, state: Any, decision: OrchestratorDecision) -> dict[str, Any]:
@@ -549,6 +549,17 @@ def apply_actor_output_status(
         )
         return
     if actor_name == "implementer":
+        mode = _actor_output_mode(output)
+        if mode == "land" or status in {"merged", "waiting"}:
+            _apply_land_output_status(
+                config=config,
+                lane=lane,
+                actor_name=actor_name,
+                output=output,
+                status=status,
+                blockers=blockers,
+            )
+            return
         if status not in {"done", "blocked", "failed"}:
             set_lane_operator_attention(
                 config=config,
@@ -624,6 +635,84 @@ def apply_actor_output_status(
     )
 
 
+def _apply_land_output_status(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    actor_name: str,
+    output: dict[str, Any],
+    status: str,
+    blockers: list[Any],
+) -> None:
+    if status not in {"merged", "waiting", "blocked", "failed"}:
+        set_lane_operator_attention(
+            config=config,
+            lane=lane,
+            reason="actor_output_contract_failed",
+            message=f"land mode returned unsupported status {status!r}",
+            artifacts={"actor": actor_name, "output": output},
+        )
+        return
+    if status == "merged":
+        failure = _land_contract_failure(output)
+        if failure:
+            set_lane_operator_attention(
+                config=config,
+                lane=lane,
+                reason="actor_output_contract_failed",
+                message=failure,
+                artifacts=_contract_artifacts(lane),
+            )
+            return
+    if status == "waiting":
+        queue_lane_retry(
+            config=config,
+            lane=lane,
+            decision=OrchestratorDecision(
+                decision="retry",
+                stage=lane_stage(lane),
+                lane_id=str(lane.get("lane_id") or ""),
+                target=actor_name,
+                reason=str(output.get("summary") or "land mode waiting"),
+                inputs={
+                    "mode": "land",
+                    "landing": output,
+                },
+            ),
+        )
+        return
+    if status in {"blocked", "failed"} or blockers:
+        set_lane_operator_attention(
+            config=config,
+            lane=lane,
+            reason=blocker_reason(output) or status or "actor_blocked",
+            message=str(
+                output.get("summary") or f"{actor_name} returned {status or 'blockers'}"
+            ),
+            artifacts={
+                "actor": actor_name,
+                "blockers": blockers,
+                "branch": lane.get("branch"),
+                "pull_request": lane.get("pull_request"),
+                "artifacts": output.get("artifacts")
+                if isinstance(output.get("artifacts"), dict)
+                else {},
+            },
+        )
+        return
+    set_lane_status(
+        config=config,
+        lane=lane,
+        status="waiting",
+        actor=None,
+        reason="land mode returned output",
+    )
+
+
+def _actor_output_mode(output: dict[str, Any]) -> str:
+    return str(output.get("mode") or "").strip().lower()
+
+
 def _delivery_contract_failure(lane: dict[str, Any]) -> str:
     implementation = lane_mapping(lane, "actor_outputs").get("implementer")
     if not isinstance(implementation, dict):
@@ -635,6 +724,26 @@ def _delivery_contract_failure(lane: dict[str, Any]) -> str:
     verification = implementation.get("verification")
     if not isinstance(verification, list) or not verification:
         return "delivery requires non-empty verification evidence"
+    return ""
+
+
+def _land_contract_failure(output: dict[str, Any]) -> str:
+    pull_request = output.get("pull_request")
+    if not isinstance(pull_request, dict):
+        return "land output requires pull_request object"
+    state = str(pull_request.get("state") or "").strip().lower()
+    if not pull_request.get("merged") and state != "merged":
+        return "land output requires merged pull request evidence"
+    cleanup = output.get("cleanup")
+    if not isinstance(cleanup, dict):
+        return "land output requires cleanup evidence"
+    added = {
+        str(label).strip().lower()
+        for label in cleanup.get("added_labels") or []
+        if str(label).strip()
+    }
+    if "done" not in added:
+        return "land output requires done label cleanup evidence"
     return ""
 
 
