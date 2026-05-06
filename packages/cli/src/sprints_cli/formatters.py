@@ -265,9 +265,9 @@ def _lane_review_label(lane: Mapping[str, Any]) -> str:
         else {}
     )
     pieces = []
-    route = str(signals.get("route_recommendation") or signals.get("status") or "")
-    if route:
-        pieces.append(route)
+    phase = str(signals.get("phase") or signals.get("status") or "")
+    if phase:
+        pieces.append(phase)
     required_changes = signals.get("required_changes")
     if isinstance(required_changes, list) and required_changes:
         pieces.append(f"fixes={len(required_changes)}")

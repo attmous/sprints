@@ -143,9 +143,9 @@ def _review_label(lane: Mapping[str, Any]) -> str:
         else {}
     )
     pieces = []
-    route = str(signals.get("route_recommendation") or signals.get("status") or "")
-    if route:
-        pieces.append(route)
+    phase = str(signals.get("phase") or signals.get("status") or "")
+    if phase:
+        pieces.append(phase)
     required = lane.get("review_required_change_count")
     if required not in (None, "", 0):
         pieces.append(f"fixes={required}")

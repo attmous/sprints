@@ -27,6 +27,7 @@ from sprints.workflows.effects import (
     record_side_effect_succeeded,
     side_effect_key,
 )
+from sprints.workflows.completion import done_release_verified
 from sprints.workflows.orchestrator import OrchestratorDecision
 from sprints.core.paths import runtime_paths
 
@@ -49,6 +50,9 @@ def complete_lane(
     reason: str,
     ops: TeardownOps,
 ) -> None:
+    if config.is_actor_driven():
+        _complete_actor_driven_lane(config=config, lane=lane, reason=reason, ops=ops)
+        return
     failure = _completion_contract_failure(lane)
     if failure:
         ops.set_lane_operator_attention(
@@ -91,6 +95,31 @@ def complete_lane(
         )
         return
     lane["completion_cleanup"] = cleanup
+    lane["pending_retry"] = None
+    ops.clear_engine_retry(config=config, lane=lane)
+    ops.set_lane_status(config=config, lane=lane, status="complete", reason=reason)
+    ops.release_lane_lease(config=config, lane=lane, reason=reason)
+
+
+def _complete_actor_driven_lane(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    reason: str,
+    ops: TeardownOps,
+) -> None:
+    if not done_release_verified(lane):
+        ops.set_lane_operator_attention(
+            config=config,
+            lane=lane,
+            reason="actor_driven_completion_not_verified",
+            message=(
+                "actor-driven completion requires merged pull request evidence, "
+                "done state, and no active actor run"
+            ),
+            artifacts=_contract_artifacts(lane),
+        )
+        return
     lane["pending_retry"] = None
     ops.clear_engine_retry(config=config, lane=lane)
     ops.set_lane_status(config=config, lane=lane, status="complete", reason=reason)

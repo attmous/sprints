@@ -16,6 +16,10 @@ from sprints.workflows.lane_state import (
     now_iso,
     repository_path,
 )
+from sprints.workflows.review_context import (
+    collect_review_context,
+    compact_review_context,
+)
 from sprints.workflows.sessions import active_actor_dispatch
 
 
@@ -29,14 +33,6 @@ _PENDING_BLOCKER_KINDS = {
     "mergeability_unknown",
     "review_not_approved",
 }
-_MAX_REVIEW_CONTEXT_ITEMS = 8
-_MAX_COMMENT_TEXT = 600
-_SPRINTS_COMMENT_MARKERS = (
-    "sprints-workpad",
-    "sprints:idempotency-key",
-)
-
-
 def reconcile_review_signals(
     *, config: WorkflowConfig, lanes: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -81,7 +77,7 @@ def reconcile_review_signals(
                 }
             )
             continue
-        context = _collect_review_context(client=client, pr_number=pr_number)
+        context = collect_review_context(client=client, pr_number=pr_number)
         signals = build_review_signals(
             config=config,
             lane=lane,
@@ -117,18 +113,10 @@ def build_review_signals(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     readiness = readiness if isinstance(readiness, dict) else {}
-    context = context if isinstance(context, dict) else {}
     blockers = [
         blocker for blocker in readiness.get("blockers") or [] if isinstance(blocker, dict)
     ]
-    reviews = _compact_reviews(context.get("reviews"))
-    comments = [
-        *_compact_comments(context.get("pull_request_comments"), source="pull_request"),
-        *_compact_comments(
-            _review_thread_comments(context.get("review_threads")),
-            source="review_thread",
-        ),
-    ][-_MAX_REVIEW_CONTEXT_ITEMS:]
+    compact_context = compact_review_context(context or {})
     reviewer = _reviewer_output(lane)
     required_changes = _required_changes_from_reviewer(reviewer)
     required_changes.extend(_required_changes_from_blockers(blockers))
@@ -136,7 +124,7 @@ def build_review_signals(
     approvals = _approval_items(reviewer=reviewer, readiness=readiness)
     merge_signal = merge_signal_for_lane(config=config, lane=lane)
     reviewer_running = reviewer_actor_running(lane)
-    route = _route_recommendation(
+    phase = _review_phase(
         required_changes=required_changes,
         reviewer_running=reviewer_running,
         merge_signal_seen=bool(merge_signal.get("seen")),
@@ -145,16 +133,14 @@ def build_review_signals(
     return {
         key: value
         for key, value in {
-            "status": route,
-            "route_recommendation": route,
+            "status": phase,
+            "phase": phase,
             "required_changes": required_changes,
             "approvals": approvals,
             "pending": pending,
             "blockers": blockers,
             "checks": _check_items(blockers),
-            "reviews": reviews,
-            "comments": comments,
-            "context_errors": context.get("errors"),
+            **compact_context,
             "reviewer_actor_running": reviewer_running,
             "reviewer_actor_result": _compact_reviewer_output(reviewer),
             "merge_signal_seen": bool(merge_signal.get("seen")),
@@ -221,16 +207,16 @@ def review_actor_enabled(config: WorkflowConfig) -> bool:
     return str(enabled).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _route_recommendation(
+def _review_phase(
     *, required_changes: list[dict[str, Any]], reviewer_running: bool, merge_signal_seen: bool
 ) -> str:
     if required_changes:
-        return "rework"
+        return "requires_changes"
     if reviewer_running:
-        return "review_waiting_for_reviewer"
+        return "reviewer_running"
     if merge_signal_seen:
-        return "land"
-    return "wait_review"
+        return "merge_signal_seen"
+    return "waiting_review"
 
 
 def _required_changes_from_reviewer(reviewer: dict[str, Any]) -> list[dict[str, Any]]:
@@ -370,135 +356,12 @@ def _merge_signal_state(config: WorkflowConfig) -> str:
     return str(cfg.get("state") or BoardState.MERGING.value).strip() or BoardState.MERGING.value
 
 
-def _collect_review_context(*, client: Any, pr_number: str) -> dict[str, Any]:
-    context: dict[str, Any] = {
-        "reviews": [],
-        "pull_request_comments": [],
-        "review_threads": {},
-        "errors": [],
-    }
-    for key, method_name in (
-        ("reviews", "fetch_pull_request_reviews"),
-        ("pull_request_comments", "fetch_pull_request_comments"),
-        ("review_threads", "fetch_pull_request_review_threads"),
-    ):
-        method = getattr(client, method_name, None)
-        if not callable(method):
-            continue
-        try:
-            context[key] = method(pr_number)
-        except Exception as exc:
-            context["errors"].append(
-                {
-                    "source": method_name,
-                    "pull_request": pr_number,
-                    "error": str(exc),
-                }
-            )
-    if not context["errors"]:
-        context.pop("errors", None)
-    return context
-
-
-def _compact_reviews(value: Any) -> list[dict[str, Any]]:
-    reviews = [item for item in value or [] if isinstance(item, dict)]
-    compacted: list[dict[str, Any]] = []
-    for review in reviews[-_MAX_REVIEW_CONTEXT_ITEMS:]:
-        user = review.get("user") if isinstance(review.get("user"), dict) else {}
-        compacted.append(
-            {
-                key: field
-                for key, field in {
-                    "id": review.get("id"),
-                    "state": review.get("state"),
-                    "author": user.get("login"),
-                    "body": _compact_text(review.get("body")),
-                    "url": review.get("html_url") or review.get("url"),
-                    "submitted_at": review.get("submitted_at"),
-                }.items()
-                if field not in (None, "", [], {})
-            }
-        )
-    return compacted
-
-
-def _compact_comments(value: Any, *, source: str) -> list[dict[str, Any]]:
-    comments = [item for item in value or [] if isinstance(item, dict)]
-    compacted: list[dict[str, Any]] = []
-    for comment in comments:
-        body = str(comment.get("body") or "").strip()
-        if not body or _is_sprints_comment(body):
-            continue
-        user = (
-            comment.get("user")
-            if isinstance(comment.get("user"), dict)
-            else comment.get("author")
-            if isinstance(comment.get("author"), dict)
-            else {}
-        )
-        compacted.append(
-            {
-                key: field
-                for key, field in {
-                    "source": source,
-                    "id": comment.get("id"),
-                    "author": user.get("login"),
-                    "body": _compact_text(body),
-                    "url": comment.get("html_url") or comment.get("url"),
-                    "created_at": comment.get("created_at") or comment.get("createdAt"),
-                    "path": comment.get("path"),
-                    "line": comment.get("line"),
-                }.items()
-                if field not in (None, "", [], {})
-            }
-        )
-    return compacted[-_MAX_REVIEW_CONTEXT_ITEMS:]
-
-
-def _review_thread_comments(threads: Any) -> list[dict[str, Any]]:
-    review_threads = threads.get("reviewThreads") if isinstance(threads, dict) else {}
-    nodes = review_threads.get("nodes") if isinstance(review_threads, dict) else []
-    comments: list[dict[str, Any]] = []
-    for node in nodes if isinstance(nodes, list) else []:
-        if not isinstance(node, dict):
-            continue
-        comment_block = (
-            node.get("comments") if isinstance(node.get("comments"), dict) else {}
-        )
-        for comment in comment_block.get("nodes") or []:
-            if not isinstance(comment, dict):
-                continue
-            comments.append(
-                {
-                    **comment,
-                    "path": node.get("path"),
-                    "line": node.get("line"),
-                    "thread_id": node.get("id"),
-                    "thread_resolved": node.get("isResolved"),
-                    "thread_outdated": node.get("isOutdated"),
-                }
-            )
-    return comments
-
-
 def _check_items(blockers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         _blocker_item(blocker=blocker, source="github_check")
         for blocker in blockers
         if str(blocker.get("kind") or "").startswith("check_")
     ]
-
-
-def _compact_text(value: Any) -> str:
-    text = str(value or "").strip()
-    if len(text) <= _MAX_COMMENT_TEXT:
-        return text
-    return text[: _MAX_COMMENT_TEXT - 1].rstrip() + "."
-
-
-def _is_sprints_comment(body: str) -> bool:
-    lowered = body.lower()
-    return any(marker in lowered for marker in _SPRINTS_COMMENT_MARKERS)
 
 
 def _pull_request_number(lane: dict[str, Any]) -> str:
