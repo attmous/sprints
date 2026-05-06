@@ -26,7 +26,6 @@ from sprints.engine.state import (
     read_engine_runs,
     read_engine_scheduler_state,
 )
-from sprints.engine.work import work_item_from_issue
 from sprints.core.config import WorkflowConfig, WorkflowConfigError
 from sprints.core.contracts import WorkflowContractError, load_workflow_contract
 from sprints.core.paths import runtime_paths
@@ -120,12 +119,6 @@ def _engine_runs(
     )
 
 
-def _resolve_issue_runner_storage_path(
-    workflow_root: Path, key: str, default: str
-) -> Path | None:
-    return _resolve_workflow_storage_path(workflow_root, key, default)
-
-
 def _resolve_workflow_storage_path(
     workflow_root: Path, key: str, default: str
 ) -> Path | None:
@@ -159,11 +152,6 @@ def recent_sprints_events(workflow_root: Path, limit: int = 50) -> list[dict[str
 
 def recent_workflow_audit(workflow_root: Path, limit: int = 50) -> list[dict[str, Any]]:
     base = Path(workflow_root)
-    if _workflow_name(base) == "issue-runner":
-        audit_path = _resolve_issue_runner_storage_path(
-            base, "audit-log", "memory/workflow-audit.jsonl"
-        )
-        return _read_jsonl_tail(audit_path, limit) if audit_path is not None else []
     # workflow-audit.jsonl lives under <root>/runtime/memory/ in the project layout
     # and under <root>/memory/ in the legacy layout â€” match runtime_paths logic.
     runtime_event_log = runtime_paths(base)["event_log_path"]
@@ -192,57 +180,6 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
     workflow_name = _workflow_name(workflow_root)
     if not workflow_name:
         return []
-    if workflow_name == "issue-runner":
-        scheduler = _engine_scheduler(workflow_root, workflow_name)
-        out: list[dict[str, Any]] = []
-        for row in scheduler.get("running") or []:
-            if not isinstance(row, dict):
-                continue
-            identifier = row.get("identifier") or row.get("issue_id")
-            work_item = work_item_from_issue(
-                {
-                    "id": row.get("issue_id") or identifier or "unknown",
-                    "identifier": identifier,
-                    "state": row.get("state") or "running",
-                },
-                source="issue-runner",
-            ).to_dict()
-            out.append(
-                {
-                    "lane_id": row.get("issue_id"),
-                    "state": row.get("state") or "running",
-                    "workflow_state": row.get("state") or "running",
-                    "issue_identifier": identifier,
-                    "lane_status": "active",
-                    "kind": "running",
-                    "work_item": work_item,
-                }
-            )
-        for row in scheduler.get("retry_queue") or []:
-            if not isinstance(row, dict):
-                continue
-            identifier = row.get("identifier") or row.get("issue_id")
-            work_item = work_item_from_issue(
-                {
-                    "id": row.get("issue_id") or identifier or "unknown",
-                    "identifier": identifier,
-                    "state": "retrying",
-                },
-                source="issue-runner",
-            ).to_dict()
-            out.append(
-                {
-                    "lane_id": row.get("issue_id"),
-                    "state": "retrying",
-                    "workflow_state": "retrying",
-                    "issue_identifier": identifier,
-                    "lane_status": "retrying",
-                    "kind": "retrying",
-                    "work_item": work_item,
-                }
-            )
-        return out
-
     if workflow_name != "change-delivery":
         scheduler = _engine_scheduler(workflow_root, workflow_name)
         return [
@@ -392,51 +329,23 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
                 lane for lane in active_entries if lane.get("status") == "retry_queued"
             ],
         }
-    if workflow_name != "issue-runner":
-        scheduler_payload = _engine_scheduler(workflow_root, workflow_name)
-        retry_wakeup = EngineStore(
-            db_path=runtime_paths(workflow_root)["db_path"],
-            workflow=workflow_name,
-        ).retry_wakeup()
-        totals = scheduler_payload.get("runtime_totals") or {}
-        running = scheduler_payload.get("running") or []
-        retry_queue = scheduler_payload.get("retry_queue") or []
-        return {
-            "workflow": workflow_name,
-            "health": None,
-            "updated_at": scheduler_payload.get("updated_at"),
-            "running_count": len(running),
-            "retry_count": len(retry_queue),
-            "retry_wakeup": retry_wakeup,
-            "selected_issue": None,
-            "latest_runs": _engine_runs(workflow_root, workflow_name),
-            "total_tokens": int(totals.get("total_tokens") or 0),
-            "rate_limits": totals.get("rate_limits"),
-        }
-
-    status_path = _resolve_issue_runner_storage_path(
-        workflow_root, "status", "memory/workflow-status.json"
-    )
-    status_payload = _load_optional_json(status_path) or {}
-    scheduler_payload = _engine_scheduler(workflow_root, "issue-runner")
-    scheduler = {
-        "running": scheduler_payload.get("running") or [],
-        "retry_queue": scheduler_payload.get("retry_queue") or [],
-        "runtime_totals": scheduler_payload.get("runtime_totals") or {},
-    }
-    last_run = status_payload.get("lastRun") or {}
-    latest_runs = _engine_runs(workflow_root, "issue-runner")
+    scheduler_payload = _engine_scheduler(workflow_root, workflow_name)
+    retry_wakeup = EngineStore(
+        db_path=runtime_paths(workflow_root)["db_path"],
+        workflow=workflow_name,
+    ).retry_wakeup()
+    totals = scheduler_payload.get("runtime_totals") or {}
+    running = scheduler_payload.get("running") or []
+    retry_queue = scheduler_payload.get("retry_queue") or []
     return {
-        "workflow": "issue-runner",
-        "health": status_payload.get("health"),
-        "updated_at": scheduler_payload.get("updated_at") or last_run.get("updatedAt"),
-        "running_count": len(scheduler["running"]),
-        "retry_count": len(scheduler["retry_queue"]),
-        "selected_issue": (
-            (last_run.get("issue") or {}).get("identifier")
-            or (last_run.get("issue") or {}).get("id")
-        ),
-        "latest_runs": latest_runs,
-        "total_tokens": int((scheduler["runtime_totals"].get("total_tokens") or 0)),
-        "rate_limits": scheduler["runtime_totals"].get("rate_limits"),
+        "workflow": workflow_name,
+        "health": None,
+        "updated_at": scheduler_payload.get("updated_at"),
+        "running_count": len(running),
+        "retry_count": len(retry_queue),
+        "retry_wakeup": retry_wakeup,
+        "selected_issue": None,
+        "latest_runs": _engine_runs(workflow_root, workflow_name),
+        "total_tokens": int(totals.get("total_tokens") or 0),
+        "rate_limits": totals.get("rate_limits"),
     }

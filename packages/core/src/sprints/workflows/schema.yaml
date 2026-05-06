@@ -2,10 +2,10 @@ type: object
 required:
   - workflow
   - schema-version
-  - runtimes
-  - actors
-  - stages
 allOf:
+  - anyOf:
+      - required: [runtime]
+      - required: [runtimes]
   - if:
       required: [orchestration]
       properties:
@@ -15,30 +15,11 @@ allOf:
           properties:
             mode:
               const: actor-driven
-    then:
-      required: [routing]
-      not:
-        anyOf:
-          - required: [gates]
-          - required: [actions]
-      properties:
-        stages:
-          additionalProperties:
-            not:
-              anyOf:
-                - required: [actions]
-                - required: [gates]
-    else:
-      anyOf:
-        - required: [orchestrator]
-        - required: [orchestration]
-          properties:
-            orchestration:
-              type: object
-              required: [actor]
+    then: {}
+    else: {}
 properties:
   workflow:
-    enum: [change-delivery, issue-runner, release, triage]
+    enum: [code, change-delivery, release, triage]
   schema-version:
     type: integer
     enum: [1]
@@ -75,6 +56,44 @@ properties:
   intake:
     type: object
     properties:
+      entry:
+        type: object
+        properties:
+          states:
+            type: array
+            items:
+              type: string
+          include_labels:
+            type: array
+            items:
+              type: string
+          include-labels:
+            type: array
+            items:
+              type: string
+          exclude_labels:
+            type: array
+            items:
+              type: string
+          exclude-labels:
+            type: array
+            items:
+              type: string
+        additionalProperties: true
+      claim:
+        type: object
+        properties:
+          remove_labels:
+            type: array
+            items:
+              type: string
+          add_labels:
+            type: array
+            items:
+              type: string
+          branch:
+            type: string
+        additionalProperties: true
       auto-activate:
         type: object
         properties:
@@ -90,6 +109,34 @@ properties:
             type: integer
             minimum: 1
         additionalProperties: true
+    additionalProperties: true
+  workspace:
+    type: object
+    properties:
+      root:
+        type: string
+      hooks:
+        type: object
+        properties:
+          after_create:
+            type: string
+          before_remove:
+            type: string
+        additionalProperties: true
+    additionalProperties: true
+  polling:
+    type: object
+    properties:
+      interval_ms:
+        type: integer
+        minimum: 1
+    additionalProperties: true
+  limits:
+    type: object
+    properties:
+      max_turns:
+        type: integer
+        minimum: 1
     additionalProperties: true
   code-host:
     type: object
@@ -279,6 +326,9 @@ properties:
     additionalProperties:
       type: object
       additionalProperties: true
+  runtime:
+    type: object
+    additionalProperties: true
   actors:
     type: object
     additionalProperties:

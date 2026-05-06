@@ -51,7 +51,7 @@ workflows/
 |-- surface_worktrees.py     # lane worktree helpers
 |-- schema.yaml              # workflow config schema
 `-- templates/               # bundled WORKFLOW.md policy templates
-    |-- issue-runner.md
+    |-- code.md
     |-- change-delivery.md
     |-- release.md
     `-- triage.md

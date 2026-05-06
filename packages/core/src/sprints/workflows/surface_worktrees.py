@@ -17,7 +17,7 @@ def ensure_lane_worktree(*, config: WorkflowConfig, lane: dict[str, Any]) -> Pat
     lane_id = str(lane.get("lane_id") or "").strip()
     if not lane_id:
         raise LaneWorktreeError("lane_id is required to create a lane worktree")
-    branch = str(lane.get("branch") or "").strip() or _branch_name(lane)
+    branch = str(lane.get("branch") or "").strip() or _branch_name(config, lane)
     worktree = _worktree_path(config=config, lane_id=lane_id)
     base_ref = _base_ref(config)
     if worktree.exists():
@@ -40,6 +40,7 @@ def ensure_lane_worktree(*, config: WorkflowConfig, lane: dict[str, Any]) -> Pat
                 base_ref,
                 cwd=repo_path,
             )
+        _run_workspace_hook(config=config, hook_name="after_create", cwd=worktree)
     lane["branch"] = branch
     lane["worktree"] = str(worktree)
     lane["base_ref"] = base_ref
@@ -72,20 +73,35 @@ def _base_ref(config: WorkflowConfig) -> str:
 
 
 def _worktree_path(*, config: WorkflowConfig, lane_id: str) -> Path:
-    workspace_cfg = config.raw.get("worktrees")
+    workspace_cfg = config.raw.get("workspace")
+    if not isinstance(workspace_cfg, dict):
+        workspace_cfg = config.raw.get("worktrees")
     root = None
     if isinstance(workspace_cfg, dict):
         root = workspace_cfg.get("root")
-    root_path = Path(str(root or "worktrees")).expanduser()
+    root_text = _render_workspace_value(
+        str(root or "worktrees"), workflow=config.workflow_name, lane_id=lane_id
+    )
+    root_path = Path(root_text).expanduser()
     if not root_path.is_absolute():
         root_path = config.workflow_root / root_path
     return root_path.resolve() / _safe_segment(lane_id)
 
 
-def _branch_name(lane: dict[str, Any]) -> str:
+def _branch_name(config: WorkflowConfig, lane: dict[str, Any]) -> str:
     issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
+    intake = config.raw.get("intake") if isinstance(config.raw.get("intake"), dict) else {}
+    claim = intake.get("claim") if isinstance(intake.get("claim"), dict) else {}
     raw_id = str(issue.get("id") or lane.get("lane_id") or "lane")
+    number = str(issue.get("number") or raw_id).lstrip("#")
     title = str(issue.get("title") or "change")
+    template = str(claim.get("branch") or "").strip()
+    if template:
+        return (
+            template.replace("{number}", _safe_segment(number))
+            .replace("{id}", _safe_segment(raw_id))
+            .replace("{slug}", _safe_branch_slug(title))
+        )
     return f"codex/issue-{_safe_segment(raw_id)}-{_safe_branch_slug(title)}"
 
 
@@ -101,6 +117,39 @@ def _safe_segment(value: str) -> str:
     text = text.replace("#", "")
     text = re.sub(r"[^a-z0-9._-]+", "-", text).strip("-._")
     return text or "lane"
+
+
+def _render_workspace_value(value: str, *, workflow: str, lane_id: str) -> str:
+    return value.replace("{{ workflow }}", workflow).replace("{{ lane_id }}", lane_id)
+
+
+def _run_workspace_hook(
+    *, config: WorkflowConfig, hook_name: str, cwd: Path
+) -> None:
+    workspace_cfg = config.raw.get("workspace")
+    if not isinstance(workspace_cfg, dict):
+        return
+    hooks = workspace_cfg.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+    command = str(hooks.get(hook_name) or "").strip()
+    if not command:
+        return
+    completed = subprocess.run(
+        command,
+        cwd=str(cwd),
+        shell=True,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or f"workspace hook {hook_name} failed"
+        )
+        raise LaneWorktreeError(detail)
 
 
 def _branch_exists(*, repo_path: Path, branch: str) -> bool:

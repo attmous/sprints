@@ -15,6 +15,7 @@ from sprints.workflows.lane_state import (
     lane_stage,
     normalize_pull_request,
     now_iso,
+    release_lane_lease,
     set_lane_operator_attention,
     set_lane_status,
 )
@@ -144,6 +145,25 @@ def apply_actor_output_status(
             )
             return
         notify_review_changes_requested(config=config, lane=lane, output=output)
+    if actor_name not in {"implementer", "reviewer"} and status in {
+        "merged",
+        "done",
+        "complete",
+        "completed",
+    }:
+        release_lane_lease(
+            config=config,
+            lane=lane,
+            reason=str(output.get("summary") or f"{actor_name} completed lane"),
+        )
+        set_lane_status(
+            config=config,
+            lane=lane,
+            status="complete",
+            actor=None,
+            reason=f"{actor_name} completed lane",
+        )
+        return
     if status in {"blocked", "failed"} or blockers:
         set_lane_operator_attention(
             config=config,

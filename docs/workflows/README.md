@@ -1,16 +1,16 @@
 # Workflows
 
-Sprints defaults to `change-delivery`.
+Sprints defaults to `code`.
 
 The bundled files under `packages/core/src/sprints/workflows/templates/` are policy templates.
-Bootstrap writes the `change-delivery` template by default, and `--workflow`
+Bootstrap writes the `code` template by default, and `--workflow`
 selects a different bundled template.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `packages/core/src/sprints/workflows/templates/issue-runner.md` | Issue-focused policy template. |
+| `packages/core/src/sprints/workflows/templates/code.md` | Single-actor code delivery policy template. |
 | `packages/core/src/sprints/workflows/templates/change-delivery.md` | Implementation/review policy template. |
 | `packages/core/src/sprints/workflows/templates/release.md` | Release planning and verification template. |
 | `packages/core/src/sprints/workflows/templates/triage.md` | Incoming work triage template. |

@@ -62,6 +62,8 @@ def actor_variables(
         ),
         "config": config.raw,
         "issue": lane.get("issue") or {},
+        "workspace": _workspace_context(config=config, lane=lane),
+        "repository": config.raw.get("repository") or {},
         "implementation": _compact_actor_output_alias(
             actor_outputs.get("implementer"), budget=budget
         ),
@@ -154,6 +156,17 @@ def actor_prompt_context(
             ),
             budget=budget,
         ),
+    }
+
+
+def _workspace_context(*, config: WorkflowConfig, lane: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "root": (config.raw.get("workspace") or {}).get("root")
+        if isinstance(config.raw.get("workspace"), dict)
+        else None,
+        "worktree": lane.get("worktree"),
+        "branch": lane.get("branch"),
+        "base_ref": lane.get("base_ref"),
     }
 
 

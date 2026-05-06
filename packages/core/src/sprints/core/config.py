@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from sprints.core.contracts import WORKFLOW_POLICY_KEY, parse_workflow_policy
+
 
 class WorkflowConfigError(RuntimeError):
     """Raised when workflow config is structurally invalid."""
@@ -82,13 +84,16 @@ class WorkflowConfig:
         workflow_name = str(raw.get("workflow") or "").strip()
         if not workflow_name:
             raise WorkflowConfigError("workflow config requires top-level workflow")
+        runtime_profiles = _runtime_profiles(raw)
+        actor_profiles = _actor_profiles(raw, runtime_profiles=runtime_profiles)
+        stage_profiles = _stage_profiles(raw, actor_names=tuple(actor_profiles))
         runtimes = {
             name: RuntimeConfig(
                 name=name,
                 kind=str(value.get("kind") or name),
                 raw=dict(value),
             )
-            for name, value in dict(raw.get("runtimes") or {}).items()
+            for name, value in runtime_profiles.items()
         }
         actors = {
             name: ActorConfig(
@@ -97,7 +102,7 @@ class WorkflowConfig:
                 model=value.get("model"),
                 raw=dict(value),
             )
-            for name, value in dict(raw.get("actors") or {}).items()
+            for name, value in actor_profiles.items()
         }
         stages = {
             name: StageConfig(
@@ -108,7 +113,7 @@ class WorkflowConfig:
                 next_stage=value.get("next"),
                 raw=dict(value),
             )
-            for name, value in dict(raw.get("stages") or {}).items()
+            for name, value in stage_profiles.items()
         }
         gates = {
             name: GateConfig(name=name, type=str(value["type"]), raw=dict(value))
@@ -128,15 +133,13 @@ class WorkflowConfig:
         )
         orchestration = _orchestration_config(raw)
         orchestrator_actor = orchestration.actor or ""
-        normalized_raw = dict(raw)
-        normalized_raw["orchestration"] = {
-            key: value
-            for key, value in {
-                "mode": orchestration.mode,
-                "actor": orchestration.actor,
-            }.items()
-            if value is not None
-        }
+        normalized_raw = _normalized_raw(
+            raw=raw,
+            runtime_profiles=runtime_profiles,
+            actor_profiles=actor_profiles,
+            stage_profiles=stage_profiles,
+            orchestration=orchestration,
+        )
         config = cls(
             workflow_root=root,
             workflow_name=workflow_name,
@@ -205,6 +208,54 @@ class WorkflowConfig:
                 )
 
 
+def _normalized_raw(
+    *,
+    raw: dict[str, Any],
+    runtime_profiles: dict[str, dict[str, Any]],
+    actor_profiles: dict[str, dict[str, Any]],
+    stage_profiles: dict[str, dict[str, Any]],
+    orchestration: OrchestrationConfig,
+) -> dict[str, Any]:
+    normalized_raw = dict(raw)
+    normalized_raw["tracker"] = _normalized_tracker(raw)
+    normalized_raw["runtimes"] = {
+        name: dict(value) for name, value in runtime_profiles.items()
+    }
+    normalized_raw["actors"] = {
+        name: dict(value) for name, value in actor_profiles.items()
+    }
+    normalized_raw["stages"] = {
+        name: dict(value) for name, value in stage_profiles.items()
+    }
+    normalized_raw["gates"] = dict(raw.get("gates") or {})
+    normalized_raw["actions"] = dict(raw.get("actions") or {})
+    normalized_raw["orchestration"] = {
+        key: value
+        for key, value in {
+            "mode": orchestration.mode,
+            "actor": orchestration.actor,
+        }.items()
+        if value is not None
+    }
+    return normalized_raw
+
+
+def _normalized_tracker(raw: dict[str, Any]) -> dict[str, Any]:
+    tracker = dict(raw.get("tracker") or {})
+    intake = raw.get("intake") if isinstance(raw.get("intake"), dict) else {}
+    entry = intake.get("entry") if isinstance(intake.get("entry"), dict) else {}
+    states = entry.get("states")
+    if states is not None and "active_states" not in tracker:
+        tracker["active_states"] = states
+    include = entry.get("include_labels") or entry.get("include-labels")
+    if include is not None and "required_labels" not in tracker:
+        tracker["required_labels"] = include
+    exclude = entry.get("exclude_labels") or entry.get("exclude-labels")
+    if exclude is not None and "exclude_labels" not in tracker:
+        tracker["exclude_labels"] = exclude
+    return tracker
+
+
 def _resolve(root: Path, value: str) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else root / path
@@ -213,7 +264,12 @@ def _resolve(root: Path, value: str) -> Path:
 def _orchestration_config(raw: dict[str, Any]) -> OrchestrationConfig:
     legacy_orchestrator = dict(raw.get("orchestrator") or {})
     orchestration_raw = dict(raw.get("orchestration") or {})
-    mode = str(orchestration_raw.get("mode") or "orchestrator").strip()
+    default_mode = (
+        "orchestrator"
+        if legacy_orchestrator or orchestration_raw.get("actor")
+        else "actor-driven"
+    )
+    mode = str(orchestration_raw.get("mode") or default_mode).strip()
     if mode not in {"orchestrator", "actor-driven"}:
         raise WorkflowConfigError(
             "orchestration.mode must be 'orchestrator' or 'actor-driven'"
@@ -224,3 +280,97 @@ def _orchestration_config(raw: dict[str, Any]) -> OrchestrationConfig:
         orchestration_raw.get("actor") or legacy_orchestrator.get("actor") or ""
     ).strip()
     return OrchestrationConfig(mode="orchestrator", actor=actor or None)
+
+
+def _runtime_profiles(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    runtimes = raw.get("runtimes")
+    if isinstance(runtimes, dict) and runtimes:
+        return {
+            str(name): dict(value)
+            for name, value in runtimes.items()
+            if isinstance(value, dict)
+        }
+    runtime = raw.get("runtime")
+    if isinstance(runtime, dict) and runtime:
+        return {"default": dict(runtime)}
+    return {}
+
+
+def _actor_profiles(
+    raw: dict[str, Any], *, runtime_profiles: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    actors = raw.get("actors")
+    if isinstance(actors, dict) and actors:
+        return {
+            str(name): dict(value)
+            for name, value in actors.items()
+            if isinstance(value, dict)
+        }
+    names = _policy_actor_names(raw)
+    if not names:
+        return {}
+    if len(names) != 1:
+        raise WorkflowConfigError(
+            "single-runtime workflow config can infer only one actor"
+        )
+    runtime_name = next(iter(runtime_profiles), "")
+    if not runtime_name:
+        raise WorkflowConfigError("workflow actor requires a runtime profile")
+    runtime_cfg = runtime_profiles[runtime_name]
+    actor_name = names[0]
+    return {
+        actor_name: {
+            "runtime": runtime_name,
+            "model": runtime_cfg.get("model"),
+            "skills": _policy_actor_skills(raw, actor_name),
+        }
+    }
+
+
+def _stage_profiles(
+    raw: dict[str, Any], *, actor_names: tuple[str, ...]
+) -> dict[str, dict[str, Any]]:
+    stages = raw.get("stages")
+    if isinstance(stages, dict) and stages:
+        return {
+            str(name): dict(value)
+            for name, value in stages.items()
+            if isinstance(value, dict)
+        }
+    if len(actor_names) == 1:
+        return {"work": {"actors": [actor_names[0]], "next": "done"}}
+    return {}
+
+
+def _policy_actor_names(raw: dict[str, Any]) -> tuple[str, ...]:
+    policy = _policy(raw)
+    if policy is None:
+        return ()
+    return tuple(policy.actors)
+
+
+def _policy_actor_skills(raw: dict[str, Any], actor_name: str) -> list[str]:
+    policy = _policy(raw)
+    actor = policy.actors.get(actor_name) if policy else None
+    if actor is None:
+        return []
+    lines = actor.body.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip().lower() != "## skills":
+            continue
+        for skill_line in lines[index + 1 :]:
+            stripped = skill_line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                return []
+            stripped = stripped.removeprefix("-").strip()
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+    return []
+
+
+def _policy(raw: dict[str, Any]) -> Any:
+    text = raw.get(WORKFLOW_POLICY_KEY)
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return parse_workflow_policy(text)

@@ -17,27 +17,27 @@ Compatibility-sensitive surfaces for the current Sprints release.
 - `hermes sprints daemon ...`
 - `hermes sprints codex-app-server ...`
 - `/sprints ...`
-- `/workflow change-delivery ...`
+- `/workflow code ...`
 - repo contract: `WORKFLOW.md`
 - named repo contracts: `WORKFLOW-<name>.md`
 - repo pointer: `./.hermes/sprints/workflow-root`
-- workflow root shape: `~/.hermes/workflows/<owner>-<repo>-change-delivery`
+- workflow root shape: `~/.hermes/workflows/<owner>-<repo>-code`
 
 ## Contract Format
 
 Public workflow contracts use:
 
 ```yaml
-workflow: change-delivery
+workflow: code
 schema-version: 1
 ```
 
-Supported bundled workflow names are `change-delivery`, `issue-runner`,
-`release`, and `triage`.
+Supported bundled workflow names are `code`, `change-delivery`, `release`, and
+`triage`.
 
-Policy templates may be named `issue-runner`, `change-delivery`, `release`, or
-`triage`; the default generated contract is `change-delivery`. All bundled
-templates run through the same Sprints workflow implementation.
+Policy templates may be named `code`, `change-delivery`, `release`, or
+`triage`; the default generated contract is `code`. All bundled templates run
+through the same Sprints workflow implementation.
 
 ## Internal
 
