@@ -820,6 +820,8 @@ def _engine_lane_entry(
             "turn_id": lane.get("turn_id"),
             "operator_attention": lane.get("operator_attention"),
             "pending_retry": lane.get("pending_retry"),
+            "review_signals": lane.get("review_signals"),
+            "merge_signal": lane.get("merge_signal"),
             "claim": lane.get("claim"),
             "tracker": lane.get("tracker"),
             "last_transition": latest_transition,

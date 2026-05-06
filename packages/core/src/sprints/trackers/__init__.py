@@ -112,6 +112,14 @@ class CodeHostClient(Protocol):
         self, pr_number: int | str | None
     ) -> dict[str, Any]: ...
 
+    def fetch_pull_request_reviews(
+        self, pr_number: int | str | None
+    ) -> list[dict[str, Any]]: ...
+
+    def fetch_pull_request_comments(
+        self, pr_number: int | str | None
+    ) -> list[dict[str, Any]]: ...
+
 
 _TRACKER_KINDS: dict[str, type] = {}
 _CODE_HOST_KINDS: dict[str, type] = {}

@@ -245,6 +245,42 @@ def _lane_retry_label(lane: Mapping[str, Any]) -> str:
     return "retry=" + " ".join(str(piece) for piece in pieces) if pieces else ""
 
 
+def _lane_board_label(lane: Mapping[str, Any]) -> str:
+    tracker = lane.get("tracker") if isinstance(lane.get("tracker"), Mapping) else {}
+    board_state = str(
+        lane.get("board_state") or tracker.get("board_state") or ""
+    ).strip()
+    return f"board={board_state}" if board_state else ""
+
+
+def _lane_mode_label(lane: Mapping[str, Any]) -> str:
+    mode = str(lane.get("actor_mode") or lane.get("mode") or "").strip()
+    return f"mode={mode}" if mode else ""
+
+
+def _lane_review_label(lane: Mapping[str, Any]) -> str:
+    signals = (
+        lane.get("review_signals")
+        if isinstance(lane.get("review_signals"), Mapping)
+        else {}
+    )
+    pieces = []
+    route = str(signals.get("route_recommendation") or signals.get("status") or "")
+    if route:
+        pieces.append(route)
+    required_changes = signals.get("required_changes")
+    if isinstance(required_changes, list) and required_changes:
+        pieces.append(f"fixes={len(required_changes)}")
+    if signals.get("reviewer_actor_running") or lane.get("reviewer_actor_running"):
+        pieces.append("reviewer=running")
+    merge_signal = (
+        lane.get("merge_signal") if isinstance(lane.get("merge_signal"), Mapping) else {}
+    )
+    if signals.get("merge_signal_seen") or merge_signal.get("seen"):
+        pieces.append("merge=seen")
+    return "review=" + " ".join(pieces) if pieces else ""
+
+
 def _lane_dispatch_label(lane: Mapping[str, Any]) -> str:
     dispatch = (
         lane.get("actor_dispatch")
@@ -547,9 +583,12 @@ def format_status(
             for part in [
                 f"stage={stage}",
                 f"status={status}",
+                _lane_board_label(lane),
                 f"actor={actor}",
+                _lane_mode_label(lane),
                 f"attempt={attempt}",
                 _lane_pull_request_label(lane),
+                _lane_review_label(lane),
                 _lane_dispatch_label(lane),
                 f"effects={lane.get('side_effect_count')}"
                 if lane.get("side_effect_count")

@@ -271,10 +271,24 @@ def _engine_lane_summary(
     operator_attention = metadata.get("operator_attention") or state_summary.get(
         "operator_attention"
     )
+    review_signals = metadata.get("review_signals") or state_summary.get(
+        "review_signals"
+    )
+    merge_signal = metadata.get("merge_signal") or state_summary.get("merge_signal")
+    tracker = metadata.get("tracker") if isinstance(metadata.get("tracker"), dict) else {}
+    if not tracker and isinstance(state_summary.get("tracker"), dict):
+        tracker = state_summary.get("tracker") or {}
     runtime_metadata = (
         runtime_session.get("metadata")
         if isinstance(runtime_session.get("metadata"), dict)
         else {}
+    )
+    actor_mode = (
+        runtime_session.get("actor_mode")
+        or runtime_metadata.get("actor_mode")
+        or runtime_metadata.get("mode")
+        or metadata.get("actor_mode")
+        or state_summary.get("actor_mode")
     )
     return {
         **state_summary,
@@ -282,6 +296,7 @@ def _engine_lane_summary(
         "status": work_item.get("state") or state_summary.get("status"),
         "stage": metadata.get("stage") or state_summary.get("stage"),
         "actor": metadata.get("actor") or state_summary.get("actor"),
+        "actor_mode": actor_mode,
         "attempt": metadata.get("attempt") or state_summary.get("attempt"),
         "issue": {
             "identifier": work_item.get("identifier")
@@ -290,8 +305,12 @@ def _engine_lane_summary(
             "title": work_item.get("title") or issue.get("title"),
             "url": work_item.get("url") or issue.get("url"),
         },
+        "board_state": tracker.get("board_state") or state_summary.get("board_state"),
+        "tracker": tracker or state_summary.get("tracker"),
         "branch": metadata.get("branch") or state_summary.get("branch"),
         "pull_request": pull_request,
+        "review_signals": review_signals,
+        "merge_signal": merge_signal,
         "operator_attention": operator_attention,
         "pending_retry": pending_retry,
         "last_transition": metadata.get("last_transition")

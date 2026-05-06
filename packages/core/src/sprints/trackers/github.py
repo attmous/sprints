@@ -904,6 +904,46 @@ class GithubCodeHostClient:
             "pullRequest"
         ) or {}
 
+    def fetch_pull_request_reviews(
+        self, pr_number: int | str | None
+    ) -> list[dict[str, Any]]:
+        number = _coerce_number(pr_number, field_name="pr_number")
+        payload = self._run_json(
+            self._with_api_hostname(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{self._name_with_owner}/pulls/{number}/reviews",
+                    "--paginate",
+                    "--slurp",
+                ]
+            ),
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("expected gh pull request reviews JSON array payload")
+        return _flatten_comment_pages(payload)
+
+    def fetch_pull_request_comments(
+        self, pr_number: int | str | None
+    ) -> list[dict[str, Any]]:
+        number = _coerce_number(pr_number, field_name="pr_number")
+        payload = self._run_json(
+            self._with_api_hostname(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{self._name_with_owner}/issues/{number}/comments",
+                    "--paginate",
+                    "--slurp",
+                ]
+            ),
+            cwd=self._repo_path,
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("expected gh pull request comments JSON array payload")
+        return _flatten_comment_pages(payload)
+
 
 def _pull_request_merge_readiness(
     *, view: dict[str, Any], threads: dict[str, Any]

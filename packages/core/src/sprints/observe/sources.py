@@ -211,6 +211,15 @@ def _state_lane_entry(lane: dict[str, Any], *, workflow_name: str) -> dict[str, 
         if isinstance(actor_dispatch.get("runtime"), dict)
         else {}
     )
+    tracker = lane.get("tracker") if isinstance(lane.get("tracker"), dict) else {}
+    review_signals = (
+        lane.get("review_signals")
+        if isinstance(lane.get("review_signals"), dict)
+        else {}
+    )
+    merge_signal = (
+        lane.get("merge_signal") if isinstance(lane.get("merge_signal"), dict) else {}
+    )
     return {
         "lane_id": lane_id or identifier,
         "state": stage,
@@ -222,11 +231,24 @@ def _state_lane_entry(lane: dict[str, Any], *, workflow_name: str) -> dict[str, 
         "status": status,
         "stage": stage,
         "actor": lane.get("actor"),
+        "actor_mode": runtime_session.get("actor_mode")
+        or dispatch_runtime.get("actor_mode")
+        or dispatch_runtime.get("mode"),
         "attempt": lane.get("attempt"),
+        "board_state": tracker.get("board_state") or lane.get("board_state"),
+        "tracker": tracker or None,
         "branch": lane.get("branch"),
         "pull_request": pull_request or None,
         "pull_request_number": pull_request.get("number"),
         "pull_request_url": pull_request.get("url"),
+        "review_signals": review_signals or None,
+        "merge_signal": merge_signal or None,
+        "review_required_change_count": len(
+            review_signals.get("required_changes") or []
+        ),
+        "reviewer_actor_running": review_signals.get("reviewer_actor_running"),
+        "merge_signal_seen": merge_signal.get("seen")
+        or review_signals.get("merge_signal_seen"),
         "retry_at": pending_retry.get("due_at"),
         "retry_target": pending_retry.get("target"),
         "retry_attempt": pending_retry.get("attempt"),
@@ -304,6 +326,11 @@ def _engine_lane_entry(
     lane_id = str(work_item.get("work_id") or state_entry.get("lane_id") or "")
     runtime_session = runtime_session if isinstance(runtime_session, dict) else {}
     pull_request = metadata.get("pull_request") or state_entry.get("pull_request") or {}
+    review_signals = metadata.get("review_signals") or state_entry.get(
+        "review_signals"
+    )
+    merge_signal = metadata.get("merge_signal") or state_entry.get("merge_signal")
+    tracker = metadata.get("tracker") if isinstance(metadata.get("tracker"), dict) else {}
     attention = (
         metadata.get("operator_attention")
         if isinstance(metadata.get("operator_attention"), dict)
@@ -341,7 +368,11 @@ def _engine_lane_entry(
         "status": work_item.get("state") or state_entry.get("status"),
         "stage": metadata.get("stage") or state_entry.get("stage"),
         "actor": metadata.get("actor") or state_entry.get("actor"),
+        "actor_mode": runtime_session.get("actor_mode")
+        or state_entry.get("actor_mode"),
         "attempt": metadata.get("attempt") or state_entry.get("attempt"),
+        "board_state": tracker.get("board_state") or state_entry.get("board_state"),
+        "tracker": tracker or state_entry.get("tracker"),
         "branch": metadata.get("branch") or state_entry.get("branch"),
         "pull_request": pull_request or None,
         "pull_request_number": (pull_request or {}).get("number")
@@ -350,6 +381,21 @@ def _engine_lane_entry(
         "pull_request_url": (pull_request or {}).get("url")
         if isinstance(pull_request, dict)
         else state_entry.get("pull_request_url"),
+        "review_signals": review_signals,
+        "merge_signal": merge_signal,
+        "review_required_change_count": len(
+            (review_signals or {}).get("required_changes") or []
+        )
+        if isinstance(review_signals, dict)
+        else state_entry.get("review_required_change_count"),
+        "reviewer_actor_running": (review_signals or {}).get(
+            "reviewer_actor_running"
+        )
+        if isinstance(review_signals, dict)
+        else state_entry.get("reviewer_actor_running"),
+        "merge_signal_seen": (merge_signal or {}).get("seen")
+        if isinstance(merge_signal, dict)
+        else state_entry.get("merge_signal_seen"),
         "operator_attention_reason": attention.get("reason"),
         "operator_attention_message": attention.get("message"),
         "runtime_status": runtime_session.get("status")
