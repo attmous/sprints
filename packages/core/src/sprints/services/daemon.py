@@ -100,7 +100,7 @@ def _acquire_daemon_lease(
         lease_scope="workflow-daemon",
         lease_key=_lease_key(config.workflow_root),
         owner_instance_id=owner_instance_id,
-        owner_role="orchestrator-loop",
+        owner_role="workflow-daemon",
         ttl_seconds=lease_ttl_seconds,
         metadata={
             "workflow": config.workflow_name,

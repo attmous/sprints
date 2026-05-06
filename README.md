@@ -62,41 +62,42 @@ Inside Hermes:
 /workflow code tick
 ```
 
-To run the first lane, add the `active` label to one eligible issue. The daemon
+To run the first lane, add the `todo` label to one eligible issue. The daemon
 will pick it up on the next tick.
 
 ## Mental Model
 
-Sprints is a multi-lane workflow orchestrator.
+Sprints is a multi-lane workflow runner.
 
 ```text
-tracker issue -> lane ledger -> orchestrator tick -> actor runtime turn -> gate -> next stage
-                                                              |              |
-                                                              `-> retry      `-> operator_attention
+tracker issue -> lane ledger -> step tick -> actor runtime turn -> next step
+                                                    |                 |
+                                                    `-> retry         `-> operator_attention
 ```
 
-A lane is one issue, pull request, or task with durable state. The orchestrator
-observes eligible lanes and decides what should happen next. Actors work on one
+A lane is one issue, pull request, or task with durable state. Python observes
+eligible lanes and moves them through fixed workflow steps. Actors work on one
 lane at a time through a configured runtime.
 
 The engine stores mechanics: SQLite state, leases, retries, runtime sessions,
-events, and projections. The workflow owns policy: stages, gates, actor rules,
-tracker criteria, completion cleanup, and output contracts.
+events, and projections. The workflow owns policy: step labels, actor rules,
+tracker criteria, and output contracts.
 
 ## Default Workflow
 
 The default workflow template is `code`.
 
 ```text
-active issue -> deliver -> review -> merge -> done
-                 |          |
-                 |          `-> reviewer reviews the pull request
-                 `-> implementer pulls, edits, debugs, commits, pushes, and opens the pull request
+todo -> code -> review -> merge -> done
+          ^        |
+          |--------|
 ```
 
-By default, only open issues with label `active` are eligible. Completed issues
-are auto-merged, have `active` removed and `done` added, so they are not
-selected again.
+By default, only open issues with label `todo` are eligible. Intake removes
+`todo`, adds `code`, and claims the lane. The coder implements, validates,
+pushes, and opens or updates the PR. `review` is idle polling. Required changes
+move the lane back to `code`; merge authority moves it to `merge`; successful
+land moves it to `done`.
 
 Default concurrency is one active lane:
 
@@ -106,16 +107,14 @@ execution:
 
 concurrency:
   max-lanes: 1
-  actors:
-    implementer: 1
-    reviewer: 1
+  per-lane-lock: true
 ```
 
 With `actor-dispatch: auto`, Sprints keeps the single-lane default inline. If
 you raise `max-lanes`, actor turns are dispatched as background workers so the
 daemon can keep ticking and supervise other lanes. Ticks that only see running
-lanes, blocked lanes, or retries that are not due yet return without calling the
-orchestrator.
+lanes, review lanes, blocked lanes, or retries that are not due yet return
+without dispatching new actor work.
 
 Lane states are internal orchestration state, not tracker status:
 
@@ -123,7 +122,7 @@ Lane states are internal orchestration state, not tracker status:
 | --- | --- |
 | `claimed` | The lane is reserved and must not be duplicated. |
 | `running` | An actor is working on the lane. |
-| `waiting` | Actor output is ready for orchestrator evaluation. |
+| `waiting` | The lane is held until the next real-world signal or retry. |
 | `retry_queued` | Retry is scheduled and not ready or not yet dispatched. |
 | `operator_attention` | The operator must unblock the lane. |
 | `complete` | The workflow finished successfully. |
@@ -145,7 +144,7 @@ manual tick.
 
 | Area | Meaning |
 | --- | --- |
-| Workflow contract | `WORKFLOW.md` front matter plus orchestrator/actor policy sections. |
+| Workflow contract | `WORKFLOW.md` front matter plus actor policy sections. |
 | Runtime dispatch | Actor turns through Codex app-server, Hermes Agent, Claude, ACPX, or command-backed runtime profiles. |
 | Durable state | SQLite runs, events, leases, retries, runtime sessions, and status projections. |
 | Operator surface | `/sprints`, `/workflow code`, daemon control, watch output, and runtime diagnostics. |
@@ -157,23 +156,20 @@ manual tick.
 
 Each contract defines:
 
-- orchestrator actor
-- runtime profiles
-- actors
-- stages
-- gates
-- actions
+- tracker and code-host bindings
+- intake labels
+- workspace root
+- runtime profile
+- concurrency
 - storage paths
+- actor policy
 
 Bundled policy templates live under `packages/core/src/sprints/workflows/templates/`:
 
-- `change-delivery.md`
 - `code.md`
-- `release.md`
-- `triage.md`
 
-They use the same Python implementation: loader, typed config, runner, actors,
-actions, gates, and runtime dispatch.
+The `code` workflow uses one coder actor and fixed steps:
+`todo -> code -> review -> merge -> done`.
 
 ## First-Run Setup
 

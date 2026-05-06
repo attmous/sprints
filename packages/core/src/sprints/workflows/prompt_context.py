@@ -13,8 +13,8 @@ from sprints.workflows.state_helpers import (
 )
 
 APP_SERVER_INPUT_LIMIT_CHARS = 1_048_576
-DEFAULT_ORCHESTRATOR_LIMIT_CHARS = 900_000
-DEFAULT_ORCHESTRATOR_WARN_CHARS = 750_000
+DEFAULT_PROMPT_LIMIT_CHARS = 900_000
+DEFAULT_PROMPT_WARN_CHARS = 750_000
 
 
 @dataclass(frozen=True)
@@ -28,28 +28,20 @@ class PromptBudget:
     max_engine_rows: int
 
 
-@dataclass(frozen=True)
-class PromptBuild:
-    prompt: str
-    report: dict[str, Any]
-
-
-def orchestrator_prompt_budget(
-    config: WorkflowConfig, *, aggressive: bool = False
-) -> PromptBudget:
-    raw = _orchestrator_context_config(config)
+def prompt_budget(config: WorkflowConfig, *, aggressive: bool = False) -> PromptBudget:
+    raw = _prompt_context_config(config)
     max_chars = _positive_int(
         raw,
         "max-input-chars",
         "max_input_chars",
-        default=DEFAULT_ORCHESTRATOR_LIMIT_CHARS,
+        default=DEFAULT_PROMPT_LIMIT_CHARS,
     )
     max_chars = min(max_chars, APP_SERVER_INPUT_LIMIT_CHARS)
     warn_chars = _positive_int(
         raw,
         "warn-input-chars",
         "warn_input_chars",
-        default=DEFAULT_ORCHESTRATOR_WARN_CHARS,
+        default=DEFAULT_PROMPT_WARN_CHARS,
     )
     warn_chars = min(warn_chars, max_chars)
     if aggressive:
@@ -82,45 +74,6 @@ def orchestrator_prompt_budget(
         ),
     )
 
-
-def build_orchestrator_payload(
-    *,
-    config: WorkflowConfig,
-    state: Any,
-    facts: dict[str, Any],
-    available_decisions: list[str],
-    aggressive: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    budget = orchestrator_prompt_budget(config, aggressive=aggressive)
-    ready_lane_ids = _ready_lane_ids_from_facts(facts)
-    compact_state = compact_workflow_state(
-        state=state,
-        ready_lane_ids=ready_lane_ids,
-        budget=budget,
-    )
-    compact_facts = compact_workflow_facts(facts=facts, budget=budget)
-    payload = {
-        "config": compact_config(config.raw),
-        "state": compact_state,
-        "facts": compact_facts,
-        "available_decisions": available_decisions,
-    }
-    report = {
-        "compacted": True,
-        "aggressive": aggressive,
-        "state_lane_count": len(state.lanes),
-        "active_lane_count": compact_state["lane_counts"]["active"],
-        "terminal_lane_count": compact_state["lane_counts"]["terminal"],
-        "decision_ready_lane_count": len(ready_lane_ids),
-        "terminal_lanes_included": len(compact_state["terminal_lanes"]["recent"]),
-        "max_chars": budget.max_chars,
-        "warn_chars": budget.warn_chars,
-        "max_string_chars": budget.max_string_chars,
-        "max_list_items": budget.max_list_items,
-    }
-    return payload, report
-
-
 def compact_workflow_state(
     *,
     state: Any,
@@ -128,8 +81,8 @@ def compact_workflow_state(
     budget: PromptBudget | None = None,
 ) -> dict[str, Any]:
     budget = budget or PromptBudget(
-        max_chars=DEFAULT_ORCHESTRATOR_LIMIT_CHARS,
-        warn_chars=DEFAULT_ORCHESTRATOR_WARN_CHARS,
+        max_chars=DEFAULT_PROMPT_LIMIT_CHARS,
+        warn_chars=DEFAULT_PROMPT_WARN_CHARS,
         max_string_chars=2_000,
         max_list_items=20,
         max_terminal_lanes=5,
@@ -179,11 +132,6 @@ def compact_workflow_state(
             "recent": terminal[: budget.max_terminal_lanes],
             "omitted": max(len(terminal) - budget.max_terminal_lanes, 0),
         },
-        "orchestrator_decision_count": len(state.orchestrator_decisions),
-        "recent_orchestrator_decisions": compact_value(
-            state.orchestrator_decisions[-budget.max_recent_decisions :],
-            budget=budget,
-        ),
     }
 
 
@@ -252,11 +200,11 @@ def compact_config(raw: dict[str, Any]) -> dict[str, Any]:
         "concurrency",
         "recovery",
         "retry",
-        "completion",
-        "orchestrator",
-        "stages",
-        "gates",
-        "actions",
+        "runtime",
+        "runtimes",
+        "workpad",
+        "workspace",
+        "storage",
     )
     return {key: raw.get(key) for key in keep if raw.get(key) not in (None, "", [], {})}
 
@@ -616,8 +564,8 @@ def _ready_lane_ids_from_facts(facts: dict[str, Any]) -> set[str]:
     return ids
 
 
-def _orchestrator_context_config(config: WorkflowConfig) -> dict[str, Any]:
-    raw = config.raw.get("orchestrator")
+def _prompt_context_config(config: WorkflowConfig) -> dict[str, Any]:
+    raw = config.raw.get("prompt")
     if not isinstance(raw, dict):
         return {}
     context = raw.get("context") or raw.get("prompt-context") or {}

@@ -32,12 +32,10 @@ workflow: code
 schema-version: 1
 ```
 
-Supported bundled workflow names are `code`, `change-delivery`, `release`, and
-`triage`.
+Supported bundled workflow name: `code`.
 
-Policy templates may be named `code`, `change-delivery`, `release`, or
-`triage`; the default generated contract is `code`. All bundled templates run
-through the same Sprints workflow implementation.
+The bundled policy template is `code.md`; the default generated contract is
+`code`. The workflow is step-based: `todo -> code -> review -> merge -> done`.
 
 ## Internal
 

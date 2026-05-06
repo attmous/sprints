@@ -1,4 +1,4 @@
-"""Prompt variable builders for actors and deterministic actions."""
+"""Prompt variable builders for actor turns."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ from typing import Any
 
 from sprints.core.config import WorkflowConfig
 from sprints.workflows.state_io import WorkflowState
-from sprints.workflows.entry_lanes import lane_mapping
 from sprints.workflows.prompt_context import (
     compact_lane_for_prompt,
     compact_value,
     compact_workflow_state,
-    orchestrator_prompt_budget,
+    prompt_budget,
 )
+from sprints.workflows.step_labels import lane_step
 from sprints.workflows.surface_workpad import render_workpad
 
 _PROMPT_INPUT_EXCLUDE_KEYS = {
@@ -37,9 +37,9 @@ def actor_variables(
     lane: dict[str, Any],
     inputs: dict[str, Any],
 ) -> dict[str, Any]:
-    actor_outputs = lane_mapping(lane, "actor_outputs")
-    budget = orchestrator_prompt_budget(config)
+    budget = prompt_budget(config)
     lane_id = str(lane.get("lane_id") or "").strip()
+    step_context = actor_step(config=config, lane=lane, inputs=inputs)
     context = actor_prompt_context(
         config=config,
         lane=lane,
@@ -49,6 +49,7 @@ def actor_variables(
     return {
         **_compact_actor_inputs(inputs=inputs, budget=budget),
         **context,
+        "step": step_context,
         "workflow": compact_workflow_state(
             state=state,
             ready_lane_ids={lane_id} if lane_id else set(),
@@ -64,12 +65,6 @@ def actor_variables(
         "issue": lane.get("issue") or {},
         "workspace": _workspace_context(config=config, lane=lane),
         "repository": config.raw.get("repository") or {},
-        "implementation": _compact_actor_output_alias(
-            actor_outputs.get("implementer"), budget=budget
-        ),
-        "review": _compact_actor_output_alias(
-            actor_outputs.get("reviewer"), budget=budget
-        ),
         "review_feedback": compact_value(
             _review_feedback(lane=lane, inputs=inputs), budget=budget
         ),
@@ -84,17 +79,15 @@ def actor_dispatch_inputs(
     actor_name: str,
     inputs: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build durable actor dispatch inputs with explicit mode/context fields."""
+    """Build durable actor dispatch inputs with explicit step/context fields."""
     inputs = dict(inputs or {})
+    step = str(
+        inputs.get("step") or inputs.get("mode") or lane.get("step") or ""
+    ).strip()
     return {
         **inputs,
-        "mode": actor_mode(lane=lane, actor_name=actor_name, inputs=inputs),
-        "board_state": _input_or_lane_value(
-            inputs=inputs,
-            lane=lane,
-            key="board_state",
-            fallback_keys=("board_state", "tracker.board_state"),
-        ),
+        "step": step,
+        "mode": step,
         "review_signals": _input_or_lane_mapping(
             inputs=inputs,
             lane=lane,
@@ -125,16 +118,12 @@ def actor_prompt_context(
 ) -> dict[str, Any]:
     """Compact explicit context keys actors can rely on in prompts."""
     inputs = dict(inputs or {})
-    budget = budget or orchestrator_prompt_budget(config)
+    budget = budget or prompt_budget(config)
+    step = actor_step(config=config, lane=lane, inputs=inputs)
     return {
-        "mode": actor_mode(lane=lane, actor_name=None, inputs=inputs),
+        "step": step,
+        "mode": step,
         "attempt": int(inputs.get("attempt") or lane.get("attempt") or 1),
-        "board_state": _input_or_lane_value(
-            inputs=inputs,
-            lane=lane,
-            key="board_state",
-            fallback_keys=("board_state", "tracker.board_state"),
-        ),
         "review_signals": compact_value(
             _input_or_lane_mapping(
                 inputs=inputs,
@@ -170,105 +159,31 @@ def _workspace_context(*, config: WorkflowConfig, lane: dict[str, Any]) -> dict[
     }
 
 
-def actor_mode(
+def actor_step(
     *,
+    config: WorkflowConfig,
     lane: dict[str, Any],
-    actor_name: str | None,
     inputs: dict[str, Any],
 ) -> str:
-    """Resolve actor mode from explicit inputs, then lane metadata."""
-    inputs = dict(inputs or {})
-    for value in (
-        inputs.get("mode"),
-        inputs.get("actor_mode"),
-        lane.get("mode"),
-        lane.get("actor_mode"),
-    ):
+    for value in (inputs.get("step"), inputs.get("mode"), lane.get("step")):
         text = str(value or "").strip().lower()
         if text:
             return text
-    stored_mode = _runtime_actor_mode(lane, actor_name=actor_name)
-    if stored_mode:
-        return stored_mode
-    actor = str(actor_name or lane.get("actor") or "").strip().lower()
-    if actor == "reviewer":
-        return "review"
-    if actor == "implementer":
-        return "implement"
-    return ""
-
-
-def action_variables(
-    *,
-    config: WorkflowConfig,
-    state: WorkflowState,
-    lane: dict[str, Any],
-    inputs: dict[str, Any],
-) -> dict[str, Any]:
-    actor_outputs = lane_mapping(lane, "actor_outputs")
-    budget = orchestrator_prompt_budget(config)
-    lane_id = str(lane.get("lane_id") or "").strip()
-    context = actor_prompt_context(
-        config=config,
-        lane=lane,
-        inputs=inputs,
-        budget=budget,
-    )
-    return {
-        **inputs,
-        **{key: value for key, value in context.items() if key not in inputs},
-        "workflow": compact_workflow_state(
-            state=state,
-            ready_lane_ids={lane_id} if lane_id else set(),
-            budget=budget,
-        ),
-        "lane": compact_lane_for_prompt(
-            lane=lane,
-            lane_id=lane_id,
-            budget=budget,
-            detailed=True,
-        ),
-        "workflow_root": str(config.workflow_root),
-        "config": config.raw,
-        "issue": lane.get("issue") or {},
-        "actor_outputs": compact_value(actor_outputs, budget=budget),
-        "stage_outputs": compact_value(
-            lane_mapping(lane, "stage_outputs"), budget=budget
-        ),
-        "action_results": compact_value(
-            lane_mapping(lane, "action_results"), budget=budget
-        ),
-        "implementation": _compact_actor_output_alias(
-            actor_outputs.get("implementer"), budget=budget
-        ),
-        "review": _compact_actor_output_alias(
-            actor_outputs.get("reviewer"), budget=budget
-        ),
-        "review_feedback": compact_value(
-            _review_feedback(lane=lane, inputs=inputs), budget=budget
-        ),
-        "pull_request": lane.get("pull_request") or {},
-        "retry": _retry_context(lane=lane, inputs=inputs, budget=budget),
-    }
+    return lane_step(config=config, lane=lane)
 
 
 def _review_feedback(*, lane: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
-    actor_outputs = lane_mapping(lane, "actor_outputs")
-    review = inputs.get("review")
-    if not isinstance(review, dict):
-        stored_review = actor_outputs.get("reviewer")
-        review = stored_review if isinstance(stored_review, dict) else {}
+    review = lane.get("review_signals")
+    review = review if isinstance(review, dict) else {}
     retry = inputs.get("retry") if isinstance(inputs.get("retry"), dict) else {}
     feedback = {
         "review": review,
         "required_fixes": inputs.get("required_fixes")
-        or review.get("required_fixes")
+        or review.get("required_changes")
         or retry.get("required_fixes"),
-        "findings": inputs.get("findings")
-        or review.get("findings")
-        or retry.get("findings"),
+        "findings": inputs.get("findings") or review.get("comments") or retry.get("findings"),
         "verification_gaps": inputs.get("verification_gaps")
-        or review.get("verification_gaps")
+        or review.get("checks")
         or retry.get("verification_gaps"),
         "feedback": inputs.get("feedback") or retry.get("reason"),
     }
@@ -282,34 +197,6 @@ def _compact_actor_inputs(*, inputs: dict[str, Any], budget: Any) -> dict[str, A
         str(key): compact_value(value, budget=budget)
         for key, value in dict(inputs or {}).items()
         if str(key).lower() not in _PROMPT_INPUT_EXCLUDE_KEYS
-    }
-
-
-def _compact_actor_output_alias(value: Any, *, budget: Any) -> dict[str, Any]:
-    output = value if isinstance(value, dict) else {}
-    keep = (
-        "status",
-        "summary",
-        "branch",
-        "branch_name",
-        "pull_request",
-        "pr",
-        "files_changed",
-        "commits",
-        "verification",
-        "findings",
-        "required_fixes",
-        "verification_gaps",
-        "risks",
-        "blockers",
-        "artifacts",
-        "thread_id",
-        "turn_id",
-    )
-    return {
-        key: compact_value(output.get(key), budget=budget)
-        for key in keep
-        if output.get(key) not in (None, "", [], {})
     }
 
 
@@ -399,44 +286,3 @@ def _lane_value(lane: dict[str, Any], key: str) -> Any:
             return None
         value = value.get(part)
     return value
-
-
-def _runtime_actor_mode(lane: dict[str, Any], *, actor_name: str | None = None) -> str:
-    actor = str(actor_name or "").strip().lower()
-    session = (
-        lane.get("runtime_session")
-        if isinstance(lane.get("runtime_session"), dict)
-        else {}
-    )
-    runtime = session.get("runtime") if isinstance(session.get("runtime"), dict) else {}
-    dispatch = (
-        lane.get("actor_dispatch")
-        if isinstance(lane.get("actor_dispatch"), dict)
-        else {}
-    )
-    dispatch_runtime = (
-        dispatch.get("runtime") if isinstance(dispatch.get("runtime"), dict) else {}
-    )
-    for candidate, runtime_meta in (
-        (session, runtime),
-        (dispatch, dispatch_runtime),
-    ):
-        if actor and str(candidate.get("actor") or "").strip().lower() not in {
-            "",
-            actor,
-        }:
-            continue
-        mode = (
-            str(
-                candidate.get("actor_mode")
-                or candidate.get("mode")
-                or runtime_meta.get("actor_mode")
-                or runtime_meta.get("mode")
-                or ""
-            )
-            .strip()
-            .lower()
-        )
-        if mode:
-            return mode
-    return ""

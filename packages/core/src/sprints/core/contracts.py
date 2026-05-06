@@ -47,7 +47,6 @@ class ActorPolicy:
 
 @dataclass(frozen=True)
 class WorkflowPolicy:
-    orchestrator: str | None = None
     actors: dict[str, ActorPolicy] = field(default_factory=dict)
     workflow: str | None = None
 
@@ -244,21 +243,20 @@ def parse_workflow_policy(markdown_body: str) -> WorkflowPolicy:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
         sections.append((match.group(1).strip(), body[start:end].strip()))
     workflow: str | None = None
-    orchestrator: str | None = None
     actors: dict[str, ActorPolicy] = {}
     for title, section_body in sections:
         if title == "Workflow Policy":
             workflow = section_body
-        elif title == "Orchestrator Policy":
-            orchestrator = section_body
         elif title.startswith("Actor:"):
             name = title.split(":", 1)[1].strip()
             if not name:
                 raise WorkflowPolicyError("actor policy heading is missing a name")
             actors[name] = ActorPolicy(name=name, body=section_body)
+    if not workflow:
+        raise WorkflowPolicyError("missing # Workflow Policy section")
     if not actors:
         raise WorkflowPolicyError("missing # Actor: <name> policy sections")
-    return WorkflowPolicy(workflow=workflow, orchestrator=orchestrator, actors=actors)
+    return WorkflowPolicy(workflow=workflow, actors=actors)
 
 
 def _repo_workflow_candidates(repo_root: Path) -> list[Path]:

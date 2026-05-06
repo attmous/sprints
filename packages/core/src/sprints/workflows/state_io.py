@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from sprints.engine import EngineStore
-from sprints.core.config import WorkflowConfig, WorkflowConfigError
+from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import load_workflow_contract
 from sprints.core.paths import runtime_paths
 from sprints.workflows.entry_lanes import (
@@ -40,7 +40,6 @@ class WorkflowState:
     workflow: str = ""
     status: str = "idle"
     lanes: dict[str, dict[str, Any]] = field(default_factory=dict)
-    orchestrator_decisions: list[dict[str, Any]] = field(default_factory=list)
     idle_reason: str | None = None
 
     @classmethod
@@ -237,17 +236,6 @@ def validate_state(config: WorkflowConfig, state: WorkflowState) -> None:
         if stage_name not in config.stages:
             raise RuntimeError(
                 f"lane {lane.get('lane_id')} references unknown stage: {stage_name}"
-            )
-        validate_stage_gates(config, stage_name)
-
-
-def validate_stage_gates(config: WorkflowConfig, stage_name: str) -> None:
-    stage = config.stages[stage_name]
-    for gate_name in stage.gates:
-        gate = config.gates[gate_name]
-        if gate.type != "orchestrator-evaluated":
-            raise WorkflowConfigError(
-                f"unsupported gate type for {gate_name}: {gate.type}"
             )
 
 

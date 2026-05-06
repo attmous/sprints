@@ -342,7 +342,7 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     configure_runtime_cmd.add_argument(
         "--role",
         required=True,
-        help="Role to bind, such as orchestrator, implementer, reviewer, or all.",
+        help="Role to bind, such as coder or all.",
     )
     configure_runtime_cmd.add_argument(
         "--runtime-name",
@@ -558,7 +558,7 @@ def configure_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentP
 
     daemon_cmd = sub.add_parser(
         "daemon",
-        help="Run and manage the workflow orchestrator daemon.",
+        help="Run and manage the workflow tick daemon.",
     )
     daemon_sub = daemon_cmd.add_subparsers(dest="daemon_command")
     daemon_sub.required = True

@@ -180,23 +180,6 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
     workflow_name = _workflow_name(workflow_root)
     if not workflow_name:
         return []
-    if workflow_name != "change-delivery":
-        scheduler = _engine_scheduler(workflow_root, workflow_name)
-        return [
-            {
-                "lane_id": row.get("issue_id"),
-                "state": row.get("state") or row.get("worker_status") or "running",
-                "workflow_state": row.get("state")
-                or row.get("worker_status")
-                or "running",
-                "issue_identifier": row.get("identifier") or row.get("issue_id"),
-                "lane_status": row.get("worker_status") or "running",
-                "kind": "running",
-            }
-            for row in (scheduler.get("running") or [])
-            if isinstance(row, dict)
-        ]
-
     config = _workflow_config(workflow_root)
     if config is None:
         return []
@@ -250,102 +233,68 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
     workflow_name = _workflow_name(workflow_root)
     if not workflow_name:
         return {}
-    if workflow_name == "change-delivery":
-        config = _workflow_config(workflow_root)
-        if config is None:
-            return {}
-        scheduler_payload = _engine_scheduler(workflow_root, "change-delivery")
-        retry_wakeup = EngineStore(
-            db_path=runtime_paths(workflow_root)["db_path"],
-            workflow="change-delivery",
-        ).retry_wakeup()
-        totals = scheduler_payload.get("runtime_totals") or {}
-        runtime_sessions = _runtime_session_entries(scheduler_payload)
-        latest_runs = _engine_runs(workflow_root, "change-delivery")
-        projected = project_engine_first_lanes(
-            config=config,
-            state=_workflow_state_payload(workflow_root, config.workflow_name),
-        )
-        active_entries = [
-            lane for lane in projected.values() if not _lane_is_terminal(lane)
-        ]
-        running_count = len(
-            [
-                lane
-                for lane in active_entries
-                if str(lane.get("status") or "") == "running"
-            ]
-        )
-        retry_count = len(
-            [
-                lane
-                for lane in active_entries
-                if str(lane.get("status") or "") == "retry_queued"
-            ]
-        )
-        attention_count = len(
-            [
-                lane
-                for lane in active_entries
-                if str(lane.get("status") or "") == "operator_attention"
-            ]
-        )
-        decision_ready_count = len(
-            [
-                lane
-                for lane in active_entries
-                if str(lane.get("status") or "") in {"claimed", "waiting"}
-            ]
-        )
-        return {
-            "workflow": "change-delivery",
-            "health": None,
-            "updated_at": scheduler_payload.get("updated_at"),
-            "active_lane_count": len(active_entries),
-            "decision_ready_count": decision_ready_count,
-            "running_count": running_count,
-            "retry_count": retry_count,
-            "retry_wakeup": retry_wakeup,
-            "operator_attention_count": attention_count,
-            "canceling_count": len(
-                [
-                    entry
-                    for entry in runtime_sessions
-                    if entry.get("status") == "canceling"
-                ]
-            ),
-            "selected_issue": None,
-            "runtime_sessions": runtime_sessions,
-            "latest_runs": latest_runs,
-            "total_tokens": int(totals.get("total_tokens") or 0),
-            "rate_limits": totals.get("rate_limits"),
-            "active_lanes": active_entries,
-            "operator_attention_lanes": [
-                lane
-                for lane in active_entries
-                if lane.get("status") == "operator_attention"
-            ],
-            "retry_lanes": [
-                lane for lane in active_entries if lane.get("status") == "retry_queued"
-            ],
-        }
+    config = _workflow_config(workflow_root)
+    if config is None:
+        return {}
     scheduler_payload = _engine_scheduler(workflow_root, workflow_name)
     retry_wakeup = EngineStore(
         db_path=runtime_paths(workflow_root)["db_path"],
         workflow=workflow_name,
     ).retry_wakeup()
     totals = scheduler_payload.get("runtime_totals") or {}
-    running = scheduler_payload.get("running") or []
-    retry_queue = scheduler_payload.get("retry_queue") or []
+    runtime_sessions = _runtime_session_entries(scheduler_payload)
+    projected = project_engine_first_lanes(
+        config=config,
+        state=_workflow_state_payload(workflow_root, config.workflow_name),
+    )
+    active_entries = [lane for lane in projected.values() if not _lane_is_terminal(lane)]
+    running_count = len(
+        [lane for lane in active_entries if str(lane.get("status") or "") == "running"]
+    )
+    retry_count = len(
+        [
+            lane
+            for lane in active_entries
+            if str(lane.get("status") or "") == "retry_queued"
+        ]
+    )
+    attention_count = len(
+        [
+            lane
+            for lane in active_entries
+            if str(lane.get("status") or "") == "operator_attention"
+        ]
+    )
+    step_ready_count = len(
+        [
+            lane
+            for lane in active_entries
+            if str(lane.get("status") or "") in {"claimed", "waiting"}
+        ]
+    )
     return {
         "workflow": workflow_name,
         "health": None,
         "updated_at": scheduler_payload.get("updated_at"),
-        "running_count": len(running),
-        "retry_count": len(retry_queue),
+        "active_lane_count": len(active_entries),
+        "decision_ready_count": step_ready_count,
+        "running_count": running_count,
+        "retry_count": retry_count,
         "retry_wakeup": retry_wakeup,
+        "operator_attention_count": attention_count,
+        "canceling_count": len(
+            [entry for entry in runtime_sessions if entry.get("status") == "canceling"]
+        ),
         "selected_issue": None,
+        "runtime_sessions": runtime_sessions,
         "latest_runs": _engine_runs(workflow_root, workflow_name),
         "total_tokens": int(totals.get("total_tokens") or 0),
         "rate_limits": totals.get("rate_limits"),
+        "active_lanes": active_entries,
+        "operator_attention_lanes": [
+            lane for lane in active_entries if lane.get("status") == "operator_attention"
+        ],
+        "retry_lanes": [
+            lane for lane in active_entries if lane.get("status") == "retry_queued"
+        ],
     }

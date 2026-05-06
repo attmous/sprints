@@ -13,7 +13,7 @@ from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import WorkflowContractError, load_workflow_contract
 
 DEFAULT_WORKFLOW_NAME = "code"
-SUPPORTED_WORKFLOW_NAMES = ("code", "change-delivery", "release", "triage")
+SUPPORTED_WORKFLOW_NAMES = ("code",)
 NAME = DEFAULT_WORKFLOW_NAME
 SUPPORTED_SCHEMA_VERSIONS = (1,)
 CONFIG_SCHEMA_PATH = Path(__file__).with_name("schema.yaml")

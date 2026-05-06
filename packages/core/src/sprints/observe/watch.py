@@ -27,8 +27,7 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
     t = Table(title="Active lanes", expand=True)
     t.add_column("Lane")
     t.add_column("Issue")
-    t.add_column("Board")
-    t.add_column("Stage")
+    t.add_column("Step")
     t.add_column("Status")
     t.add_column("Actor")
     t.add_column("PR")
@@ -36,12 +35,11 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
     t.add_column("Retry")
     t.add_column("Attention")
     if not lanes:
-        t.add_row("(no active lanes)", "", "", "", "", "", "", "", "", "")
+        t.add_row("(no active lanes)", "", "", "", "", "", "", "", "")
         return t
     for lane in lanes:
         if lane.get("_stale"):
             t.add_row(
-                _esc("[stale]"),
                 _esc("[stale]"),
                 _esc("[stale]"),
                 _esc("[stale]"),
@@ -56,8 +54,7 @@ def _lanes_table(lanes: list[dict[str, Any]]) -> Table:
         t.add_row(
             _short(lane.get("lane_id"), 18),
             _short(lane.get("issue_identifier") or lane.get("issue_number"), 14),
-            _short(lane.get("board_state"), 12),
-            _short(lane.get("stage") or lane.get("workflow_state"), 12),
+            _short(lane.get("step") or lane.get("workflow_state"), 12),
             _short(lane.get("status") or lane.get("lane_status"), 18),
             _short(_actor_label(lane), 18),
             _short(_pull_request_label(lane), 16),
@@ -149,8 +146,6 @@ def _review_label(lane: Mapping[str, Any]) -> str:
     required = lane.get("review_required_change_count")
     if required not in (None, "", 0):
         pieces.append(f"fixes={required}")
-    if lane.get("reviewer_actor_running"):
-        pieces.append("reviewer=running")
     if lane.get("merge_signal_seen"):
         pieces.append("merge=seen")
     return " ".join(str(piece) for piece in pieces)
@@ -335,7 +330,7 @@ def cmd_watch(args, parser) -> str:
 # gets stall-terminated. The contract is intentionally minimal: the caller
 # supplies a snapshot, a running-lanes mapping (issue_id -> entry exposing
 # `.runtime` and `.started_at_monotonic`), an event-log path, and an
-# orchestrator that supports `terminate_worker(issue_id, reason=...)` and
+# controller that supports `terminate_worker(issue_id, reason=...)` and
 # `queue_retry(issue_id, error=...)`. Each detected stall produces a
 # `sprints.stall.detected` event, a termination, a
 # `sprints.stall.terminated` event, and a queued retry.
@@ -344,7 +339,7 @@ def reconcile_stalls_tick(
     snapshot,
     running: Mapping[str, Any],
     event_log_path: Path,
-    orchestrator,
+    controller,
     now: float | None = None,
 ) -> list:
     from sprints.observe.stalls import (
@@ -375,7 +370,7 @@ def reconcile_stalls_tick(
                 "threshold_seconds": verdict.threshold_seconds,
             }
         )
-        orchestrator.terminate_worker(verdict.issue_id, reason="stall")
+        controller.terminate_worker(verdict.issue_id, reason="stall")
         append_event({"type": SPRINTS_STALL_TERMINATED, "issue_id": verdict.issue_id})
-        orchestrator.queue_retry(verdict.issue_id, error="stall_timeout")
+        controller.queue_retry(verdict.issue_id, error="stall_timeout")
     return verdicts

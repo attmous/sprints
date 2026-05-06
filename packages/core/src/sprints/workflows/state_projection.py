@@ -147,7 +147,6 @@ def project_engine_lane(
         or state_entry.get("issue_identifier")
         or lane_id,
         "issue_title": work_item.get("title") or state_entry.get("issue_title"),
-        "board_state": tracker.get("board_state") or state_entry.get("board_state"),
         "tracker": tracker or state_entry.get("tracker"),
         "branch": metadata.get("branch") or state_summary.get("branch"),
         "pull_request": pull_request,
@@ -160,7 +159,6 @@ def project_engine_lane(
         "review_signals": review_signals,
         "merge_signal": merge_signal,
         "review_required_change_count": _required_change_count(review_signals),
-        "reviewer_actor_running": _reviewer_actor_running(review_signals),
         "merge_signal_seen": _merge_signal_seen(
             review_signals=review_signals, merge_signal=merge_signal
         ),
@@ -284,7 +282,6 @@ def project_state_lane(
         or dispatch_runtime.get("actor_mode")
         or dispatch_runtime.get("mode"),
         "attempt": lane.get("attempt"),
-        "board_state": tracker.get("board_state") or lane.get("board_state"),
         "tracker": tracker or None,
         "branch": lane.get("branch"),
         "pull_request": pull_request or None,
@@ -293,7 +290,6 @@ def project_state_lane(
         "review_signals": review_signals or None,
         "merge_signal": merge_signal or None,
         "review_required_change_count": _required_change_count(review_signals),
-        "reviewer_actor_running": _reviewer_actor_running(review_signals),
         "merge_signal_seen": _merge_signal_seen(
             review_signals=review_signals, merge_signal=merge_signal
         ),
@@ -349,12 +345,6 @@ def _required_change_count(review_signals: Any) -> int:
     if not isinstance(review_signals, dict):
         return 0
     return len(review_signals.get("required_changes") or [])
-
-
-def _reviewer_actor_running(review_signals: Any) -> Any:
-    if not isinstance(review_signals, dict):
-        return None
-    return review_signals.get("reviewer_actor_running")
 
 
 def _merge_signal_seen(*, review_signals: Any, merge_signal: Any) -> Any:

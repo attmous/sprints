@@ -10,18 +10,14 @@ from sprints.workflows.lane_state import (
     blocker_reason,
     clear_engine_retry,
     first_text,
-    lane_list,
     lane_mapping,
     lane_stage,
     normalize_pull_request,
     now_iso,
-    release_lane_lease,
     set_lane_operator_attention,
     set_lane_status,
 )
-from sprints.workflows.surface_notifications import notify_review_changes_requested
 from sprints.workflows.surface_pull_request import pull_request_url
-from sprints.workflows.state_retries import RetryRequest, queue_lane_retry
 
 
 def record_actor_output(
@@ -32,8 +28,6 @@ def record_actor_output(
     output: dict[str, Any],
 ) -> None:
     actor_outputs = lane_mapping(lane, "actor_outputs")
-    if actor_name == "implementer":
-        _clear_superseded_reviewer_changes(lane=lane, output=output)
     actor_outputs[actor_name] = output
     lane["last_actor_output"] = output
     lane["last_progress_at"] = now_iso()
@@ -86,82 +80,14 @@ def apply_actor_output_status(
             artifacts={"actor": actor_name, "output": output},
         )
         return
-    if actor_name == "implementer":
-        mode = _actor_output_mode(output)
-        if mode == "land" or status in {"merged", "waiting"}:
-            _apply_land_output_status(
-                config=config,
-                lane=lane,
-                actor_name=actor_name,
-                output=output,
-                status=status,
-                blockers=blockers,
-            )
-            return
-        if status not in {"done", "blocked", "failed"}:
-            set_lane_operator_attention(
-                config=config,
-                lane=lane,
-                reason="actor_output_contract_failed",
-                message=f"implementer returned unsupported status {status!r}",
-                artifacts={"actor": actor_name, "output": output},
-            )
-            return
-        if status == "done":
-            failure = delivery_contract_failure(lane)
-            if failure:
-                set_lane_operator_attention(
-                    config=config,
-                    lane=lane,
-                    reason="actor_output_contract_failed",
-                    message=failure,
-                    artifacts=contract_artifacts(lane),
-                )
-                return
-    if actor_name == "reviewer" and status not in {
-        "approved",
-        "blocked",
-        "failed",
-        "changes_requested",
-        "needs_changes",
-    }:
-        set_lane_operator_attention(
+    if actor_name == "coder":
+        _apply_coder_output_status(
             config=config,
             lane=lane,
-            reason="actor_output_contract_failed",
-            message=f"reviewer returned unsupported status {status!r}",
-            artifacts={"actor": actor_name, "output": output},
-        )
-        return
-    if actor_name == "reviewer" and status in {"changes_requested", "needs_changes"}:
-        required_fixes = output.get("required_fixes")
-        if not isinstance(required_fixes, list) or not required_fixes:
-            set_lane_operator_attention(
-                config=config,
-                lane=lane,
-                reason="actor_output_contract_failed",
-                message="review changes require non-empty required_fixes",
-                artifacts={"actor": actor_name, "output": output},
-            )
-            return
-        notify_review_changes_requested(config=config, lane=lane, output=output)
-    if actor_name not in {"implementer", "reviewer"} and status in {
-        "merged",
-        "done",
-        "complete",
-        "completed",
-    }:
-        release_lane_lease(
-            config=config,
-            lane=lane,
-            reason=str(output.get("summary") or f"{actor_name} completed lane"),
-        )
-        set_lane_status(
-            config=config,
-            lane=lane,
-            status="complete",
-            actor=None,
-            reason=f"{actor_name} completed lane",
+            actor_name=actor_name,
+            output=output,
+            status=status,
+            blockers=blockers,
         )
         return
     if status in {"blocked", "failed"} or blockers:
@@ -192,20 +118,6 @@ def apply_actor_output_status(
     )
 
 
-def delivery_contract_failure(lane: dict[str, Any]) -> str:
-    implementation = lane_mapping(lane, "actor_outputs").get("implementer")
-    if not isinstance(implementation, dict):
-        return "delivery cannot advance before implementer output exists"
-    if str(implementation.get("status") or "").strip().lower() != "done":
-        return "delivery requires implementer status `done`"
-    if not pull_request_url(lane):
-        return "delivery requires pull_request.url"
-    verification = implementation.get("verification")
-    if not isinstance(verification, list) or not verification:
-        return "delivery requires non-empty verification evidence"
-    return ""
-
-
 def contract_artifacts(lane: dict[str, Any]) -> dict[str, Any]:
     return {
         "stage": lane.get("stage"),
@@ -216,7 +128,7 @@ def contract_artifacts(lane: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _apply_land_output_status(
+def _apply_coder_output_status(
     *,
     config: WorkflowConfig,
     lane: dict[str, Any],
@@ -225,40 +137,14 @@ def _apply_land_output_status(
     status: str,
     blockers: list[Any],
 ) -> None:
-    if status not in {"merged", "waiting", "blocked", "failed"}:
+    step = str(output.get("step") or lane.get("step") or "").strip().lower()
+    if status not in {"done", "waiting", "blocked", "failed"}:
         set_lane_operator_attention(
             config=config,
             lane=lane,
             reason="actor_output_contract_failed",
-            message=f"land mode returned unsupported status {status!r}",
+            message=f"coder returned unsupported status {status!r}",
             artifacts={"actor": actor_name, "output": output},
-        )
-        return
-    if status == "merged":
-        failure = _land_contract_failure(output)
-        if failure:
-            set_lane_operator_attention(
-                config=config,
-                lane=lane,
-                reason="actor_output_contract_failed",
-                message=failure,
-                artifacts=contract_artifacts(lane),
-            )
-            return
-    if status == "waiting":
-        queue_lane_retry(
-            config=config,
-            lane=lane,
-            request=RetryRequest(
-                stage=lane_stage(lane),
-                lane_id=str(lane.get("lane_id") or ""),
-                target=actor_name,
-                reason=str(output.get("summary") or "land mode waiting"),
-                inputs={
-                    "mode": "land",
-                    "landing": output,
-                },
-            ),
         )
         return
     if status in {"blocked", "failed"} or blockers:
@@ -266,9 +152,7 @@ def _apply_land_output_status(
             config=config,
             lane=lane,
             reason=blocker_reason(output) or status or "actor_blocked",
-            message=str(
-                output.get("summary") or f"{actor_name} returned {status or 'blockers'}"
-            ),
+            message=str(output.get("summary") or f"{actor_name} returned {status}"),
             artifacts={
                 "actor": actor_name,
                 "blockers": blockers,
@@ -280,61 +164,41 @@ def _apply_land_output_status(
             },
         )
         return
+    if step == "code" and status == "done":
+        if not pull_request_url(lane):
+            set_lane_operator_attention(
+                config=config,
+                lane=lane,
+                reason="actor_output_contract_failed",
+                message="code step requires pull_request.url before review",
+                artifacts=contract_artifacts(lane),
+            )
+            return
+        verification = output.get("verification")
+        if not isinstance(verification, list) or not verification:
+            set_lane_operator_attention(
+                config=config,
+                lane=lane,
+                reason="actor_output_contract_failed",
+                message="code step requires non-empty verification evidence",
+                artifacts=contract_artifacts(lane),
+            )
+            return
+    if step == "merge" and status == "done":
+        pull_request = output.get("pull_request")
+        if not isinstance(pull_request, dict) or not pull_request.get("merged"):
+            set_lane_operator_attention(
+                config=config,
+                lane=lane,
+                reason="actor_output_contract_failed",
+                message="merge step requires merged pull request evidence",
+                artifacts=contract_artifacts(lane),
+            )
+            return
     set_lane_status(
         config=config,
         lane=lane,
         status="waiting",
         actor=None,
-        reason="land mode returned output",
+        reason=f"{actor_name} returned {status} for step {step}",
     )
-
-
-def _clear_superseded_reviewer_changes(
-    *, lane: dict[str, Any], output: dict[str, Any]
-) -> None:
-    if str(output.get("status") or "").strip().lower() != "done":
-        return
-    actor_outputs = lane_mapping(lane, "actor_outputs")
-    review = actor_outputs.get("reviewer")
-    if not isinstance(review, dict):
-        return
-    if str(review.get("status") or "").strip().lower() not in {
-        "changes_requested",
-        "needs_changes",
-    }:
-        return
-    superseded = lane_list(lane, "superseded_actor_outputs")
-    superseded.append(
-        {
-            "actor": "reviewer",
-            "stage": "review",
-            "superseded_by": "implementer",
-            "superseded_at": now_iso(),
-            "output": review,
-        }
-    )
-    actor_outputs.pop("reviewer", None)
-
-
-def _actor_output_mode(output: dict[str, Any]) -> str:
-    return str(output.get("mode") or "").strip().lower()
-
-
-def _land_contract_failure(output: dict[str, Any]) -> str:
-    pull_request = output.get("pull_request")
-    if not isinstance(pull_request, dict):
-        return "land output requires pull_request object"
-    state = str(pull_request.get("state") or "").strip().lower()
-    if not pull_request.get("merged") and state != "merged":
-        return "land output requires merged pull request evidence"
-    cleanup = output.get("cleanup")
-    if not isinstance(cleanup, dict):
-        return "land output requires cleanup evidence"
-    added = {
-        str(label).strip().lower()
-        for label in cleanup.get("added_labels") or []
-        if str(label).strip()
-    }
-    if "done" not in added:
-        return "land output requires done label cleanup evidence"
-    return ""

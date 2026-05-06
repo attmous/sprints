@@ -5,7 +5,7 @@ description: Push a lane branch and create or update its pull request.
 
 # Push
 
-Use this after a lane commit exists and the implementer must publish the change
+Use this after a lane commit exists and the coder must publish the change
 for review. This skill owns pull request creation or update.
 
 ## Rules
@@ -32,7 +32,7 @@ for review. This skill owns pull request creation or update.
 
 ## Done Output Fields
 
-Include these fields in the implementer JSON:
+Include these fields in the coder JSON:
 
 ```json
 {

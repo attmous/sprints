@@ -21,7 +21,7 @@ from sprints.workflows.actor_runtime import (
 from sprints.core.config import WorkflowConfig, WorkflowConfigError
 from sprints.core.contracts import WorkflowPolicy
 from sprints.core.loader import load_workflow_policy
-from sprints.workflows.route_orchestrator import build_actor_prompt
+from sprints.workflows.actor_prompts import build_actor_prompt
 from sprints.core.paths import runtime_paths
 from sprints.workflows.state_io import (
     WorkflowState,
@@ -123,7 +123,8 @@ def run_stage_actor(
         actor_name=actor_name,
         inputs=lane_retry_inputs(lane=lane, inputs=inputs),
     )
-    actor_mode = str(inputs.get("mode") or "").strip()
+    actor_step = str(inputs.get("step") or inputs.get("mode") or "").strip()
+    actor_mode = str(inputs.get("mode") or actor_step).strip()
     worktree = ensure_lane_worktree(config=config, lane=lane)
     runtime_plan = actor_runtime_plan(
         config=config,
@@ -152,7 +153,7 @@ def run_stage_actor(
         dispatch_mode="inline",
         prompt=prompt,
         inputs=inputs,
-        extra={"worktree": str(worktree), "actor_mode": actor_mode},
+        extra={"worktree": str(worktree), "step": actor_step, "actor_mode": actor_mode},
     )
     record_actor_dispatch_planned(
         config=config,
@@ -321,6 +322,19 @@ def run_stage_actor(
     apply_actor_output_status(
         config=config, lane=lane, actor_name=actor_name, output=parsed
     )
+    if (
+        config.workflow_name == "code"
+        and actor_name == "coder"
+        and str(lane.get("status") or "") != "operator_attention"
+    ):
+        from sprints.workflows.step_runner import apply_step_after_actor_output
+
+        apply_step_after_actor_output(
+            config=config,
+            state=state,
+            lane=lane,
+            output=parsed,
+        )
     record_actor_runtime_result(
         config=config,
         lane=lane,
@@ -364,7 +378,8 @@ def dispatch_stage_actor_background(
         actor_name=actor_name,
         inputs=lane_retry_inputs(lane=lane, inputs=inputs),
     )
-    actor_mode = str(actor_inputs.get("mode") or "").strip()
+    actor_step = str(actor_inputs.get("step") or actor_inputs.get("mode") or "").strip()
+    actor_mode = str(actor_inputs.get("mode") or actor_step).strip()
     worktree = ensure_lane_worktree(config=config, lane=lane)
     runtime_plan = actor_runtime_plan(
         config=config,
@@ -385,6 +400,7 @@ def dispatch_stage_actor_background(
         extra={
             "worktree": str(worktree),
             "prompt_deferred": True,
+            "step": actor_step,
             "actor_mode": actor_mode,
         },
     )
@@ -557,6 +573,7 @@ def _write_actor_dispatch_file(
         "lane_id": lane_id,
         "stage": stage_name,
         "actor": actor_name,
+        "step": inputs.get("step"),
         "mode": inputs.get("mode"),
         "inputs": inputs,
         "runtime_meta": dict(runtime_meta),
@@ -929,7 +946,7 @@ def _run_actor_runtime_for_worker(
             lane,
             actor_name=actor_name,
             stage_name=stage_name,
-            actor_mode=str(inputs.get("mode") or "").strip(),
+            actor_mode=str(inputs.get("mode") or inputs.get("step") or "").strip(),
         ),
     )
     prompt = build_actor_prompt(
@@ -953,6 +970,7 @@ def _run_actor_runtime_for_worker(
     runtime_meta = {
         **dispatch_meta,
         **_runtime_plan_meta(runtime_plan),
+        "step": inputs.get("step"),
         "actor_mode": inputs.get("mode"),
         **_runtime_result_meta(runtime_result),
     }
@@ -1011,6 +1029,19 @@ def _finalize_background_actor_success(
         apply_actor_output_status(
             config=config, lane=lane, actor_name=actor_name, output=output
         )
+        if (
+            config.workflow_name == "code"
+            and actor_name == "coder"
+            and str(lane.get("status") or "") != "operator_attention"
+        ):
+            from sprints.workflows.step_runner import apply_step_after_actor_output
+
+            apply_step_after_actor_output(
+                config=config,
+                state=state,
+                lane=lane,
+                output=output,
+            )
         record_actor_runtime_result(
             config=config,
             lane=lane,
@@ -1106,12 +1137,6 @@ def _actor_output_runtime_status(
         or str(lane.get("status") or "").strip() == "operator_attention"
     ):
         return "blocked"
-    if actor_name == "implementer" and status in {"done", "merged", "waiting"}:
-        return "completed"
-    if actor_name == "reviewer" and status in {
-        "approved",
-        "changes_requested",
-        "needs_changes",
-    }:
+    if actor_name == "coder" and status in {"done", "waiting"}:
         return "completed"
     return "failed" if not status else "completed"

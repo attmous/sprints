@@ -12,9 +12,9 @@ skills/
 |-- commit/    # commit verified lane changes
 |-- push/      # push branch and create/update PR
 |-- review/    # review one lane PR and return required fixes
-`-- land/      # operator/reviewer PR landing support
+`-- land/      # PR landing support
 ```
 
-The default `change-delivery` implementer uses `pull`, `debug`, `commit`, and
-`push`. The default reviewer uses `review`. The `push` skill owns pull request
-creation or update.
+The default `code` coder uses `pull`, `debug`, `commit`, `push`, and `land`.
+The `push` skill owns pull request creation or update. The `land` skill owns the
+merge loop when the lane reaches the `merge` step.

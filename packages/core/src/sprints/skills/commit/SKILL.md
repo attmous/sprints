@@ -5,7 +5,7 @@ description: Create a focused commit for one Sprints lane after verification pas
 
 # Commit
 
-Use this after the implementer has made a lane-scoped change and run focused
+Use this after the coder has made a lane-scoped change and run focused
 verification.
 
 ## Rules

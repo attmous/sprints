@@ -7,7 +7,6 @@ from typing import Any
 
 from sprints.trackers import build_code_host_client, build_tracker_client
 from sprints.workflows import runtime_sessions as sessions
-from sprints.workflows import lane_teardown as teardown_flow
 from sprints.core.config import WorkflowConfig
 from sprints.workflows.lane_state import (
     append_engine_event,
@@ -28,11 +27,10 @@ from sprints.workflows.lane_state import (
     set_lane_operator_attention,
     set_lane_status,
 )
-from sprints.workflows.surface_board_state import BoardState, state_from_labels
-from sprints.workflows.surface_review_state import reconcile_review_signals
+from sprints.workflows.review_signals import reconcile_review_signals
 from sprints.workflows.state_retries import RetryRequest, queue_lane_retry
 from sprints.workflows.runtime_sessions import record_actor_runtime_interrupted
-from sprints.workflows.lane_transitions import teardown_ops
+from sprints.workflows.step_labels import DONE, step_from_labels
 
 
 def reconcile_lanes(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
@@ -40,14 +38,12 @@ def reconcile_lanes(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
     if not active:
         return {"status": "skipped", "reason": "no active lanes"}
     runtime_result = reconcile_runtime_lanes(config=config, lanes=active)
-    cleanup_result = _reconcile_completion_cleanup(config=config, lanes=active)
     tracker_result = _reconcile_tracker_lanes(config=config, lanes=active)
     pr_result = _reconcile_pull_requests(config=config, lanes=active)
     review_result = reconcile_review_signals(config=config, lanes=active)
     return {
         "status": "ok",
         "runtime": runtime_result,
-        "completion_cleanup": cleanup_result,
         "tracker": tracker_result,
         "pull_requests": pr_result,
         "review_signals": review_result,
@@ -215,11 +211,7 @@ def _reconcile_tracker_lanes(
         lane["issue"] = fresh
         refresh_lane_board_metadata(config=config, lane=lane, issue=fresh)
         updated.append(str(lane.get("lane_id") or ""))
-        if (
-            config.is_actor_driven()
-            and state_from_labels(fresh.get("labels") or [], config)
-            == BoardState.DONE.value
-        ):
+        if config.workflow_name == "code" and step_from_labels(fresh.get("labels") or []) == DONE:
             continue
         if not issue_is_still_active(
             config=config, tracker_cfg=tracker_cfg, issue=fresh
@@ -235,16 +227,6 @@ def _reconcile_tracker_lanes(
             )
             released.append(str(lane.get("lane_id") or ""))
     return {"status": "ok", "updated": updated, "released": released}
-
-
-def _reconcile_completion_cleanup(
-    *, config: WorkflowConfig, lanes: list[dict[str, Any]]
-) -> dict[str, Any]:
-    return teardown_flow.reconcile_completion_cleanup(
-        config=config,
-        lanes=lanes,
-        ops=teardown_ops(),
-    )
 
 
 def _reconcile_pull_requests(

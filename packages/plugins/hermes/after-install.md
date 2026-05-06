@@ -45,5 +45,5 @@ Inside Hermes:
 ```text
 /sprints status
 /sprints doctor
-/workflow change-delivery status
+/workflow code status
 ```
