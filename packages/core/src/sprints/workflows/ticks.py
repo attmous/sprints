@@ -153,6 +153,8 @@ def apply_action_result(
 
 
 def tick(config: WorkflowConfig, *, orchestrator_output: str) -> int:
+    if config.is_actor_driven():
+        raise RuntimeError("actor-driven workflow execution is not wired yet")
     return with_state_lock(
         config=config,
         owner_role="workflow-tick",

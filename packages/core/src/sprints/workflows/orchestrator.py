@@ -8,7 +8,7 @@ import json
 import re
 
 from sprints.core.config import WorkflowConfig
-from sprints.core.contracts import ActorPolicy, WorkflowPolicy
+from sprints.core.contracts import ActorPolicy, WorkflowPolicy, WorkflowPolicyError
 from sprints.workflows.prompt_context import (
     APP_SERVER_INPUT_LIMIT_CHARS,
     PromptBuild,
@@ -224,6 +224,8 @@ def build_orchestrator_prompt(
 def _render_orchestrator_prompt(
     *, policy: WorkflowPolicy, payload: dict[str, Any]
 ) -> str:
+    if not policy.orchestrator:
+        raise WorkflowPolicyError("missing # Orchestrator Policy section")
     return (
         "# Orchestrator Policy\n\n"
         f"{policy.orchestrator}\n\n"

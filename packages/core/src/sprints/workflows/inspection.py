@@ -13,6 +13,8 @@ from sprints.workflows.lanes import lane_by_id, lane_summary
 
 def validate_command(config: WorkflowConfig) -> int:
     policy = load_workflow_policy(config.workflow_root)
+    if config.requires_orchestrator_actor() and not policy.orchestrator:
+        raise RuntimeError("missing orchestrator policy section")
     missing = [
         actor
         for stage in config.stages.values()
@@ -44,6 +46,10 @@ def status_command(config: WorkflowConfig) -> int:
     )
     payload = {
         "workflow": config.workflow_name,
+        "orchestration": {
+            "mode": config.orchestration.mode,
+            "actor": config.orchestration.actor,
+        },
         "workflow_root": str(config.workflow_root),
         "state_path": str(config.storage.state_path),
         "audit_log_path": str(config.storage.audit_log_path),
