@@ -39,6 +39,10 @@ concurrency:
 limits:
   max_turns: 20
 
+retry:
+  max-attempts: 6
+  initial-delay-seconds: 0
+
 runtime:
   kind: codex-app-server
   mode: external
@@ -51,6 +55,7 @@ runtime:
   thread_sandbox: workspace-write
   turn_sandbox_policy:
     type: workspaceWrite
+    networkAccess: true
 
 storage:
   state: .sprints/code-state.json
@@ -153,8 +158,8 @@ Execution loop:
 8. Stay in `review` while waiting for human approval or checks. Waiting for
    review is not blocked.
 9. Move to `merging` only when merge authority is clear.
-10. When merging, open and follow `.codex/skills/land/SKILL.md`; do not call
-   merge mechanics outside the land skill.
+10. When merging, follow the bundled `land` skill included in this prompt; do
+   not call merge mechanics outside the land skill.
 11. After successful merge, remove active workflow state labels and add `done`.
 
 Completion bar:

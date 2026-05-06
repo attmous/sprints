@@ -520,6 +520,10 @@ class CodexAppServerRuntime:
         self._turn_sandbox_policy = cfg.get(
             "turn_sandbox_policy", DEFAULT_TURN_SANDBOX_POLICY
         )
+        self._network_access = self._bool_config(
+            cfg.get("network_access", cfg.get("networkAccess")),
+            default=True,
+        )
         self._keep_alive = self._bool_config(
             cfg.get("keep_alive", cfg.get("keep-alive")),
             default=(self._mode == "external"),
@@ -973,14 +977,32 @@ class CodexAppServerRuntime:
         if raw in (None, "", "auto"):
             return None
         if isinstance(raw, dict):
-            return raw
+            policy = dict(raw)
+            policy_type = str(policy.get("type") or "").strip()
+            if policy_type in {"workspaceWrite", "workspace-write"}:
+                policy["writableRoots"] = _dedupe_paths(
+                    [
+                        *[
+                            str(root)
+                            for root in policy.get("writableRoots", [])
+                            if str(root).strip()
+                        ],
+                        *_workspace_write_roots(worktree),
+                    ]
+                )
+                policy.setdefault("networkAccess", self._network_access)
+            return policy
         value = str(raw).strip()
         if value == "danger-full-access":
             return {"type": "dangerFullAccess"}
         if value == "read-only":
             return {"type": "readOnly"}
         if value == "workspace-write":
-            return {"type": "workspaceWrite", "writableRoots": [str(worktree)]}
+            return {
+                "type": "workspaceWrite",
+                "writableRoots": _workspace_write_roots(worktree),
+                "networkAccess": self._network_access,
+            }
         raise CodexAppServerError(
             "codex-app-server turn_sandbox_policy must be one of "
             "['read-only', 'workspace-write', 'danger-full-access'] or a SandboxPolicy object"
@@ -1366,3 +1388,42 @@ class CodexAppServerRuntime:
         )
         self._record_activity()
         return completed.stdout or ""
+
+
+def _workspace_write_roots(worktree: Path) -> list[str]:
+    roots = [str(worktree)]
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(worktree),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-dir",
+                "--git-common-dir",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return _dedupe_paths(roots)
+    roots.extend(line.strip() for line in result.stdout.splitlines() if line.strip())
+    return _dedupe_paths(roots)
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for raw in paths:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        resolved = str(Path(text).expanduser().resolve(strict=False))
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(resolved)
+    return deduped

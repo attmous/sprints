@@ -510,9 +510,13 @@ def issue_is_still_active(
         return board_state in ACTIVE_BOARD_STATES
     if active_states and state not in active_states:
         return False
-    if required_labels and not required_labels.issubset(labels):
-        return False
     if exclude_labels.intersection(labels):
+        return False
+    if config is not None and config.is_actor_driven():
+        claim_labels = _claim_active_labels(config)
+        if claim_labels and claim_labels.intersection(labels):
+            return True
+    if required_labels and not required_labels.issubset(labels):
         return False
     return True
 
@@ -524,6 +528,12 @@ def issue_labels(issue: dict[str, Any]) -> set[str]:
         if text:
             labels.add(text.lower())
     return labels
+
+
+def _claim_active_labels(config: WorkflowConfig) -> set[str]:
+    intake = config.raw.get("intake") if isinstance(config.raw.get("intake"), dict) else {}
+    claim = intake.get("claim") if isinstance(intake.get("claim"), dict) else {}
+    return set(configured_texts(claim, "add_labels", "add-labels"))
 
 
 def configured_texts(config: dict[str, Any], *keys: str) -> list[str]:

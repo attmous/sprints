@@ -32,6 +32,11 @@ def actor_concurrency_usage(
 ) -> dict[str, int]:
     usage: dict[str, int] = {}
     seen: set[tuple[str, str]] = set()
+    lanes_by_id = {
+        str(lane.get("lane_id") or "").strip(): lane
+        for lane in lanes
+        if isinstance(lane, dict) and str(lane.get("lane_id") or "").strip()
+    }
 
     def add(
         *,
@@ -93,9 +98,13 @@ def actor_concurrency_usage(
                 source="lane_actor_dispatch",
             )
 
+    active_engine_run_ids: set[str] = set()
     for engine_session in _engine_store(config).runtime_sessions(limit=500):
-        if not runtime_session_is_running(engine_session):
+        if not _engine_runtime_session_is_active(engine_session):
             continue
+        run_id = str(engine_session.get("run_id") or "").strip()
+        if run_id:
+            active_engine_run_ids.add(run_id)
         metadata = (
             engine_session.get("metadata")
             if isinstance(engine_session.get("metadata"), dict)
@@ -111,11 +120,23 @@ def actor_concurrency_usage(
 
     for run in _engine_store(config).running_runs(mode="actor", limit=500):
         metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
-        add(
+        lane_id = str(metadata.get("lane_id") or "").strip()
+        lane = lanes_by_id.get(lane_id)
+        if lane is not None and not _lane_confirms_actor_run(
+            lane=lane,
             actor_name=metadata.get("actor"),
-            lane_id=metadata.get("lane_id"),
             stage_name=metadata.get("stage"),
             run_id=run.get("run_id"),
+        ):
+            continue
+        run_id = str(run.get("run_id") or "").strip()
+        if lane is None and run_id not in active_engine_run_ids:
+            continue
+        add(
+            actor_name=metadata.get("actor"),
+            lane_id=lane_id,
+            stage_name=metadata.get("stage"),
+            run_id=run_id,
             source="engine_run",
         )
 
@@ -168,7 +189,7 @@ def actor_dispatch_conflicts(
     for engine_session in _engine_store(config).runtime_sessions(
         work_id=lane_id, limit=5
     ):
-        if runtime_session_is_running(engine_session):
+        if _engine_runtime_session_is_active(engine_session):
             conflicts.append(
                 {
                     "source": "engine_runtime_session",
@@ -187,15 +208,102 @@ def actor_dispatch_conflicts(
             continue
         if str(metadata.get("stage") or "").strip() != stage_name:
             continue
+        run_id = str(run.get("run_id") or "").strip()
+        active_engine_session = any(
+            _engine_runtime_session_is_active(engine_session)
+            and str(engine_session.get("run_id") or "").strip() == run_id
+            for engine_session in _engine_store(config).runtime_sessions(
+                work_id=lane_id, limit=5
+            )
+        )
+        if not _lane_confirms_actor_run(
+            lane=lane,
+            actor_name=actor_name,
+            stage_name=stage_name,
+            run_id=run_id,
+        ) and not active_engine_session:
+            continue
         conflicts.append(
             {
                 "source": "engine_run",
-                "run_id": run.get("run_id"),
+                "run_id": run_id,
                 "status": run.get("status"),
                 "started_at": run.get("started_at"),
             }
         )
     return _dedupe_conflicts(conflicts)
+
+
+def _lane_confirms_actor_run(
+    *,
+    lane: dict[str, Any],
+    actor_name: Any,
+    stage_name: Any,
+    run_id: Any,
+) -> bool:
+    actor = str(actor_name or "").strip()
+    stage = str(stage_name or "").strip()
+    run = str(run_id or "").strip()
+    if not actor:
+        return False
+    lane_status = str(lane.get("status") or "").strip()
+    lane_stage = _lane_stage(lane)
+    if (
+        lane_status == "running"
+        and str(lane.get("actor") or "").strip() == actor
+        and (not stage or lane_stage == stage)
+    ):
+        return True
+    session = (
+        lane.get("runtime_session")
+        if isinstance(lane.get("runtime_session"), dict)
+        else {}
+    )
+    if _runtime_entry_matches(
+        session,
+        actor_name=actor,
+        stage_name=stage,
+        run_id=run,
+    ) and runtime_session_is_running(session):
+        return True
+    dispatch = active_actor_dispatch(lane)
+    if _runtime_entry_matches(
+        dispatch,
+        actor_name=actor,
+        stage_name=stage,
+        run_id=run,
+    ):
+        return True
+    return False
+
+
+def _runtime_entry_matches(
+    entry: dict[str, Any],
+    *,
+    actor_name: str,
+    stage_name: str,
+    run_id: str,
+) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    actor = str(entry.get("actor") or "").strip()
+    stage = str(entry.get("stage") or "").strip()
+    entry_run = str(entry.get("run_id") or "").strip()
+    if actor and actor != actor_name:
+        return False
+    if stage_name and stage and stage != stage_name:
+        return False
+    if run_id and entry_run and entry_run != run_id:
+        return False
+    return bool(actor or stage or entry_run)
+
+
+def _engine_runtime_session_is_active(session: dict[str, Any]) -> bool:
+    if not runtime_session_is_running(session):
+        return False
+    metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+    state = str(metadata.get("state") or metadata.get("worker_status") or "").strip()
+    return state not in {"complete", "completed", "done", "released"}
 
 
 def record_actor_dispatch_planned(
@@ -1158,5 +1266,3 @@ def _apply_runtime_session_ids(
     if turn_id:
         session["turn_id"] = turn_id
         lane["turn_id"] = turn_id
-
-

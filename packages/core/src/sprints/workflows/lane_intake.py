@@ -617,7 +617,11 @@ def _auto_activation_candidates(
     )
     excluded = {label.lower() for label in exclude_labels}
     activation_label = add_label.lower()
-    known_lane_ids = set(state.lanes)
+    known_lane_ids = {
+        lane_id
+        for lane_id, lane in state.lanes.items()
+        if isinstance(lane, dict) and not lane_is_terminal(lane)
+    }
     candidates: list[dict[str, Any]] = []
     for issue in issues:
         lane_id = build_lane_id(config=config, issue=issue)
@@ -655,7 +659,11 @@ def _eligible_candidates(
         configured_texts(tracker_cfg, "exclude_labels", "exclude-labels")
     )
     actor_label_board = _uses_actor_label_board(config)
-    known_lane_ids = set(state.lanes)
+    known_lane_ids = {
+        lane_id
+        for lane_id, lane in state.lanes.items()
+        if isinstance(lane, dict) and not lane_is_terminal(lane)
+    }
     candidates: list[dict[str, Any]] = []
     for issue in issues:
         lane_id = build_lane_id(config=config, issue=issue)
