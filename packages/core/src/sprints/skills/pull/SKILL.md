@@ -5,7 +5,7 @@ description: Sync the current lane branch with origin/main without losing local 
 
 # Pull
 
-Use this when an implementer needs a current branch before editing, when a push
+Use this when a coder needs a current branch before editing, when a push
 is rejected because the branch is stale, or when retry feedback asks for a fresh
 base.
 

@@ -21,16 +21,19 @@ intake:
     exclude_labels: [blocked, done]
   claim:
     remove_labels: [todo]
-    add_labels: [in-progress]
+    add_labels: [code]
     branch: codex/issue-{number}-{slug}
 
 workspace:
-  root: ~/.sprints/{{ workflow }}/{{ lane_id }}
+  root: .sprints/workspace/worktrees/{{ workflow }}
   hooks:
     after_create: |
       git fetch origin
     before_remove: |
       git status --short
+
+workpad:
+  owner: actor
 
 concurrency:
   max-lanes: 1
@@ -38,10 +41,6 @@ concurrency:
 
 limits:
   max_turns: 20
-
-retry:
-  max-attempts: 6
-  initial-delay-seconds: 0
 
 runtime:
   kind: codex-app-server
@@ -55,18 +54,48 @@ runtime:
   thread_sandbox: workspace-write
   turn_sandbox_policy:
     type: workspaceWrite
-    networkAccess: true
 
 storage:
   state: .sprints/code-state.json
   audit-log: .sprints/code-audit.jsonl
 ---
 
+# Workflow Policy
+
+Sprints owns lane mechanics: tracker intake, claims, leases, worktree creation,
+runtime dispatch, retries, step transitions, status, audit, and release.
+
+The coder owns work inside one lane. Do not claim other issues, touch unrelated
+paths, or ask for interactive escalation.
+
+## Steps
+
+This workflow uses GitHub labels as step state. Use exactly one active step
+label at a time:
+
+- `todo`: ready for intake.
+- `code`: implementation or feedback-fix loop.
+- `review`: PR is ready; wait for human, bot, checks, or project-board signal.
+- `merge`: merge authority exists; run the land flow.
+- `done`: terminal; release the lane.
+- `blocked`: cannot continue without external unblock.
+
+Flow:
+
+```text
+todo -> code -> review -> merge -> done
+          ^        |
+          |--------|
+```
+
+If review feedback requires changes, Sprints moves the lane from `review` back
+to `code`. The coder then starts or continues from the same lane, sweeps PR
+feedback, fixes required items, validates, pushes, and returns the lane to
+`review`.
+
 # Actor: coder
 
-## Skills
-
-pull, debug, commit, push, land
+Bundled skills available to this actor: `pull`, `debug`, `commit`, `push`, `land`.
 
 ## Input
 
@@ -75,6 +104,9 @@ Issue:
 
 Lane:
 {{ lane }}
+
+Step:
+{{ step }}
 
 Workspace:
 {{ workspace }}
@@ -85,6 +117,9 @@ Repository:
 Pull request:
 {{ pull_request }}
 
+Review feedback:
+{{ review_feedback }}
+
 Attempt:
 {{ attempt }}
 
@@ -93,98 +128,77 @@ Retry:
 
 ## Policy
 
-You are working on one tracker item in the provided workspace. Work only inside
-that workspace. Use the tracker selected in front matter for issue/ticket
-metadata and comments. Do not touch unrelated paths, claim other tracker items,
-or mutate workflow ownership.
+Work on exactly one lane and follow the section for the provided `Step`.
 
-This is an unattended workflow. Never ask a human to perform follow-up actions.
-Only stop early for a true blocker: missing required auth, permissions, secrets,
-or tools that cannot be resolved in-session.
+Never claim another issue, switch lanes, modify workflow ownership, change
+concurrency, or touch unrelated paths.
 
-Start by determining the issue and PR state, then continue the matching flow:
+Never request interactive escalation. Return `blocked` only for missing auth,
+permissions, secrets, tools, unsafe scope, or unrecoverable workspace state.
 
-- `todo`: begin work. The runner should already have moved the issue to
-  `in-progress`.
-- `in-progress`: implement or continue implementation.
-- `review`: PR is ready for human/bot/check review. Do not make new code
-  changes unless actionable review feedback or failed checks require rework.
-- `rework`: reviewer, bot, or check feedback requires implementation changes.
-- `merging`: merge authority exists; run the land flow.
-- `blocked`: stop unless the blocker has been resolved.
-- `done`: terminal; do nothing.
-- existing open PR: run the PR feedback sweep before deciding what to do next.
-- existing closed or merged PR for this branch: create a fresh branch from
-  `origin/main` and restart the execution flow.
+## Step: code
 
-Maintain one persistent workpad comment on the issue with the heading
-`## Sprints Workpad`. Reuse it if it exists. Keep it updated in place. Do not
-post separate progress or completion comments.
+Start or continue implementation for this issue.
 
-The workpad must contain:
+Before editing:
 
-- environment stamp: `<host>:<abs-workdir>@<short-sha>`
-- plan checklist
-- acceptance criteria
-- validation checklist
-- notes
-- confusions, only when something was unclear
-
-Before editing code:
-
-1. Read the issue and existing comments.
-2. Reconcile the workpad.
-3. Identify acceptance criteria and validation requirements.
-4. Reproduce or confirm the current behavior when possible.
-5. Run `pull` to sync from `origin/main`.
-6. Record the sync and reproduction evidence in the workpad.
+1. Read the issue, comments, current labels, branch, and PR state.
+2. Find or create one persistent `## Sprints Workpad` issue comment.
+3. If a PR already exists, run the PR feedback sweep before new code.
+4. Sync from `origin/main`.
+5. Reproduce or confirm the issue signal when possible.
 
 Execution loop:
 
 1. Implement the smallest scoped change.
 2. Run focused validation.
 3. Commit only lane-scoped changes.
-4. Push the branch and create or update the PR.
-5. When the PR is linked, validation is green, and no known actionable feedback
-   is unresolved, move the tracker item from `in-progress` to `review`.
-6. While in `review`, poll and sweep PR feedback:
+4. Push the branch.
+5. Create or update the PR.
+6. Sweep PR feedback:
    - top-level PR comments
    - inline review comments
-   - review states
+   - review summaries
    - failed checks
-7. If actionable feedback or failed checks exist, move the tracker item to
-   `rework`, address or explicitly answer each item with justified pushback,
-   rerun validation, commit, push, and move it back to `review`.
-8. Stay in `review` while waiting for human approval or checks. Waiting for
-   review is not blocked.
-9. Move to `merging` only when merge authority is clear.
-10. When merging, follow the bundled `land` skill included in this prompt; do
-   not call merge mechanics outside the land skill.
-11. After successful merge, remove active workflow state labels and add `done`.
+7. Address actionable feedback or reply with justified pushback.
+8. Update the workpad with plan, acceptance criteria, validation, and notes.
 
-Completion bar:
+Return `done` only when the PR exists, validation evidence exists, no known
+actionable PR feedback remains, and the workpad is current.
 
-- issue requirements are satisfied
-- workpad checklist is current
-- validation is green or clearly explained
-- PR is linked
-- PR feedback sweep has no unresolved actionable items
-- merge authority exists before landing
-- labels are cleaned after merge
+## Step: review
 
-If blocked, update the workpad with:
+Do not edit code. The runner normally idles in this step.
 
-- what is missing
-- why it blocks completion
-- exact unblock requirement
-- current branch, PR, validation, and dirty-file state
+If dispatched manually in this step, inspect current PR state and return
+`waiting` unless there is a true blocker.
+
+## Step: merge
+
+Open and follow `.codex/skills/land/SKILL.md`.
+
+Do not call merge mechanics outside the land skill. If the PR cannot merge yet,
+return `waiting` or `blocked` with the exact reason. If new required feedback
+appears, return enough evidence for Sprints to move the lane back to `code`.
+
+After a successful merge, return merge and cleanup evidence.
+
+## Step: done
+
+Terminal. Do not perform actor work.
+
+## Step: blocked
+
+Do not code unless the blocker has clearly been resolved. Return `blocked` with
+the remaining unblock requirement, or `waiting` if the lane should remain held.
 
 ## Output
 
 Return JSON only:
 
 {
-  "status": "merged|open|blocked|failed",
+  "status": "done|waiting|blocked|failed",
+  "step": "code|review|merge|done|blocked",
   "summary": "what happened",
   "branch": "codex/issue-20-short-name",
   "pull_request": {
@@ -202,8 +216,8 @@ Return JSON only:
     "updated": true
   },
   "cleanup": {
-    "removed_labels": ["in-progress", "review", "rework", "merging"],
-    "added_labels": ["done"]
+    "removed_labels": [],
+    "added_labels": []
   },
   "blockers": [],
   "artifacts": {}

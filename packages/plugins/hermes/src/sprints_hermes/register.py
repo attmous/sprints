@@ -34,7 +34,7 @@ def register(ctx):
     ctx.register_command(
         "workflow",
         execute_workflow_command,
-        description="Run a workflow's CLI (e.g. /workflow change-delivery status).",
+        description="Run a workflow's CLI (e.g. /workflow code status).",
     )
     ctx.register_cli_command(
         name="sprints",

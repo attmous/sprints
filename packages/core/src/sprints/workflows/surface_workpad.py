@@ -26,8 +26,8 @@ def render_workpad(lane: Mapping[str, Any]) -> str:
     retry = _mapping(lane.get("pending_retry"))
     operator_attention = _mapping(lane.get("operator_attention"))
 
-    board_state = tracker.get("board_state") or lane.get("board_state")
-    state_labels = tracker.get("state_labels")
+    step = tracker.get("step") or lane.get("step")
+    step_labels = tracker.get("step_labels")
     branch = lane.get("branch") or issue.get("branch_name")
     pr = _pull_request_text(pull_request)
     last_actor = lane.get("actor") or last_output.get("actor")
@@ -41,7 +41,7 @@ def render_workpad(lane: Mapping[str, Any]) -> str:
         lane.get("next_expected_state"),
         lane.get("next_state"),
         lane.get("stage"),
-        board_state,
+        step,
     )
 
     lines = [
@@ -52,13 +52,13 @@ def render_workpad(lane: Mapping[str, Any]) -> str:
         f"- Lane: `{_text(lane.get('lane_id'), 'unknown')}`",
         f"- Attempt: `{_text(lane.get('attempt'), '1')}`",
     ]
-    if board_state:
+    if step:
         labels = (
-            f" ({', '.join(str(label) for label in state_labels)})"
-            if state_labels
+            f" ({', '.join(str(label) for label in step_labels)})"
+            if step_labels
             else ""
         )
-        lines.append(f"- Board: `{board_state}`{labels}")
+        lines.append(f"- Step: `{step}`{labels}")
     elif issue.get("state"):
         lines.append(f"- Tracker state: `{issue.get('state')}`")
     if branch:

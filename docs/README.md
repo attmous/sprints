@@ -38,10 +38,6 @@ packages/
 
 Bundled policy templates live in `packages/core/src/sprints/workflows/templates/`:
 
-- `change-delivery.md`
 - `code.md`
-- `release.md`
-- `triage.md`
 
-They use the same Python implementation. The selected template defines the
-workflow name and policy.
+The `code` template defines the supported workflow name and policy.

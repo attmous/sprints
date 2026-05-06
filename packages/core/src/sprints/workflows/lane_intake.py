@@ -16,12 +16,6 @@ from sprints.workflows.state_effects import (
     record_side_effect_succeeded,
     side_effect_key,
 )
-from sprints.workflows.surface_board_state import (
-    BoardState,
-    state_from_labels,
-    state_labels,
-    uses_label_state_source,
-)
 from sprints.workflows.lane_state import (
     acquire_lane_lease,
     append_engine_event,
@@ -72,7 +66,6 @@ def claim_new_lanes(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
         isinstance(candidates, list)
         and not candidates
         and not facts.get("error")
-        and not _uses_actor_label_board(config)
     ):
         auto_activate = _auto_activate_tracker_candidates(
             config=config,
@@ -253,6 +246,17 @@ def _ensure_claimed_lane_workpad(
     lane: dict[str, Any],
     state: Any,
 ) -> dict[str, Any]:
+    if not _runner_owns_workpad(config):
+        workpad = record_workpad_skipped(lane, "workpad is actor-owned")
+        return {
+            "status": "skipped",
+            "lane_id": lane.get("lane_id"),
+            "issue_id": (lane.get("issue") or {}).get("id")
+            if isinstance(lane.get("issue"), dict)
+            else None,
+            "reason": "workpad is actor-owned",
+            "workpad": workpad,
+        }
     issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
     issue_id = issue.get("id")
     previous_status = str(lane.get("status") or "").strip()
@@ -365,6 +369,8 @@ def _restore_workpad_blocked_status(
 def _repair_active_lane_workpads(
     *, config: WorkflowConfig, tracker_cfg: dict[str, Any], state: Any
 ) -> dict[str, Any]:
+    if not _runner_owns_workpad(config):
+        return {"attempted": 0, "repaired": [], "failed": [], "skipped": []}
     repaired: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -402,6 +408,16 @@ def _lane_needs_workpad_repair(lane: dict[str, Any]) -> bool:
     return bool(workpad.get("retryable", True))
 
 
+def _runner_owns_workpad(config: WorkflowConfig) -> bool:
+    workpad = config.raw.get("workpad") if isinstance(config.raw, dict) else {}
+    if not isinstance(workpad, dict):
+        return True
+    if workpad.get("enabled") is False:
+        return False
+    owner = str(workpad.get("owner") or "runner").strip().lower()
+    return owner == "runner"
+
+
 def tracker_facts(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
     tracker_cfg = tracker_config(config)
     if not tracker_cfg:
@@ -422,21 +438,13 @@ def tracker_facts(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
             tracker_cfg, "exclude_labels", "exclude-labels"
         ),
     }
-    if _uses_actor_label_board(config):
-        base["state_source"] = "labels"
-        base["state_labels"] = state_labels(config)
-        base["required_board_state"] = BoardState.TODO.value
     try:
         client = build_tracker_client(
             workflow_root=config.workflow_root,
             tracker_cfg=tracker_cfg,
             repo_path=repository_path(config),
         )
-        raw_candidates = (
-            client.list_for_state_labels()
-            if _uses_actor_label_board(config)
-            else client.list_candidates()
-        )
+        raw_candidates = client.list_candidates()
         terminal = client.list_terminal()
     except Exception as exc:
         return {
@@ -658,7 +666,6 @@ def _eligible_candidates(
     exclude_labels = set(
         configured_texts(tracker_cfg, "exclude_labels", "exclude-labels")
     )
-    actor_label_board = _uses_actor_label_board(config)
     known_lane_ids = {
         lane_id
         for lane_id, lane in state.lanes.items()
@@ -675,19 +682,11 @@ def _eligible_candidates(
         if active_states and issue_state not in active_states:
             continue
         labels = issue_labels(issue)
-        if actor_label_board:
-            if state_from_labels(labels, config) != BoardState.TODO.value:
-                continue
-        else:
-            if required_labels and not required_labels.issubset(labels):
-                continue
-            if exclude_labels.intersection(labels):
-                continue
+        if required_labels and not required_labels.issubset(labels):
+            continue
+        if exclude_labels.intersection(labels):
+            continue
         if has_open_blockers(issue, terminal_states=terminal_states):
             continue
         candidates.append(issue)
     return sorted(candidates, key=issue_priority_sort_key)
-
-
-def _uses_actor_label_board(config: WorkflowConfig) -> bool:
-    return config.is_actor_driven() and uses_label_state_source(config)

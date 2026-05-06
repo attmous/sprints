@@ -48,15 +48,15 @@ Sprints exposes two Hermes command roots.
 | Command | Purpose |
 | --- | --- |
 | `/workflow` | List installed workflows. |
-| `/workflow change-delivery status` | Show change-delivery workflow state. |
-| `/workflow change-delivery lanes` | List lane summaries. |
-| `/workflow change-delivery lanes --attention` | List lanes blocked on operator attention. |
-| `/workflow change-delivery lanes <lane-id>` | Show one full lane record. |
-| `/workflow change-delivery retry <lane-id>` | Queue a retry after the operator fixed the blocker. |
-| `/workflow change-delivery release <lane-id>` | Release a lane without completing it. |
-| `/workflow change-delivery complete <lane-id>` | Complete a lane through normal completion cleanup. |
-| `/workflow change-delivery validate` | Validate the contract. |
-| `/workflow change-delivery tick` | Run one orchestrator tick. |
+| `/workflow code status` | Show code workflow state. |
+| `/workflow code lanes` | List lane summaries. |
+| `/workflow code lanes --attention` | List lanes blocked on operator attention. |
+| `/workflow code lanes <lane-id>` | Show one full lane record. |
+| `/workflow code retry <lane-id>` | Queue a retry after the operator fixed the blocker. |
+| `/workflow code release <lane-id>` | Release a lane without completing it. |
+| `/workflow code complete <lane-id>` | Mark a lane complete through the operator command. |
+| `/workflow code validate` | Validate the contract. |
+| `/workflow code tick` | Run one workflow tick. |
 
 Most commands accept `--workflow-root <path>`. JSON-capable commands expose
 `--json` or `--format json`.

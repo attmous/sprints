@@ -297,50 +297,25 @@ def _apply_answers(*, config: dict[str, Any], answers: InitAnswers) -> dict[str,
         code_host_cfg["kind"] = "github"
         code_host_cfg["github_slug"] = answers.repo_slug
 
-    if _is_actor_driven(updated):
-        tracker_cfg.pop("required_labels", None)
-        tracker_cfg.pop("required-labels", None)
-        tracker_cfg.pop("exclude_labels", None)
-        tracker_cfg.pop("exclude-labels", None)
-        updated.pop("intake", None)
-        state_source = tracker_cfg.setdefault("state-source", {})
-        state_source["kind"] = "labels"
-        labels = state_source.setdefault("labels", {})
-        labels.setdefault("backlog", "backlog")
-        labels["todo"] = answers.todo_label
-        labels.setdefault("in-progress", "in-progress")
-        labels.setdefault("review", "review")
-        labels.setdefault("rework", "rework")
-        labels.setdefault("merging", "merging")
-        labels["done"] = answers.done_label
-        completion_cfg = updated.setdefault("completion", {})
-        completion_cfg["owner"] = "implementer"
-        completion_cfg["mode"] = "land"
-        completion_cfg["skill"] = "land"
-        cleanup = completion_cfg.setdefault("cleanup", {})
-        cleanup["remove_labels"] = [
-            labels["in-progress"],
-            labels["review"],
-            labels["rework"],
-            labels["merging"],
-        ]
-        cleanup["add_labels"] = [answers.done_label]
-    else:
-        tracker_cfg["required_labels"] = [answers.todo_label]
-        tracker_cfg["exclude_labels"] = list(answers.exclude_labels)
-        intake_cfg = updated.setdefault("intake", {}).setdefault("auto-activate", {})
-        intake_cfg["enabled"] = True
-        intake_cfg["add_label"] = answers.todo_label
-        intake_cfg["exclude_labels"] = list(answers.exclude_labels)
-        completion_cfg = updated.setdefault("completion", {})
-        completion_cfg["remove_labels"] = [answers.todo_label]
-        completion_cfg["add_labels"] = [answers.done_label]
+    tracker_cfg.pop("state-source", None)
+    tracker_cfg.pop("required_labels", None)
+    tracker_cfg.pop("required-labels", None)
+    tracker_cfg.pop("exclude_labels", None)
+    tracker_cfg.pop("exclude-labels", None)
+    entry_cfg = updated.setdefault("intake", {}).setdefault("entry", {})
+    entry_cfg["states"] = ["open"]
+    entry_cfg["include_labels"] = [answers.todo_label]
+    entry_cfg["exclude_labels"] = list(answers.exclude_labels)
+    claim_cfg = updated.setdefault("intake", {}).setdefault("claim", {})
+    claim_cfg["remove_labels"] = [answers.todo_label]
+    claim_cfg["add_labels"] = ["code"]
+    updated.pop("completion", None)
 
     concurrency_cfg = updated.setdefault("concurrency", {})
     concurrency_cfg["max-lanes"] = answers.max_lanes
     actor_limits = concurrency_cfg.setdefault("actors", {})
-    actor_limits["implementer"] = answers.max_lanes
-    actor_limits["reviewer"] = answers.max_lanes
+    actor_limits.clear()
+    actor_limits["coder"] = answers.max_lanes
 
     runtimes = updated.setdefault("runtimes", {})
     runtimes.clear()
@@ -462,9 +437,3 @@ def _next_steps(answers: InitAnswers) -> list[str]:
         steps.insert(1, "hermes sprints codex-app-server up")
     steps.append("hermes sprints daemon up")
     return steps
-
-
-def _is_actor_driven(config: dict[str, Any]) -> bool:
-    orchestration = config.get("orchestration")
-    raw = orchestration if isinstance(orchestration, dict) else {}
-    return str(raw.get("mode") or "").strip() == "actor-driven"

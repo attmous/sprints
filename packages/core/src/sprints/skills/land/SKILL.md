@@ -5,9 +5,9 @@ description: Land one reviewed Sprints lane when workflow merge authority is pre
 
 # Land
 
-Use this in implementer `land` mode after the lane input shows merge authority,
-usually through the `merging` board state or merge signal. The runner must not
-call `gh pr merge` directly for actor-driven `change-delivery`; this skill owns
+Use this in coder `merge` step after the lane input shows merge authority,
+usually through the `merge` step label or merge signal. The runner must not
+call `gh pr merge` directly from workflow Python; this skill owns
 the landing mechanics for the assigned lane.
 
 ## Rules

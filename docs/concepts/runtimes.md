@@ -23,13 +23,11 @@ runtimes:
     keep_alive: true
 
 actors:
-  orchestrator:
-    runtime: codex
-  implementer:
+  coder:
     runtime: codex
 ```
 
-Every actor and orchestrator turn goes through the configured runtime.
+Every actor turn goes through the configured runtime.
 
 ## Turn Path
 

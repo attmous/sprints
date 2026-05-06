@@ -10,7 +10,7 @@ from typing import Any, Callable
 from sprints.runtimes import recognized_runtime_kinds
 from sprints.core.contracts import load_workflow_contract, render_workflow_markdown
 
-NAME = "change-delivery"
+NAME = "code"
 
 
 RUNTIME_PRESETS: dict[str, dict[str, Any]] = {
@@ -317,8 +317,8 @@ def _normalize_role(role: str) -> str:
     normalized = role.strip()
     if not normalized:
         raise RuntimePresetError("--role cannot be blank")
-    if normalized.startswith("change-delivery."):
-        normalized = normalized.removeprefix("change-delivery.")
+    if normalized.startswith("code."):
+        normalized = normalized.removeprefix("code.")
     return normalized
 
 

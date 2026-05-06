@@ -245,12 +245,16 @@ def _lane_retry_label(lane: Mapping[str, Any]) -> str:
     return "retry=" + " ".join(str(piece) for piece in pieces) if pieces else ""
 
 
-def _lane_board_label(lane: Mapping[str, Any]) -> str:
+def _lane_step_label(lane: Mapping[str, Any]) -> str:
     tracker = lane.get("tracker") if isinstance(lane.get("tracker"), Mapping) else {}
-    board_state = str(
-        lane.get("board_state") or tracker.get("board_state") or ""
+    step = str(
+        lane.get("step")
+        or tracker.get("step")
+        or lane.get("workflow_state")
+        or lane.get("stage")
+        or ""
     ).strip()
-    return f"board={board_state}" if board_state else ""
+    return f"step={step}" if step else ""
 
 
 def _lane_mode_label(lane: Mapping[str, Any]) -> str:
@@ -271,8 +275,6 @@ def _lane_review_label(lane: Mapping[str, Any]) -> str:
     required_changes = signals.get("required_changes")
     if isinstance(required_changes, list) and required_changes:
         pieces.append(f"fixes={len(required_changes)}")
-    if signals.get("reviewer_actor_running") or lane.get("reviewer_actor_running"):
-        pieces.append("reviewer=running")
     merge_signal = (
         lane.get("merge_signal") if isinstance(lane.get("merge_signal"), Mapping) else {}
     )
@@ -480,15 +482,13 @@ def format_status(
     for lane in _status_lanes(result)[:8]:
         lane_id = str(lane.get("lane_id") or EMPTY_VALUE)
         status = str(lane.get("status") or lane.get("lane_status") or EMPTY_VALUE)
-        stage = str(lane.get("stage") or EMPTY_VALUE)
         actor = str(lane.get("actor") or EMPTY_VALUE)
         attempt = str(lane.get("attempt") or EMPTY_VALUE)
         detail_parts = [
             part
             for part in [
-                f"stage={stage}",
                 f"status={status}",
-                _lane_board_label(lane),
+                _lane_step_label(lane),
                 f"actor={actor}",
                 _lane_mode_label(lane),
                 f"attempt={attempt}",

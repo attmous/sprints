@@ -20,12 +20,6 @@ from sprints.workflows.state_helpers import (
     positive_float as _positive_float,
     positive_int as _positive_int,
 )
-from sprints.workflows.surface_board_state import (
-    ACTIVE_BOARD_STATES,
-    board_metadata,
-    state_from_labels,
-    uses_label_state_source,
-)
 
 _RUNNER_INSTANCE_ID = f"{os.getpid()}:{uuid.uuid4().hex[:12]}"
 
@@ -192,13 +186,23 @@ def retry_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
 def refresh_lane_board_metadata(
     *, config: WorkflowConfig, lane: dict[str, Any], issue: dict[str, Any] | None = None
 ) -> None:
-    if not uses_label_state_source(config):
-        return
+    del config
     source_issue = issue if isinstance(issue, dict) else lane.get("issue")
     if not isinstance(source_issue, dict):
         return
+    from sprints.workflows.step_labels import active_step_labels, step_from_labels
+
     tracker = lane_mapping(lane, "tracker")
-    tracker.update(board_metadata(source_issue, config))
+    labels = source_issue.get("labels") or []
+    step = step_from_labels(labels)
+    tracker.update(
+        {
+            "step": step,
+            "step_labels": sorted(active_step_labels(labels)),
+        }
+    )
+    if step:
+        lane["step"] = step
 
 
 def actor_dispatch_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
@@ -501,13 +505,10 @@ def issue_is_still_active(
     )
     state = str(issue.get("state") or "").strip().lower()
     labels = issue_labels(issue)
-    if (
-        config is not None
-        and config.is_actor_driven()
-        and uses_label_state_source(config)
-    ):
-        board_state = state_from_labels(labels, config)
-        return board_state in ACTIVE_BOARD_STATES
+    if config is not None and config.workflow_name == "code":
+        from sprints.workflows.step_labels import ACTIVE_STEPS, step_from_labels
+
+        return step_from_labels(labels) in ACTIVE_STEPS
     if active_states and state not in active_states:
         return False
     if exclude_labels.intersection(labels):
@@ -560,8 +561,6 @@ def concurrency_config(config: WorkflowConfig) -> dict[str, Any]:
         "max_lanes": max_lanes,
         "max_active_lanes": max_lanes,
         "actor_limits": actor_limits,
-        "max_implementers": actor_limits.get("implementer", max_lanes),
-        "max_reviewers": actor_limits.get("reviewer", max_lanes),
         "per_lane_lock": bool(cfg.get("per-lane-lock", cfg.get("per_lane_lock", True))),
     }
 
@@ -575,12 +574,12 @@ def _actor_limit_config(
         actor_name
         for stage in config.stages.values()
         for actor_name in stage.actors
-        if actor_name and actor_name != config.orchestrator_actor
+        if actor_name
     }
     configured_names = {
         str(name).strip()
         for name in actors_cfg
-        if str(name).strip() and str(name).strip() != config.orchestrator_actor
+        if str(name).strip()
     }
     for actor_name in sorted(stage_actors | configured_names):
         raw_limit = _actor_limit_value(
@@ -602,10 +601,6 @@ def _actor_limit_value(
         actor_limit = _positive_int_value(raw)
     if actor_limit is not None:
         return actor_limit
-    if actor_name == "implementer":
-        return _configured_positive_int(cfg, "max-implementers", "max_implementers")
-    if actor_name == "reviewer":
-        return _configured_positive_int(cfg, "max-reviewers", "max_reviewers")
     return None
 
 

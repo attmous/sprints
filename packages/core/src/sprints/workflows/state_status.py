@@ -31,9 +31,8 @@ from sprints.workflows.state_projection import (
 from sprints.workflows.lane_transitions import (
     actor_capacity_snapshot,
     actor_concurrency_usage,
-    decision_ready_lanes,
-    lane_needs_orchestrator_decision,
 )
+from sprints.workflows.step_routes import route_code_lane
 
 
 def build_status(workflow_root: Path) -> dict[str, Any]:
@@ -214,21 +213,17 @@ def build_lane_status(
 
 
 def _ready_lanes(*, config: WorkflowConfig, state: Any) -> list[dict[str, Any]]:
-    if config.is_actor_driven():
-        from sprints.workflows.route_rules import actor_driven_ready_lanes
-
-        return actor_driven_ready_lanes(config=config, state=state)
-    return decision_ready_lanes(state)
+    return [
+        lane
+        for lane in active_lanes(state)
+        if route_code_lane(config=config, lane=lane).action != "hold"
+    ]
 
 
 def _lane_needs_runner_decision(
     *, config: WorkflowConfig, lane: dict[str, Any]
 ) -> bool:
-    if config.is_actor_driven():
-        from sprints.workflows.route_rules import lane_needs_actor_driven_route
-
-        return lane_needs_actor_driven_route(config=config, lane=lane)
-    return lane_needs_orchestrator_decision(lane)
+    return route_code_lane(config=config, lane=lane).action != "hold"
 
 
 def build_retry_audit(state: dict[str, Any]) -> list[dict[str, Any]]:

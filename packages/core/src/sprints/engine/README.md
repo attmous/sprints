@@ -2,8 +2,8 @@
 
 `engine/` owns durable workflow state.
 
-It does not decide workflow policy. `WORKFLOW.md` and the orchestrator decide what
-should happen. The engine stores state, leases, runs, events, retries, runtime
+It does not decide workflow policy. The workflow runner and `WORKFLOW.md` decide
+what should happen. The engine stores state, leases, runs, events, retries, runtime
 sessions, and exposes a workflow-scoped API for that state.
 
 ## Layout
@@ -45,13 +45,12 @@ Every workflow tick is a durable run. The runner starts an `engine_runs` row wit
 `mode=tick`, records ordered `workflow.tick.*` events in `engine_events`, and
 finishes the run as `completed` or `failed`. This makes partial ticks visible:
 operators can see whether a tick reached policy load, state load, reconcile,
-intake, orchestrator execution, decision parsing, decision application, or only
-the failure boundary.
+intake, step evaluation, dispatch, or only the failure boundary.
 
 Runner-owned side effects use stable idempotency keys and record their lifecycle
 in `engine_events`: `started`, `succeeded`, `failed`, or `skipped`. The rich
-lane JSON keeps the current side-effect ledger for orchestrator/operator
-context; the engine event IDs make successful side effects detectable after a
+lane JSON keeps the current side-effect ledger for runner/operator context; the
+engine event IDs make successful side effects detectable after a
 process restart.
 
 The engine stores neutral work IDs. Trackers may call them issues, tickets, PRs,
@@ -71,7 +70,7 @@ state file is stale or incomplete.
 
 `engine_runtime_sessions` is the durable projection of actor runtime/session
 state. Each actor dispatch also creates an `engine_runs` row with `mode=actor`.
-Workflow lanes still keep runtime metadata for orchestrator context, but runtime
+Workflow lanes still keep runtime metadata for prompt/status context, but runtime
 start/progress/result hooks upsert the engine session row directly and link it
 to the actor run ID.
 
@@ -117,4 +116,4 @@ Later engine ownership waves:
   records
 - reduce or remove scheduler snapshot rebuilds once direct engine tables cover
   status, running work, and sessions
-- keep workflow policy, stages, gates, and actor contracts outside the engine
+- keep workflow policy and actor contracts outside the engine

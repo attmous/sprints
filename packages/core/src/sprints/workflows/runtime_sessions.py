@@ -1245,10 +1245,8 @@ def _legacy_session_can_resume(
 
 def _default_actor_mode(actor_name: str) -> str:
     actor = str(actor_name or "").strip().lower()
-    if actor == "reviewer":
-        return "review"
-    if actor == "implementer":
-        return "implement"
+    if actor == "coder":
+        return "code"
     return ""
 
 

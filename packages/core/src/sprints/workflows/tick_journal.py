@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.route_orchestrator import OrchestratorDecision
 from sprints.workflows.state_helpers import engine_store as _engine_store
 from sprints.workflows.state_io import WorkflowState
-from sprints.workflows.entry_lanes import active_lanes, decision_ready_lanes
+from sprints.workflows.entry_lanes import active_lanes
+from sprints.workflows.step_routes import route_code_lane
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,9 @@ def _json_safe(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str, sort_keys=True))
 
 
-def _tick_journal_counts(state: WorkflowState | None) -> dict[str, Any]:
+def _tick_journal_counts(
+    *, config: WorkflowConfig, state: WorkflowState | None
+) -> dict[str, Any]:
     if state is None:
         return {
             "lane_count": 0,
@@ -46,7 +48,13 @@ def _tick_journal_counts(state: WorkflowState | None) -> dict[str, Any]:
     return {
         "lane_count": len(state.lanes),
         "active_lane_count": len(current_active_lanes),
-        "decision_ready_count": len(decision_ready_lanes(state)),
+        "decision_ready_count": len(
+            [
+                lane
+                for lane in current_active_lanes
+                if route_code_lane(config=config, lane=lane).action != "hold"
+            ]
+        ),
         "running_count": len(
             [
                 lane
@@ -76,18 +84,14 @@ def start_tick_journal(
     *,
     config: WorkflowConfig,
     state: WorkflowState | None = None,
-    orchestrator_output: str = "",
 ) -> TickJournal:
-    counts = _tick_journal_counts(state)
+    counts = _tick_journal_counts(config=config, state=state)
     run = _engine_store(config).start_run(
         mode="tick",
         selected_count=int(counts["active_lane_count"] or 0),
         metadata={
             "workflow_root": str(config.workflow_root),
             "lane_counts": counts,
-            "orchestrator_output_supplied": bool(
-                str(orchestrator_output or "").strip()
-            ),
         },
     )
     journal = TickJournal(
@@ -100,7 +104,7 @@ def start_tick_journal(
         journal=journal,
         state=state,
         event="started",
-        details={"orchestrator_output_supplied": bool(orchestrator_output)},
+        details={},
     )
     return journal
 
@@ -119,7 +123,7 @@ def record_tick_journal(
         "run_id": journal.run_id,
         "workflow": config.workflow_name,
         "workflow_root": str(config.workflow_root),
-        "lane_counts": _tick_journal_counts(state),
+        "lane_counts": _tick_journal_counts(config=config, state=state),
     }
     if details:
         payload["details"] = _json_safe(details)
@@ -156,7 +160,7 @@ def finish_tick_journal(
         details=terminal_details,
         severity=severity,
     )
-    counts = _tick_journal_counts(state)
+    counts = _tick_journal_counts(config=config, state=state)
     _engine_store(config).finish_run(
         journal.run_id,
         status=status,
@@ -177,9 +181,7 @@ def finish_tick_journal(
     )
 
 
-def decision_summaries(
-    decisions: list[OrchestratorDecision],
-) -> list[dict[str, Any]]:
+def decision_summaries(decisions: list[Any]) -> list[dict[str, Any]]:
     return [
         {
             "lane_id": decision.lane_id,

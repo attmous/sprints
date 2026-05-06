@@ -14,8 +14,9 @@ operator controls.
 | Trackers | Work item source and status surface. |
 | Code hosts | Branches, PRs, checks, reviews, and merge. |
 
-Sprints should not hardcode product workflow policy in Python. The policy
-belongs in `WORKFLOW.md`, split into orchestrator and actor sections.
+Sprints keeps lane mechanics in Python and lane work instructions in
+`WORKFLOW.md`. Python owns claims, retries, step labels, leases, dispatch, and
+status. The workflow policy tells the coder how to execute the current step.
 
 ## Why Sprints Exists
 
@@ -25,7 +26,7 @@ Supervised workflow execution needs state that survives one chat turn:
 - which actor ran
 - which runtime/session was used
 - what the actor returned
-- what the orchestrator decided
+- which step the lane is in
 - what needs retry or operator attention
 
 Sprints owns that loop.

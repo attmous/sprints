@@ -42,7 +42,7 @@ contract, validates it, and prints exact next steps. Use `bootstrap` or
 Default workflow root:
 
 ```text
-~/.hermes/workflows/<owner>-<repo>-change-delivery/
+~/.hermes/workflows/<owner>-<repo>-code/
 ```
 
 The repo pointer is written to:
@@ -56,11 +56,10 @@ The repo pointer is written to:
 Bundled templates default actors to `codex-app-server`:
 
 ```yaml
-runtimes:
-  codex:
-    kind: codex-app-server
-    mode: external
-    endpoint: ws://127.0.0.1:4500
+runtime:
+  kind: codex-app-server
+  mode: external
+  endpoint: ws://127.0.0.1:4500
 ```
 
 Start the shared listener:
@@ -72,8 +71,7 @@ hermes sprints codex-app-server up
 Or bind roles to another runtime:
 
 ```bash
-hermes sprints configure-runtime --runtime hermes-final --role implementer
-hermes sprints configure-runtime --runtime codex-app-server --role orchestrator
+hermes sprints configure-runtime --runtime codex-app-server --role coder
 ```
 
 ## Validate
@@ -119,9 +117,9 @@ Inside Hermes:
 /sprints doctor
 /sprints watch
 /sprints daemon status
-/workflow change-delivery status
-/workflow change-delivery validate
-/workflow change-delivery tick
+/workflow code status
+/workflow code validate
+/workflow code tick
 ```
 
 ## Local Development Install

@@ -1,168 +1,20 @@
-"""Lane decisions, transitions, actor outputs, and teardown handoff."""
+"""Lane decisions, transitions, actor outputs, and release mechanics."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from sprints.workflows import runtime_sessions as sessions
-from sprints.workflows import lane_teardown as teardown_flow
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.actor_outputs import contract_artifacts, delivery_contract_failure
 from sprints.workflows.lane_state import (
-    append_engine_event,
     clear_engine_retry,
-    completion_cleanup_retry_pending,
     concurrency_config,
-    lane_transition_side,
-    now_iso,
     release_lane_lease,
     active_lanes,
-    append_lane_event,
-    lane_is_terminal,
-    lane_mapping,
     lane_recovery_artifacts,
-    lane_stage,
     set_lane_operator_attention,
     set_lane_status,
 )
-from sprints.workflows.route_orchestrator import OrchestratorDecision
-from sprints.workflows.state_retries import lane_retry_is_due
-
-
-def lane_for_decision(*, state: Any, decision: OrchestratorDecision) -> dict[str, Any]:
-    if decision.lane_id:
-        lane = state.lanes.get(decision.lane_id)
-        if isinstance(lane, dict):
-            return lane
-        raise RuntimeError(f"orchestrator selected unknown lane {decision.lane_id!r}")
-    active = active_lanes(state)
-    if len(active) == 1:
-        return active[0]
-    raise RuntimeError("orchestrator decision must include lane_id")
-
-
-def validate_decision_for_lane(
-    *, config: WorkflowConfig, lane: dict[str, Any], decision: OrchestratorDecision
-) -> None:
-    lane_status = str(lane.get("status") or "").strip()
-    if lane_status == "running":
-        raise RuntimeError(f"lane {lane.get('lane_id')} is already running")
-    if lane_status == "retry_queued":
-        _validate_retry_dispatch(lane=lane, decision=decision)
-    if lane_status == "operator_attention" and decision.decision not in {
-        "retry",
-        "operator_attention",
-    }:
-        raise RuntimeError(f"lane {lane.get('lane_id')} requires operator attention")
-    if _review_changes_are_pending(lane):
-        _validate_review_changes_retry(lane=lane, decision=decision)
-    if decision.decision != "retry" and decision.stage != lane_stage(lane):
-        current_stage = config.stages.get(lane_stage(lane))
-        if (
-            lane_status == "waiting"
-            and current_stage is not None
-            and decision.stage == current_stage.next_stage
-        ):
-            return
-        raise RuntimeError(
-            f"decision for lane {lane.get('lane_id')} uses stage {decision.stage!r}, "
-            f"but lane is at {lane_stage(lane)!r}"
-        )
-    if decision.decision == "retry" and decision.stage not in config.stages:
-        raise RuntimeError(f"retry target stage does not exist: {decision.stage}")
-    if lane_is_terminal(lane):
-        raise RuntimeError(f"lane {lane.get('lane_id')} is terminal")
-
-
-def _validate_retry_dispatch(
-    *, lane: dict[str, Any], decision: OrchestratorDecision
-) -> None:
-    if completion_cleanup_retry_pending(lane):
-        raise RuntimeError(
-            f"lane {lane.get('lane_id')} retry is runner-owned completion cleanup"
-        )
-    if decision.decision not in {"run_actor", "run_action"}:
-        raise RuntimeError(
-            f"lane {lane.get('lane_id')} is retry queued; dispatch the retry target"
-        )
-    if not lane_retry_is_due(lane):
-        pending = (
-            lane.get("pending_retry")
-            if isinstance(lane.get("pending_retry"), dict)
-            else {}
-        )
-        raise RuntimeError(
-            f"lane {lane.get('lane_id')} retry is not due until "
-            f"{pending.get('due_at') or 'the configured retry time'}"
-        )
-    pending = (
-        lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
-    )
-    retry_stage = str(pending.get("stage") or "").strip()
-    retry_target = str(pending.get("target") or "").strip()
-    if retry_stage and decision.stage != retry_stage:
-        raise RuntimeError(
-            f"lane {lane.get('lane_id')} retry targets stage {retry_stage!r}, "
-            f"not {decision.stage!r}"
-        )
-    if retry_target and decision.target and decision.target != retry_target:
-        raise RuntimeError(
-            f"lane {lane.get('lane_id')} retry targets {retry_target!r}, "
-            f"not {decision.target!r}"
-        )
-
-
-def _review_changes_are_pending(lane: dict[str, Any]) -> bool:
-    if lane_stage(lane) != "review":
-        return False
-    if str(lane.get("status") or "").strip() != "waiting":
-        return False
-    actor_outputs = lane_mapping(lane, "actor_outputs")
-    if _stale_reviewer_changes_were_superseded(lane=lane, actor_outputs=actor_outputs):
-        return False
-    review = actor_outputs.get("reviewer")
-    if not isinstance(review, dict):
-        return False
-    return str(review.get("status") or "").strip().lower() in {
-        "changes_requested",
-        "needs_changes",
-    }
-
-
-def _stale_reviewer_changes_were_superseded(
-    *, lane: dict[str, Any], actor_outputs: dict[str, Any]
-) -> bool:
-    implementation = actor_outputs.get("implementer")
-    if not isinstance(implementation, dict):
-        return False
-    if str(implementation.get("status") or "").strip().lower() != "done":
-        return False
-    last_output = lane.get("last_actor_output")
-    if not isinstance(last_output, dict) or last_output != implementation:
-        return False
-    return int(lane.get("attempt") or 1) > 1
-
-
-def _validate_review_changes_retry(
-    *, lane: dict[str, Any], decision: OrchestratorDecision
-) -> None:
-    if decision.decision == "operator_attention":
-        return
-    if decision.decision != "retry":
-        raise RuntimeError(
-            f"lane {lane.get('lane_id')} has pending review changes; "
-            "orchestrator must retry deliver"
-        )
-    if decision.stage != "deliver":
-        raise RuntimeError(
-            f"lane {lane.get('lane_id')} has pending review changes; "
-            f"retry stage must be 'deliver', not {decision.stage!r}"
-        )
-    if decision.target != "implementer":
-        raise RuntimeError(
-            f"lane {lane.get('lane_id')} has pending review changes; "
-            "retry target must be 'implementer'"
-        )
 
 
 def validate_actor_capacity(
@@ -248,77 +100,17 @@ def guard_actor_dispatch(
     }
 
 
-def advance_lane(
-    *, config: WorkflowConfig, lane: dict[str, Any], target: str | None
-) -> None:
-    next_stage = target or config.stages[lane_stage(lane)].next_stage
-    if not next_stage:
-        raise RuntimeError(f"stage {lane_stage(lane)} has no next stage")
-    if lane_stage(lane) == "deliver" and next_stage == "review":
-        failure = delivery_contract_failure(lane)
-        if failure:
-            set_lane_operator_attention(
-                config=config,
-                lane=lane,
-                reason="delivery_contract_failed",
-                message=failure,
-                artifacts=contract_artifacts(lane),
-            )
-            return
-    if next_stage == "done":
-        complete_lane(config=config, lane=lane, reason="completed")
-        return
-    if next_stage not in config.stages:
-        raise RuntimeError(f"unknown target stage: {next_stage}")
-    previous = lane_transition_side(lane)
-    lane["stage"] = next_stage
+def complete_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -> None:
     lane["pending_retry"] = None
     clear_engine_retry(config=config, lane=lane)
     set_lane_status(
         config=config,
         lane=lane,
-        status="waiting",
-        reason=f"advanced to {next_stage}",
-        previous=previous,
-    )
-
-
-def decision_ready_lanes(state: Any) -> list[dict[str, Any]]:
-    return [
-        lane for lane in active_lanes(state) if lane_needs_orchestrator_decision(lane)
-    ]
-
-
-def lane_needs_orchestrator_decision(lane: dict[str, Any]) -> bool:
-    if sessions.active_actor_dispatch(lane):
-        return False
-    status = str(lane.get("status") or "").strip().lower()
-    if status in {"claimed", "waiting"}:
-        return True
-    if status == "retry_queued":
-        if completion_cleanup_retry_pending(lane):
-            return False
-        return lane_retry_is_due(lane)
-    return False
-
-
-def complete_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -> None:
-    teardown_flow.complete_lane(
-        config=config,
-        lane=lane,
+        status="complete",
         reason=reason,
-        ops=teardown_ops(),
+        actor=None,
     )
-
-
-def teardown_ops() -> teardown_flow.TeardownOps:
-    return teardown_flow.TeardownOps(
-        set_lane_status=set_lane_status,
-        set_lane_operator_attention=set_lane_operator_attention,
-        clear_engine_retry=clear_engine_retry,
-        release_lane_lease=release_lane_lease,
-        append_engine_event=append_engine_event,
-    )
+    release_lane_lease(config=config, lane=lane, reason=reason)
 
 
 def release_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -> None:
@@ -332,18 +124,6 @@ def release_lane(*, config: WorkflowConfig, lane: dict[str, Any], reason: str) -
         actor=None,
     )
     release_lane_lease(config=config, lane=lane, reason=reason)
-
-
-def target_or_single(*, target: str | None, values: tuple[str, ...], kind: str) -> str:
-    if target:
-        if target not in values:
-            raise RuntimeError(
-                f"orchestrator selected {kind} {target!r}, not declared on current stage"
-            )
-        return target
-    if len(values) == 1:
-        return values[0]
-    raise RuntimeError(f"orchestrator decision must target one {kind}")
 
 
 def record_actor_runtime_start(
@@ -422,29 +202,6 @@ def record_actor_runtime_interrupted(
         reason=reason,
         message=message,
         age_seconds=age_seconds,
-    )
-
-
-def record_action_result(
-    *,
-    config: WorkflowConfig,
-    lane: dict[str, Any],
-    action_name: str,
-    result: dict[str, Any],
-) -> None:
-    action_results = lane_mapping(lane, "action_results")
-    action_results[action_name] = result
-    stage_outputs = lane_mapping(lane, "stage_outputs")
-    stage_outputs[lane_stage(lane)] = {
-        **dict(stage_outputs.get(lane_stage(lane)) or {}),
-        "last_action": action_name,
-    }
-    lane["last_progress_at"] = now_iso()
-    append_lane_event(
-        config=config,
-        lane=lane,
-        event_type=f"{config.workflow_name}.lane.action",
-        payload={"action": action_name, "result": result},
     )
 
 

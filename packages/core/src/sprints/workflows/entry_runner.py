@@ -14,7 +14,7 @@ from sprints.workflows.entry_inspection import (
     validate_command,
 )
 from sprints.workflows.surface_operator import operator_complete, operator_release, operator_retry
-from sprints.workflows.tick_orchestrator import tick
+from sprints.workflows.step_runner import tick_step
 
 
 def main(workspace: object, argv: list[str]) -> int:
@@ -45,8 +45,7 @@ def main(workspace: object, argv: list[str]) -> int:
     complete_parser = subcommands.add_parser("complete")
     complete_parser.add_argument("lane_id")
     complete_parser.add_argument("--reason", default="operator completed lane")
-    tick_parser = subcommands.add_parser("tick")
-    tick_parser.add_argument("--orchestrator-output", default="")
+    subcommands.add_parser("tick")
     actor_run_parser = subcommands.add_parser("actor-run")
     actor_run_parser.add_argument("lane_id")
     actor_run_parser.add_argument("--actor", required=True)
@@ -76,7 +75,7 @@ def main(workspace: object, argv: list[str]) -> int:
     if args.command == "complete":
         return operator_complete(workspace, lane_id=args.lane_id, reason=args.reason)
     if args.command == "tick":
-        return tick(workspace, orchestrator_output=args.orchestrator_output)
+        return tick_step(workspace)
     if args.command == "actor-run":
         return run_actor_worker(
             workspace,

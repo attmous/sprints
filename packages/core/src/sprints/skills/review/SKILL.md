@@ -5,7 +5,7 @@ description: Review one Sprints pull request and return structured approval or r
 
 # Review
 
-Use this when acting as the Sprints reviewer for one lane and pull request.
+Use this when manually reviewing one Sprints lane and pull request.
 
 ## Rules
 
@@ -24,7 +24,7 @@ Use this when acting as the Sprints reviewer for one lane and pull request.
 3. Check for correctness, regressions, unsafe scope, missing cleanup, and weak
    validation.
 4. Separate optional findings from required fixes.
-5. If fixes are required, make each item directly actionable for the implementer.
+5. If fixes are required, make each item directly actionable for the coder.
 6. Return JSON only.
 
 ## Output Shape
