@@ -14,7 +14,7 @@ from sprints.workflows import sessions
 from sprints.workflows import teardown as teardown_flow
 from sprints.core.config import WorkflowConfig
 from sprints.core.paths import runtime_paths
-from sprints.workflows.board_state import (
+from sprints.workflows.surface_board_state import (
     ACTIVE_BOARD_STATES,
     board_metadata,
     state_from_labels,

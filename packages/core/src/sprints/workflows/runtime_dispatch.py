@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from sprints.workflows.actors import (
+from sprints.workflows.actor_runtime import (
     actor_runtime_plan,
     append_actor_skill_docs,
     build_actor_runtime,
@@ -21,7 +21,7 @@ from sprints.workflows.actors import (
 from sprints.core.config import WorkflowConfig, WorkflowConfigError
 from sprints.core.contracts import WorkflowPolicy
 from sprints.core.loader import load_workflow_policy
-from sprints.workflows.orchestrator import build_actor_prompt
+from sprints.workflows.route_orchestrator import build_actor_prompt
 from sprints.core.paths import runtime_paths
 from sprints.workflows.state_io import (
     WorkflowState,
@@ -31,9 +31,9 @@ from sprints.workflows.state_io import (
     validate_state,
     with_state_lock,
 )
-from sprints.workflows.variables import actor_dispatch_inputs, actor_variables
-from sprints.workflows.worktrees import ensure_lane_worktree
-from sprints.workflows.lanes import (
+from sprints.workflows.prompt_variables import actor_dispatch_inputs, actor_variables
+from sprints.workflows.surface_worktrees import ensure_lane_worktree
+from sprints.workflows.entry_lanes import (
     apply_actor_output_status,
     consume_lane_retry,
     guard_actor_dispatch,

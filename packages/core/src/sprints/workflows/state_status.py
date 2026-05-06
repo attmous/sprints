@@ -9,7 +9,7 @@ from typing import Any
 from sprints.workflows import sessions
 from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import load_workflow_contract
-from sprints.workflows.intake import tracker_facts
+from sprints.workflows.lane_intake import tracker_facts
 from sprints.workflows.lane_state import (
     active_lanes,
     actor_dispatch_summary,
@@ -24,11 +24,11 @@ from sprints.workflows.lane_state import (
     retry_summary,
     side_effects_summary,
 )
-from sprints.workflows.projection import (
+from sprints.workflows.state_projection import (
     project_engine_first_lanes,
     projected_lane_is_terminal,
 )
-from sprints.workflows.transitions import (
+from sprints.workflows.lane_transitions import (
     actor_capacity_snapshot,
     actor_concurrency_usage,
     decision_ready_lanes,
@@ -215,7 +215,7 @@ def build_lane_status(
 
 def _ready_lanes(*, config: WorkflowConfig, state: Any) -> list[dict[str, Any]]:
     if config.is_actor_driven():
-        from sprints.workflows.routes import actor_driven_ready_lanes
+        from sprints.workflows.route_rules import actor_driven_ready_lanes
 
         return actor_driven_ready_lanes(config=config, state=state)
     return decision_ready_lanes(state)
@@ -225,7 +225,7 @@ def _lane_needs_runner_decision(
     *, config: WorkflowConfig, lane: dict[str, Any]
 ) -> bool:
     if config.is_actor_driven():
-        from sprints.workflows.routes import lane_needs_actor_driven_route
+        from sprints.workflows.route_rules import lane_needs_actor_driven_route
 
         return lane_needs_actor_driven_route(config=config, lane=lane)
     return lane_needs_orchestrator_decision(lane)

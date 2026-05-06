@@ -13,7 +13,7 @@ from sprints.engine import (
 )
 from sprints.trackers import build_code_host_client, build_tracker_client
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.effects import (
+from sprints.workflows.state_effects import (
     completed_side_effect,
     record_side_effect_failed,
     record_side_effect_skipped,
@@ -21,8 +21,8 @@ from sprints.workflows.effects import (
     record_side_effect_succeeded,
     side_effect_key,
 )
-from sprints.workflows.completion import done_release_verified
-from sprints.workflows.orchestrator import OrchestratorDecision
+from sprints.workflows.lane_completion import done_release_verified
+from sprints.workflows.route_orchestrator import OrchestratorDecision
 from sprints.workflows.lane_state import (
     code_host_config as _code_host_config,
     configured_texts as _configured_texts,
@@ -40,7 +40,7 @@ from sprints.workflows.lane_state import (
     retry_policy as _retry_policy,
     tracker_config as _tracker_config,
 )
-from sprints.workflows.retries import lane_retry_is_due as _lane_retry_is_due
+from sprints.workflows.state_retries import lane_retry_is_due as _lane_retry_is_due
 
 @dataclass(frozen=True)
 class TeardownOps:

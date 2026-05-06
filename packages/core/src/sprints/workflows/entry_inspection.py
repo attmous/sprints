@@ -7,8 +7,8 @@ import json
 from sprints.core.config import WorkflowConfig
 from sprints.core.loader import load_workflow_policy
 from sprints.workflows.state_io import load_state, validate_state
-from sprints.workflows.status import build_lane_status
-from sprints.workflows.lanes import lane_by_id, lane_summary
+from sprints.workflows.state_status import build_lane_status
+from sprints.workflows.entry_lanes import lane_by_id, lane_summary
 
 
 def validate_command(config: WorkflowConfig) -> int:

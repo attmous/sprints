@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sprints.workflows.sessions import active_actor_dispatch
+from sprints.workflows.runtime_sessions import active_actor_dispatch
 
 
 def done_release_verified(lane: dict[str, Any]) -> bool:

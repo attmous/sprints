@@ -38,7 +38,7 @@ from sprints.workflows.state_io import (
     save_state,
     validate_state,
 )
-from sprints.workflows.sessions import (
+from sprints.workflows.runtime_sessions import (
     runtime_session_has_identity,
     scheduler_entry,
 )

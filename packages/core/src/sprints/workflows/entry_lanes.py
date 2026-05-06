@@ -6,7 +6,7 @@ submodule directly.
 
 from __future__ import annotations
 
-from sprints.workflows.intake import claim_new_lanes
+from sprints.workflows.lane_intake import claim_new_lanes
 from sprints.workflows.actor_outputs import (
     apply_actor_output_status,
     record_actor_output,
@@ -22,16 +22,16 @@ from sprints.workflows.lane_state import (
     set_lane_operator_attention,
     set_lane_status,
 )
-from sprints.workflows.reconcile import reconcile_lanes
-from sprints.workflows.retries import consume_lane_retry, lane_retry_inputs, queue_lane_retry
-from sprints.workflows.status import (
+from sprints.workflows.lane_reconcile import reconcile_lanes
+from sprints.workflows.state_retries import consume_lane_retry, lane_retry_inputs, queue_lane_retry
+from sprints.workflows.state_status import (
     build_dispatch_audit,
     build_lane_status,
     build_retry_audit,
     build_side_effect_audit,
     build_workflow_facts,
 )
-from sprints.workflows.transitions import (
+from sprints.workflows.lane_transitions import (
     actor_concurrency_usage,
     advance_lane,
     complete_lane,

@@ -30,7 +30,7 @@ from sprints.engine.work import work_item_from_issue
 from sprints.core.config import WorkflowConfig, WorkflowConfigError
 from sprints.core.contracts import WorkflowContractError, load_workflow_contract
 from sprints.core.paths import runtime_paths
-from sprints.workflows.projection import (
+from sprints.workflows.state_projection import (
     project_engine_first_lanes,
     projected_lane_is_terminal,
 )

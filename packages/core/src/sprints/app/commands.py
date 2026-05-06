@@ -14,7 +14,7 @@ from sprints.services.codex_service import (
     codex_app_server_status,
 )
 from sprints.services.daemon import workflow_daemon_status
-from sprints.workflows.status import build_status
+from sprints.workflows.state_status import build_status
 
 
 def get_status(workflow_root: Path) -> dict[str, Any]:

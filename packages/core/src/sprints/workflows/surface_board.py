@@ -6,8 +6,8 @@ from typing import Any
 
 from sprints.core.config import WorkflowConfig
 from sprints.trackers import build_tracker_client
-from sprints.workflows.board_state import BoardState, desired_state_mutation
-from sprints.workflows.effects import (
+from sprints.workflows.surface_board_state import BoardState, desired_state_mutation
+from sprints.workflows.state_effects import (
     completed_side_effect,
     record_side_effect_failed,
     record_side_effect_skipped,

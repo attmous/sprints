@@ -10,13 +10,13 @@ from sprints.trackers import (
     issue_priority_sort_key,
 )
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.effects import (
+from sprints.workflows.state_effects import (
     record_side_effect_failed,
     record_side_effect_started,
     record_side_effect_succeeded,
     side_effect_key,
 )
-from sprints.workflows.board_state import (
+from sprints.workflows.surface_board_state import (
     BoardState,
     state_from_labels,
     state_labels,
@@ -39,7 +39,7 @@ from sprints.workflows.lane_state import (
     active_lanes,
     lane_is_terminal,
 )
-from sprints.workflows.workpad import (
+from sprints.workflows.surface_workpad import (
     ensure_workpad,
     record_workpad_failure,
     record_workpad_skipped,

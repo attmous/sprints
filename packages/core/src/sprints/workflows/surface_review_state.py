@@ -7,7 +7,7 @@ from typing import Any
 
 from sprints.core.config import WorkflowConfig
 from sprints.trackers import build_code_host_client
-from sprints.workflows.board_state import BoardState, state_from_labels
+from sprints.workflows.surface_board_state import BoardState, state_from_labels
 from sprints.workflows.lane_state import (
     append_engine_event,
     code_host_config,
@@ -16,11 +16,11 @@ from sprints.workflows.lane_state import (
     now_iso,
     repository_path,
 )
-from sprints.workflows.review_context import (
+from sprints.workflows.surface_review_context import (
     collect_review_context,
     compact_review_context,
 )
-from sprints.workflows.sessions import active_actor_dispatch
+from sprints.workflows.runtime_sessions import active_actor_dispatch
 
 
 _REQUIRED_BLOCKER_KINDS = {

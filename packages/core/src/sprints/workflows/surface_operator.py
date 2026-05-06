@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.orchestrator import OrchestratorDecision
+from sprints.workflows.route_orchestrator import OrchestratorDecision
 from sprints.workflows.state_io import (
     WorkflowState,
     load_state,
@@ -14,7 +14,7 @@ from sprints.workflows.state_io import (
     save_state_event,
     with_state_lock,
 )
-from sprints.workflows.lanes import (
+from sprints.workflows.entry_lanes import (
     complete_lane,
     lane_by_id,
     lane_stage,

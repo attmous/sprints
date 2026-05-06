@@ -8,14 +8,14 @@ from typing import Any
 from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import WorkflowPolicy
 from sprints.core.loader import load_workflow_policy
-from sprints.workflows.intake import claim_new_lanes
+from sprints.workflows.lane_intake import claim_new_lanes
 from sprints.workflows.lane_state import (
     active_lanes,
     now_iso,
 )
-from sprints.workflows.reconcile import reconcile_lanes
+from sprints.workflows.lane_reconcile import reconcile_lanes
 from sprints.workflows.route_effects import apply_actor_route
-from sprints.workflows.routes import (
+from sprints.workflows.route_rules import (
     ActorRoute,
     route_lane,
 )
@@ -35,7 +35,7 @@ from sprints.workflows.tick_journal import (
     result_summaries,
     start_tick_journal,
 )
-from sprints.workflows.transitions import actor_concurrency_usage
+from sprints.workflows.lane_transitions import actor_concurrency_usage
 
 
 def tick_actor_driven_locked(

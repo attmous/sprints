@@ -8,10 +8,10 @@ from typing import Any, Literal
 
 from sprints.engine import EngineStore
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.orchestrator import OrchestratorDecision
+from sprints.workflows.route_orchestrator import OrchestratorDecision
 from sprints.core.paths import runtime_paths
 from sprints.workflows.state_io import WorkflowState
-from sprints.workflows.lanes import active_lanes, decision_ready_lanes
+from sprints.workflows.entry_lanes import active_lanes, decision_ready_lanes
 
 
 def _engine_store(config: WorkflowConfig) -> EngineStore:

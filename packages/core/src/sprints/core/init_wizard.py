@@ -25,7 +25,7 @@ from sprints.core.contracts import (
     snapshot_workflow_contract,
 )
 from sprints.core.paths import derive_workflow_instance_name, repo_local_workflow_pointer_path
-from sprints.workflows.registry import DEFAULT_WORKFLOW_NAME, SUPPORTED_WORKFLOW_NAMES
+from sprints.workflows.entry_registry import DEFAULT_WORKFLOW_NAME, SUPPORTED_WORKFLOW_NAMES
 from sprints.core.validation import validate_workflow_contract
 
 

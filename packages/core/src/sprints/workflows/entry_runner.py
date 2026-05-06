@@ -6,15 +6,15 @@ import argparse
 from pathlib import Path
 
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.dispatch import run_actor_worker
-from sprints.workflows.inspection import (
+from sprints.workflows.runtime_dispatch import run_actor_worker
+from sprints.workflows.entry_inspection import (
     lanes_command,
     show_command,
     status_command,
     validate_command,
 )
-from sprints.workflows.operator import operator_complete, operator_release, operator_retry
-from sprints.workflows.ticks import tick
+from sprints.workflows.surface_operator import operator_complete, operator_release, operator_retry
+from sprints.workflows.tick_orchestrator import tick
 
 
 def main(workspace: object, argv: list[str]) -> int:

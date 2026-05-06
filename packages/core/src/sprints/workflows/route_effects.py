@@ -6,9 +6,9 @@ from typing import Any
 
 from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import WorkflowPolicy
-from sprints.workflows.board import set_lane_board_state
-from sprints.workflows.board_state import BoardState
-from sprints.workflows.dispatch import (
+from sprints.workflows.surface_board import set_lane_board_state
+from sprints.workflows.surface_board_state import BoardState
+from sprints.workflows.runtime_dispatch import (
     actor_dispatch_mode,
     dispatch_stage_actor_background,
     run_stage_actor,
@@ -21,12 +21,12 @@ from sprints.workflows.lane_state import (
     set_lane_operator_attention,
     set_lane_status,
 )
-from sprints.workflows.orchestrator import OrchestratorDecision
-from sprints.workflows.retries import lane_retry_is_due, queue_lane_retry
-from sprints.workflows.routes import ActorRoute
-from sprints.workflows.sessions import active_actor_dispatch
+from sprints.workflows.route_orchestrator import OrchestratorDecision
+from sprints.workflows.state_retries import lane_retry_is_due, queue_lane_retry
+from sprints.workflows.route_rules import ActorRoute
+from sprints.workflows.runtime_sessions import active_actor_dispatch
 from sprints.workflows.state_io import WorkflowState, persist_runtime_state
-from sprints.workflows.transitions import release_lane, validate_actor_capacity
+from sprints.workflows.lane_transitions import release_lane, validate_actor_capacity
 
 
 _DISPATCHABLE_STATUSES = {"claimed", "waiting", "review_waiting"}

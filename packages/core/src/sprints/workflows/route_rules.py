@@ -6,21 +6,21 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.board_state import BoardState, state_from_labels
-from sprints.workflows.completion import done_release_verified
+from sprints.workflows.surface_board_state import BoardState, state_from_labels
+from sprints.workflows.lane_completion import done_release_verified
 from sprints.workflows.lane_state import (
     active_lanes,
     completion_cleanup_retry_pending,
     lane_is_terminal,
 )
-from sprints.workflows.retries import lane_retry_is_due
-from sprints.workflows.review_state import (
+from sprints.workflows.state_retries import lane_retry_is_due
+from sprints.workflows.surface_review_state import (
     review_actor_enabled,
     review_has_required_changes,
     review_required_changes,
     reviewer_actor_running,
 )
-from sprints.workflows.sessions import active_actor_dispatch
+from sprints.workflows.runtime_sessions import active_actor_dispatch
 from sprints.workflows.state_io import WorkflowState
 
 

@@ -6,14 +6,14 @@ from typing import Any
 
 from sprints.core.config import WorkflowConfig
 from sprints.workflows.state_io import WorkflowState
-from sprints.workflows.lanes import lane_mapping
+from sprints.workflows.entry_lanes import lane_mapping
 from sprints.workflows.prompt_context import (
     compact_lane_for_prompt,
     compact_value,
     compact_workflow_state,
     orchestrator_prompt_budget,
 )
-from sprints.workflows.workpad import render_workpad
+from sprints.workflows.surface_workpad import render_workpad
 
 _PROMPT_INPUT_EXCLUDE_KEYS = {
     "audit",

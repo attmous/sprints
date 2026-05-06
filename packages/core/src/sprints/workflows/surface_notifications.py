@@ -9,7 +9,7 @@ from typing import Any
 
 from sprints.trackers import build_code_host_client
 from sprints.core.config import WorkflowConfig
-from sprints.workflows.effects import (
+from sprints.workflows.state_effects import (
     completed_side_effect,
     record_side_effect_failed,
     record_side_effect_skipped,

@@ -20,7 +20,7 @@ from sprints.core.contract_apply import (
 )
 from sprints.core.contracts import WorkflowContractError
 from sprints.core.doctor import build_doctor_report
-from sprints.workflows.registry import (
+from sprints.workflows.entry_registry import (
     DEFAULT_WORKFLOW_NAME,
     SUPPORTED_WORKFLOW_NAMES,
 )
@@ -41,7 +41,7 @@ from sprints.services.daemon import (
     workflow_daemon_status,
     workflow_daemon_up,
 )
-from sprints.workflows.status import build_status as build_workflow_status
+from sprints.workflows.state_status import build_status as build_workflow_status
 from sprints.services.codex_service import (
     CodexAppServerError,
     DEFAULT_CODEX_APP_SERVER_HEALTHCHECK_PATH,
