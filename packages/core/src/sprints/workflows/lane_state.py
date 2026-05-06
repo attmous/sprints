@@ -86,12 +86,17 @@ def lane_recovery_artifacts(
 
 
 def lane_actor_runtime_session(
-    lane: dict[str, Any], *, actor_name: str, stage_name: str
+    lane: dict[str, Any],
+    *,
+    actor_name: str,
+    stage_name: str,
+    actor_mode: str | None = None,
 ) -> dict[str, Any]:
     return sessions.lane_actor_runtime_session(
         lane,
         actor_name=actor_name,
         stage_name=stage_name,
+        actor_mode=actor_mode,
     )
 
 
@@ -211,6 +216,7 @@ def actor_dispatch_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
             "stage": dispatch.get("stage"),
             "attempt": dispatch.get("attempt"),
             "mode": runtime.get("dispatch_mode"),
+            "actor_mode": runtime.get("actor_mode") or runtime.get("mode"),
             "planned_at": dispatch.get("planned_at"),
             "started_at": dispatch.get("started_at"),
             "last_progress_at": dispatch.get("last_progress_at"),

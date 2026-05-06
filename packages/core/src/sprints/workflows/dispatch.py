@@ -31,7 +31,7 @@ from sprints.workflows.state_io import (
     validate_state,
     with_state_lock,
 )
-from sprints.workflows.variables import actor_variables
+from sprints.workflows.variables import actor_dispatch_inputs, actor_variables
 from sprints.workflows.worktrees import ensure_lane_worktree
 from sprints.workflows.lanes import (
     apply_actor_output_status,
@@ -118,7 +118,12 @@ def run_stage_actor(
     if not guard.get("allowed"):
         persist_runtime_state(config=config, state=state)
         return guard
-    inputs = lane_retry_inputs(lane=lane, inputs=inputs)
+    inputs = actor_dispatch_inputs(
+        lane=lane,
+        actor_name=actor_name,
+        inputs=lane_retry_inputs(lane=lane, inputs=inputs),
+    )
+    actor_mode = str(inputs.get("mode") or "").strip()
     worktree = ensure_lane_worktree(config=config, lane=lane)
     runtime_plan = actor_runtime_plan(
         config=config,
@@ -126,7 +131,10 @@ def run_stage_actor(
         stage_name=stage_name,
         lane_id=lane_id,
         resume_session_id=_resume_session_id(
-            lane, actor_name=actor_name, stage_name=stage_name
+            lane,
+            actor_name=actor_name,
+            stage_name=stage_name,
+            actor_mode=actor_mode,
         ),
     )
     prompt = build_actor_prompt(
@@ -139,7 +147,7 @@ def run_stage_actor(
         dispatch_mode="inline",
         prompt=prompt,
         inputs=inputs,
-        extra={"worktree": str(worktree)},
+        extra={"worktree": str(worktree), "actor_mode": actor_mode},
     )
     record_actor_dispatch_planned(
         config=config,
@@ -225,6 +233,7 @@ def run_stage_actor(
             runtime_meta={
                 **_runtime_plan_meta(runtime_plan),
                 "dispatch_id": dispatch_meta.get("dispatch_id"),
+                "actor_mode": actor_mode,
                 **_runtime_result_meta(getattr(exc, "result", None)),
                 "last_message": str(exc),
             },
@@ -249,6 +258,7 @@ def run_stage_actor(
     runtime_meta = {
         **_runtime_plan_meta(runtime_plan),
         "dispatch_id": dispatch_meta.get("dispatch_id"),
+        "actor_mode": actor_mode,
         **_runtime_result_meta(runtime_result),
     }
     raw_output = runtime_result.output
@@ -344,7 +354,12 @@ def dispatch_stage_actor_background(
         persist_runtime_state(config=config, state=state)
         return guard
 
-    actor_inputs = lane_retry_inputs(lane=lane, inputs=inputs)
+    actor_inputs = actor_dispatch_inputs(
+        lane=lane,
+        actor_name=actor_name,
+        inputs=lane_retry_inputs(lane=lane, inputs=inputs),
+    )
+    actor_mode = str(actor_inputs.get("mode") or "").strip()
     worktree = ensure_lane_worktree(config=config, lane=lane)
     runtime_plan = actor_runtime_plan(
         config=config,
@@ -352,14 +367,21 @@ def dispatch_stage_actor_background(
         stage_name=stage_name,
         lane_id=lane_id,
         resume_session_id=_resume_session_id(
-            lane, actor_name=actor_name, stage_name=stage_name
+            lane,
+            actor_name=actor_name,
+            stage_name=stage_name,
+            actor_mode=actor_mode,
         ),
     )
     dispatch_meta = _dispatch_plan_meta(
         runtime_plan=runtime_plan,
         dispatch_mode="background",
         inputs=actor_inputs,
-        extra={"worktree": str(worktree), "prompt_deferred": True},
+        extra={
+            "worktree": str(worktree),
+            "prompt_deferred": True,
+            "actor_mode": actor_mode,
+        },
     )
     record_actor_dispatch_planned(
         config=config,
@@ -530,6 +552,7 @@ def _write_actor_dispatch_file(
         "lane_id": lane_id,
         "stage": stage_name,
         "actor": actor_name,
+        "mode": inputs.get("mode"),
         "inputs": inputs,
         "runtime_meta": dict(runtime_meta),
     }
@@ -686,10 +709,13 @@ def _spawn_actor_worker(
 
 
 def _resume_session_id(
-    lane: dict[str, Any], *, actor_name: str, stage_name: str
+    lane: dict[str, Any], *, actor_name: str, stage_name: str, actor_mode: str
 ) -> str | None:
     session = lane_actor_runtime_session(
-        lane, actor_name=actor_name, stage_name=stage_name
+        lane,
+        actor_name=actor_name,
+        stage_name=stage_name,
+        actor_mode=actor_mode,
     )
     value = session.get("thread_id") or session.get("session_id")
     text = str(value or "").strip()
@@ -895,7 +921,10 @@ def _run_actor_runtime_for_worker(
         stage_name=stage_name,
         lane_id=lane_id,
         resume_session_id=_resume_session_id(
-            lane, actor_name=actor_name, stage_name=stage_name
+            lane,
+            actor_name=actor_name,
+            stage_name=stage_name,
+            actor_mode=str(inputs.get("mode") or "").strip(),
         ),
     )
     prompt = build_actor_prompt(
@@ -914,6 +943,7 @@ def _run_actor_runtime_for_worker(
     runtime_meta = {
         **dispatch_meta,
         **_runtime_plan_meta(runtime_plan),
+        "actor_mode": inputs.get("mode"),
         **_runtime_result_meta(runtime_result),
     }
     raw_output = runtime_result.output

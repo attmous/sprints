@@ -414,6 +414,8 @@ def _compact_runtime_session(value: Any, *, budget: PromptBudget) -> dict[str, A
         "updated_at",
         "completed_at",
         "error",
+        "actor_mode",
+        "mode",
     )
     return _drop_empty(
         {key: compact_value(session.get(key), budget=budget) for key in keep}
@@ -474,6 +476,8 @@ def actor_dispatch_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
             "stage": dispatch.get("stage"),
             "attempt": dispatch.get("attempt"),
             "mode": runtime.get("dispatch_mode"),
+            "dispatch_mode": runtime.get("dispatch_mode"),
+            "actor_mode": runtime.get("actor_mode") or runtime.get("mode"),
             "planned_at": dispatch.get("planned_at"),
             "started_at": dispatch.get("started_at"),
             "last_progress_at": dispatch.get("last_progress_at"),

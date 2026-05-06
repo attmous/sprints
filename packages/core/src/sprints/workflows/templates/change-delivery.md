@@ -66,7 +66,7 @@ actors:
     runtime: codex
   implementer:
     runtime: codex
-    skills: [pull, debug, commit, push]
+    skills: [pull, debug, commit, push, land]
   reviewer:
     runtime: codex
     skills: [review]
@@ -234,6 +234,15 @@ Issue:
 Lane:
 {{ lane }}
 
+Mode:
+{{ mode }}
+
+Board state:
+{{ board_state }}
+
+Workpad:
+{{ workpad }}
+
 Workflow state:
 {{ workflow }}
 
@@ -245,6 +254,12 @@ Retry:
 
 Review feedback:
 {{ review_feedback }}
+
+Review signals:
+{{ review_signals }}
+
+Merge signal:
+{{ merge_signal }}
 
 ## Policy
 
@@ -308,6 +323,9 @@ Issue:
 Lane:
 {{ lane }}
 
+Mode:
+{{ mode }}
+
 Implementation result:
 {{ implementation }}
 
@@ -319,6 +337,9 @@ Workflow state:
 
 Retry:
 {{ retry }}
+
+Review signals:
+{{ review_signals }}
 
 ## Policy
 
