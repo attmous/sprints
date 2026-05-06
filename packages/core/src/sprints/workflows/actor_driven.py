@@ -10,6 +10,14 @@ from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import WorkflowPolicy
 from sprints.core.loader import load_workflow_policy
 from sprints.trackers import build_tracker_client
+from sprints.workflows.effects import (
+    completed_side_effect,
+    record_side_effect_failed,
+    record_side_effect_skipped,
+    record_side_effect_started,
+    record_side_effect_succeeded,
+    side_effect_key,
+)
 from sprints.workflows.board_state import (
     BoardState,
     desired_state_mutation,
@@ -570,6 +578,7 @@ def apply_actor_route(
             reason=route.reason or "waiting for shared review",
         )
         record_engine_lane(config=config, lane=lane)
+        persist_runtime_state(config=config, state=state)
         return _route_result(lane=lane, route=route, status="waiting")
     if route.action == "operator_attention":
         set_lane_operator_attention(
@@ -581,10 +590,13 @@ def apply_actor_route(
         )
         return _route_result(lane=lane, route=route, status="operator_attention")
     if route.action == "move_board":
-        return _apply_board_move_route(config=config, lane=lane, route=route)
+        return _apply_board_move_route(
+            config=config, state=state, lane=lane, route=route
+        )
     if route.action == "release":
         release_lane(config=config, lane=lane, reason=route.reason or "released")
         record_engine_lane(config=config, lane=lane)
+        persist_runtime_state(config=config, state=state)
         return _route_result(lane=lane, route=route, status="released")
     if route.action != "dispatch":
         return _route_result(lane=lane, route=route, status="skipped")
@@ -628,26 +640,27 @@ def apply_actor_route(
             config=config, lane=lane, target=BoardState.IN_PROGRESS
         )
         if transition.get("status") == "failed":
+            retry = _queue_route_retry(
+                config=config,
+                lane=lane,
+                route=route,
+                reason=str(transition.get("error") or "failed to set board state"),
+                inputs={
+                    "board_state_target": BoardState.IN_PROGRESS.value,
+                    "mode": mode or "implement",
+                },
+            )
+            persist_runtime_state(config=config, state=state)
             return _route_result(
                 lane=lane,
                 route=route,
                 status="retry_queued",
                 extra={
                     "transition": transition,
-                    "retry": _queue_route_retry(
-                        config=config,
-                        lane=lane,
-                        route=route,
-                        reason=str(
-                            transition.get("error") or "failed to set board state"
-                        ),
-                        inputs={
-                            "board_state_target": BoardState.IN_PROGRESS.value,
-                            "mode": mode or "implement",
-                        },
-                    ),
+                    "retry": retry,
                 },
             )
+        persist_runtime_state(config=config, state=state)
     _move_lane_stage(
         config=config,
         lane=lane,
@@ -655,6 +668,7 @@ def apply_actor_route(
         status=None if str(lane.get("status") or "") == "retry_queued" else "claimed",
         reason=route.reason or f"dispatch {actor}",
     )
+    persist_runtime_state(config=config, state=state)
     inputs = dict(route.inputs or {})
     if mode:
         inputs["mode"] = mode
@@ -734,7 +748,52 @@ def set_lane_board_state(
         return {"status": "failed", "error": str(exc), "target": target.value}
     if not mutation.add and not mutation.remove:
         refresh_lane_board_metadata(config=config, lane=lane, issue=issue)
-        return {"status": "ok", "changed": False, "target": target.value}
+        skipped = _record_board_state_side_effect_skipped(
+            config=config,
+            lane=lane,
+            issue_id=issue_id,
+            target=target,
+            mutation=mutation,
+            reason="state labels already match target",
+        )
+        return {
+            "status": "ok",
+            "changed": False,
+            "target": target.value,
+            "side_effect": skipped,
+        }
+    effect_key = _board_state_side_effect_key(
+        config=config,
+        lane=lane,
+        issue_id=issue_id,
+        target=target,
+        mutation=mutation,
+    )
+    completed = completed_side_effect(config=config, lane=lane, key=effect_key)
+    if completed:
+        _apply_label_mutation(issue=issue, add=mutation.add, remove=mutation.remove)
+        refresh_lane_board_metadata(config=config, lane=lane, issue=issue)
+        return {
+            "status": "ok",
+            "changed": False,
+            "target": target.value,
+            "idempotency_key": effect_key,
+            "side_effect": completed,
+            "reason": "board state side effect already completed",
+        }
+    payload = {
+        "target": target.value,
+        "add": mutation.add,
+        "remove": mutation.remove,
+    }
+    record_side_effect_started(
+        config=config,
+        lane=lane,
+        key=effect_key,
+        operation="tracker.set_issue_state_label",
+        target=f"issue:{issue_id or 'missing'}:state:{target.value}",
+        payload=payload,
+    )
     try:
         client = build_tracker_client(
             workflow_root=config.workflow_root,
@@ -745,6 +804,15 @@ def set_lane_board_state(
             issue_id, add=mutation.add, remove=mutation.remove
         )
     except Exception as exc:
+        record_side_effect_failed(
+            config=config,
+            lane=lane,
+            key=effect_key,
+            operation="tracker.set_issue_state_label",
+            target=f"issue:{issue_id or 'missing'}:state:{target.value}",
+            payload=payload,
+            error=str(exc),
+        )
         append_engine_event(
             config=config,
             lane=lane,
@@ -759,6 +827,15 @@ def set_lane_board_state(
         )
         return {"status": "failed", "error": str(exc), "target": target.value}
     if not changed:
+        record_side_effect_failed(
+            config=config,
+            lane=lane,
+            key=effect_key,
+            operation="tracker.set_issue_state_label",
+            target=f"issue:{issue_id or 'missing'}:state:{target.value}",
+            payload=payload,
+            error="tracker did not apply requested state label mutation",
+        )
         return {
             "status": "failed",
             "error": "tracker did not apply requested state label mutation",
@@ -768,6 +845,15 @@ def set_lane_board_state(
         }
     _apply_label_mutation(issue=issue, add=mutation.add, remove=mutation.remove)
     refresh_lane_board_metadata(config=config, lane=lane, issue=issue)
+    side_effect = record_side_effect_succeeded(
+        config=config,
+        lane=lane,
+        key=effect_key,
+        operation="tracker.set_issue_state_label",
+        target=f"issue:{issue_id or 'missing'}:state:{target.value}",
+        payload=payload,
+        result={"changed": changed},
+    )
     append_engine_event(
         config=config,
         lane=lane,
@@ -785,11 +871,17 @@ def set_lane_board_state(
         "target": target.value,
         "add": mutation.add,
         "remove": mutation.remove,
+        "idempotency_key": effect_key,
+        "side_effect": side_effect,
     }
 
 
 def _apply_board_move_route(
-    *, config: WorkflowConfig, lane: dict[str, Any], route: ActorRoute
+    *,
+    config: WorkflowConfig,
+    state: WorkflowState,
+    lane: dict[str, Any],
+    route: ActorRoute,
 ) -> dict[str, Any]:
     target = str(route.target_board_state or "").strip()
     try:
@@ -812,6 +904,7 @@ def _apply_board_move_route(
             reason=str(transition.get("error") or "failed to set board state"),
             inputs={"board_state_target": target_state.value},
         )
+        persist_runtime_state(config=config, state=state)
         return _route_result(
             lane=lane,
             route=route,
@@ -829,6 +922,7 @@ def _apply_board_move_route(
             reason=route.reason or f"moved board state to {target_state.value}",
         )
     record_engine_lane(config=config, lane=lane)
+    persist_runtime_state(config=config, state=state)
     return _route_result(
         lane=lane,
         route=route,
@@ -1039,6 +1133,62 @@ def _apply_label_mutation(
         if label.lower() not in existing_lower:
             labels.append(label)
     issue["labels"] = labels
+
+
+def _board_state_side_effect_key(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    issue_id: Any,
+    target: BoardState,
+    mutation: Any,
+) -> str:
+    return side_effect_key(
+        config=config,
+        lane=lane,
+        operation="tracker.set_issue_state_label",
+        target=_board_state_side_effect_target(issue_id=issue_id, target=target),
+        payload={
+            "target": target.value,
+            "add": list(mutation.add or []),
+            "remove": list(mutation.remove or []),
+        },
+    )
+
+
+def _record_board_state_side_effect_skipped(
+    *,
+    config: WorkflowConfig,
+    lane: dict[str, Any],
+    issue_id: Any,
+    target: BoardState,
+    mutation: Any,
+    reason: str,
+) -> dict[str, Any]:
+    key = _board_state_side_effect_key(
+        config=config,
+        lane=lane,
+        issue_id=issue_id,
+        target=target,
+        mutation=mutation,
+    )
+    return record_side_effect_skipped(
+        config=config,
+        lane=lane,
+        key=key,
+        operation="tracker.set_issue_state_label",
+        target=_board_state_side_effect_target(issue_id=issue_id, target=target),
+        payload={
+            "target": target.value,
+            "add": list(mutation.add or []),
+            "remove": list(mutation.remove or []),
+        },
+        reason=reason,
+    )
+
+
+def _board_state_side_effect_target(*, issue_id: Any, target: BoardState) -> str:
+    return f"issue:{issue_id or 'missing'}:state:{target.value}"
 
 
 def _route_result(
