@@ -27,11 +27,11 @@ from sprints.engine.state import (
     read_engine_scheduler_state,
 )
 from sprints.engine.work import work_item_from_issue
+from sprints.core.config import WorkflowConfig, WorkflowConfigError
 from sprints.core.contracts import WorkflowContractError, load_workflow_contract
 from sprints.core.paths import runtime_paths
 from sprints.workflows.projection import (
-    project_lane_map,
-    project_state_lane,
+    project_engine_first_lanes,
     projected_lane_is_terminal,
 )
 
@@ -76,6 +76,23 @@ def _workflow_name(workflow_root: Path) -> str | None:
             or None
         )
     except (FileNotFoundError, WorkflowContractError, OSError):
+        return None
+
+
+def _workflow_config(workflow_root: Path) -> WorkflowConfig | None:
+    try:
+        contract = load_workflow_contract(Path(workflow_root))
+        return WorkflowConfig.from_raw(
+            raw=contract.config,
+            workflow_root=Path(workflow_root),
+        )
+    except (
+        FileNotFoundError,
+        WorkflowConfigError,
+        WorkflowContractError,
+        OSError,
+        ValueError,
+    ):
         return None
 
 
@@ -131,62 +148,8 @@ def _workflow_state_payload(workflow_root: Path, workflow_name: str) -> dict[str
     return _load_optional_json(state_path) or {}
 
 
-def _state_lanes(workflow_root: Path, workflow_name: str) -> list[dict[str, Any]]:
-    state = _workflow_state_payload(workflow_root, workflow_name)
-    lanes = state.get("lanes") if isinstance(state.get("lanes"), dict) else {}
-    return [lane for lane in lanes.values() if isinstance(lane, dict)]
-
-
-def _active_state_lanes(
-    workflow_root: Path, workflow_name: str
-) -> list[dict[str, Any]]:
-    return [
-        lane
-        for lane in _state_lanes(workflow_root, workflow_name)
-        if not _lane_is_terminal(lane)
-    ]
-
-
-def _state_lanes_by_id(
-    workflow_root: Path, workflow_name: str
-) -> dict[str, dict[str, Any]]:
-    lanes: dict[str, dict[str, Any]] = {}
-    for lane in _state_lanes(workflow_root, workflow_name):
-        lane_id = str(lane.get("lane_id") or "").strip()
-        if lane_id:
-            lanes[lane_id] = lane
-    return lanes
-
-
 def _lane_is_terminal(lane: dict[str, Any]) -> bool:
     return projected_lane_is_terminal(lane)
-
-
-def _engine_work_items(workflow_root: Path, workflow_name: str) -> list[dict[str, Any]]:
-    try:
-        return EngineStore(
-            db_path=runtime_paths(workflow_root)["db_path"],
-            workflow=workflow_name,
-        ).work_items(limit=500)
-    except Exception:
-        return []
-
-
-def _engine_runtime_sessions(
-    workflow_root: Path, workflow_name: str
-) -> dict[str, dict[str, Any]]:
-    try:
-        sessions = EngineStore(
-            db_path=runtime_paths(workflow_root)["db_path"],
-            workflow=workflow_name,
-        ).runtime_sessions(limit=500)
-    except Exception:
-        return {}
-    return {
-        str(session.get("work_id") or session.get("issue_id") or ""): session
-        for session in sessions
-        if isinstance(session, dict)
-    }
 
 
 def recent_sprints_events(workflow_root: Path, limit: int = 50) -> list[dict[str, Any]]:
@@ -297,13 +260,12 @@ def active_lanes(workflow_root: Path) -> list[dict[str, Any]]:
             if isinstance(row, dict)
         ]
 
-    state_lanes = _state_lanes_by_id(workflow_root, "change-delivery")
-    runtime_sessions = _engine_runtime_sessions(workflow_root, "change-delivery")
-    projected = project_lane_map(
-        workflow_name="change-delivery",
-        state_lanes=state_lanes,
-        engine_work_items=_engine_work_items(workflow_root, "change-delivery"),
-        engine_runtime_sessions=runtime_sessions,
+    config = _workflow_config(workflow_root)
+    if config is None:
+        return []
+    projected = project_engine_first_lanes(
+        config=config,
+        state=_workflow_state_payload(workflow_root, config.workflow_name),
     )
     return [
         lane
@@ -352,6 +314,9 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
     if not workflow_name:
         return {}
     if workflow_name == "change-delivery":
+        config = _workflow_config(workflow_root)
+        if config is None:
+            return {}
         scheduler_payload = _engine_scheduler(workflow_root, "change-delivery")
         retry_wakeup = EngineStore(
             db_path=runtime_paths(workflow_root)["db_path"],
@@ -360,27 +325,38 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
         totals = scheduler_payload.get("runtime_totals") or {}
         runtime_sessions = _runtime_session_entries(scheduler_payload)
         latest_runs = _engine_runs(workflow_root, "change-delivery")
-        active = _active_state_lanes(workflow_root, "change-delivery")
+        projected = project_engine_first_lanes(
+            config=config,
+            state=_workflow_state_payload(workflow_root, config.workflow_name),
+        )
         active_entries = [
-            project_state_lane(lane, workflow_name="change-delivery") for lane in active
+            lane for lane in projected.values() if not _lane_is_terminal(lane)
         ]
         running_count = len(
-            [lane for lane in active if str(lane.get("status") or "") == "running"]
+            [
+                lane
+                for lane in active_entries
+                if str(lane.get("status") or "") == "running"
+            ]
         )
         retry_count = len(
-            [lane for lane in active if str(lane.get("status") or "") == "retry_queued"]
+            [
+                lane
+                for lane in active_entries
+                if str(lane.get("status") or "") == "retry_queued"
+            ]
         )
         attention_count = len(
             [
                 lane
-                for lane in active
+                for lane in active_entries
                 if str(lane.get("status") or "") == "operator_attention"
             ]
         )
         decision_ready_count = len(
             [
                 lane
-                for lane in active
+                for lane in active_entries
                 if str(lane.get("status") or "") in {"claimed", "waiting"}
             ]
         )
@@ -388,7 +364,7 @@ def workflow_status(workflow_root: Path) -> dict[str, Any]:
             "workflow": "change-delivery",
             "health": None,
             "updated_at": scheduler_payload.get("updated_at"),
-            "active_lane_count": len(active),
+            "active_lane_count": len(active_entries),
             "decision_ready_count": decision_ready_count,
             "running_count": running_count,
             "retry_count": retry_count,

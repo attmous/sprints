@@ -4,10 +4,27 @@ from __future__ import annotations
 
 from typing import Any
 
+from sprints.core.config import WorkflowConfig
 from sprints.engine.work import work_item_from_issue
-from sprints.workflows.lane_state import lane_summary
+from sprints.workflows.lane_state import engine_store, lane_summary
 
 TERMINAL_ENGINE_STATES = {"complete", "released", "merged", "closed", "archived"}
+
+
+def project_engine_first_lanes(
+    *,
+    config: WorkflowConfig,
+    state: dict[str, Any],
+    limit: int = 500,
+) -> dict[str, dict[str, Any]]:
+    lanes = state.get("lanes") if isinstance(state.get("lanes"), dict) else {}
+    store = engine_store(config)
+    return project_lane_map(
+        workflow_name=config.workflow_name,
+        state_lanes=lanes,
+        engine_work_items=store.work_items(limit=limit),
+        engine_runtime_sessions=store.runtime_sessions(limit=limit),
+    )
 
 
 def project_lane_map(

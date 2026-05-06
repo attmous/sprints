@@ -124,17 +124,10 @@ def build_review_signals(
     approvals = _approval_items(reviewer=reviewer, readiness=readiness)
     merge_signal = merge_signal_for_lane(config=config, lane=lane)
     reviewer_running = reviewer_actor_running(lane)
-    phase = _review_phase(
-        required_changes=required_changes,
-        reviewer_running=reviewer_running,
-        merge_signal_seen=bool(merge_signal.get("seen")),
-    )
     pull_request = readiness.get("pull_request")
     return {
         key: value
         for key, value in {
-            "status": phase,
-            "phase": phase,
             "required_changes": required_changes,
             "approvals": approvals,
             "pending": pending,
@@ -205,18 +198,6 @@ def review_actor_enabled(config: WorkflowConfig) -> bool:
     if isinstance(enabled, bool):
         return enabled
     return str(enabled).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _review_phase(
-    *, required_changes: list[dict[str, Any]], reviewer_running: bool, merge_signal_seen: bool
-) -> str:
-    if required_changes:
-        return "requires_changes"
-    if reviewer_running:
-        return "reviewer_running"
-    if merge_signal_seen:
-        return "merge_signal_seen"
-    return "waiting_review"
 
 
 def _required_changes_from_reviewer(reviewer: dict[str, Any]) -> list[dict[str, Any]]:

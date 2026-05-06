@@ -25,7 +25,7 @@ from sprints.workflows.lane_state import (
     side_effects_summary,
 )
 from sprints.workflows.projection import (
-    project_lane_map,
+    project_engine_first_lanes,
     projected_lane_is_terminal,
 )
 from sprints.workflows.transitions import (
@@ -129,16 +129,11 @@ def build_lane_status(
     store = engine_store(config)
     engine_work_items = store.work_items(limit=500)
     engine_runtime_sessions = store.runtime_sessions(limit=500)
-    projected_lanes = _engine_first_lanes(
-        workflow_name=config.workflow_name,
-        state_lanes=lanes,
-        engine_work_items=engine_work_items,
-        engine_runtime_sessions=engine_runtime_sessions,
-    )
+    projected_lanes = project_engine_first_lanes(config=config, state=state)
     active = [
         lane
         for lane in projected_lanes.values()
-        if isinstance(lane, dict) and not _projected_lane_is_terminal(lane)
+        if isinstance(lane, dict) and not projected_lane_is_terminal(lane)
     ]
     runtime_session_summaries = (
         engine_runtime_sessions
@@ -216,25 +211,6 @@ def build_lane_status(
         "lanes": projected_lanes,
         "state_lanes": lanes,
     }
-
-
-def _engine_first_lanes(
-    *,
-    workflow_name: str,
-    state_lanes: dict[str, Any],
-    engine_work_items: list[dict[str, Any]],
-    engine_runtime_sessions: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    return project_lane_map(
-        workflow_name=workflow_name,
-        state_lanes=state_lanes,
-        engine_work_items=engine_work_items,
-        engine_runtime_sessions=engine_runtime_sessions,
-    )
-
-
-def _projected_lane_is_terminal(lane: dict[str, Any]) -> bool:
-    return projected_lane_is_terminal(lane)
 
 
 def _ready_lanes(*, config: WorkflowConfig, state: Any) -> list[dict[str, Any]]:

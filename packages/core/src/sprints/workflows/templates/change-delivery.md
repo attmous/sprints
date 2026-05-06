@@ -288,6 +288,11 @@ front-matter `routing.actor-driven.rules` table. Python evaluates that ordered
 table and executes the selected route; the lane flow itself should live in the
 workflow config, not in hardcoded branch logic.
 
+Python owns the Sprints workpad lifecycle: create, repair, compact lane
+metadata, and feed the compact workpad context into actor prompts. Actors should
+treat the workpad as lane context. They update it only when an injected skill
+explicitly requires that update.
+
 Review conflict priority is:
 
 ```text
@@ -355,9 +360,10 @@ Merge signal:
 
 ## Policy
 
-Work on exactly one lane: the issue, branch, pull request, workpad, and lane ID
-given in the input. Do not pick another issue, claim another lane, change
-concurrency, or mutate unrelated tracker state.
+Work on exactly one lane: the issue, branch, pull request, and lane ID given in
+the input. Treat the workpad as runner-owned context unless a skill explicitly
+instructs you to update it. Do not pick another issue, claim another lane,
+change concurrency, or mutate unrelated tracker state.
 
 `mode` is the runner's starting instruction for this lane. Treat it as the
 current operating mode, but use the live lane facts you discover while working.
@@ -373,11 +379,12 @@ Implementer modes:
 - `rework`: concrete reviewer, human, bot, check, or retry feedback requires
   changes. Keep the same lane branch and pull request unless the previous pull
   request is closed or merged and cannot be reused. Apply required fixes,
-  verify, commit, push, and update the pull request/workpad.
+  verify, commit, push, and update the pull request.
 - `land`: merge authority exists through the lane input, usually the `merging`
   state or merge signal. Open and follow `.codex/skills/land/SKILL.md`; do not
   call merge mechanics outside that skill path. After landing, clean this lane's
-  labels/state, update the workpad, and return merge/cleanup evidence.
+  labels/state, update the workpad if the land skill requires it, and return
+  merge/cleanup evidence.
 
 If the assigned `mode` conflicts with fresh lane facts, choose the safest valid
 mode for the same lane and explain the transition. Examples: switch from
@@ -404,8 +411,8 @@ return an updated pull request payload.
 
 In `land`, follow the land skill. Verify merge authority, check PR readiness,
 poll only within bounded limits, merge through the skill, remove this lane's
-active workflow labels, add `done`, update the workpad, and return merge and
-cleanup evidence.
+active workflow labels, add `done`, update the workpad only through the land
+skill instruction, and return merge and cleanup evidence.
 
 Never ask for interactive escalation. If auth, permissions, sandbox, or tooling
 fail, return `blocked` with structured blockers and enough artifacts for
