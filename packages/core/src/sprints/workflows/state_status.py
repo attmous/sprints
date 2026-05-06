@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sprints.workflows import sessions
+from sprints.workflows import runtime_sessions as sessions
 from sprints.core.config import WorkflowConfig
 from sprints.core.contracts import load_workflow_contract
 from sprints.workflows.lane_intake import tracker_facts

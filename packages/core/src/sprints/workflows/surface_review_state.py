@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from sprints.core.config import WorkflowConfig
@@ -21,6 +20,9 @@ from sprints.workflows.surface_review_context import (
     compact_review_context,
 )
 from sprints.workflows.runtime_sessions import active_actor_dispatch
+from sprints.workflows.surface_pull_request import (
+    pull_request_number as _pull_request_number,
+)
 
 
 _REQUIRED_BLOCKER_KINDS = {
@@ -344,17 +346,3 @@ def _check_items(blockers: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if str(blocker.get("kind") or "").startswith("check_")
     ]
 
-
-def _pull_request_number(lane: dict[str, Any]) -> str:
-    pull_request = lane.get("pull_request")
-    if not isinstance(pull_request, dict):
-        return ""
-    for key in ("number", "pr_number", "id"):
-        value = pull_request.get(key)
-        if value not in (None, ""):
-            text = str(value).strip()
-            if text:
-                return text.lstrip("#")
-    url = str(pull_request.get("url") or "").strip()
-    match = re.search(r"/pull/(\d+)(?:\b|$)", url)
-    return match.group(1) if match else ""

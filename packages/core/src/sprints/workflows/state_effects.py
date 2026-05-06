@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import time
 from typing import Any
 
-from sprints.engine import EngineStore
 from sprints.core.config import WorkflowConfig
-from sprints.core.paths import runtime_paths
+from sprints.workflows.state_helpers import (
+    engine_store as _engine_store,
+    lane_mapping,
+    now_iso as _now_iso,
+)
 
 _TERMINAL_EFFECT_STATUSES = {"succeeded", "skipped"}
 
@@ -285,13 +287,6 @@ def _slug(value: str) -> str:
     return text[:80] or "item"
 
 
-def _engine_store(config: WorkflowConfig) -> EngineStore:
-    return EngineStore(
-        db_path=runtime_paths(config.workflow_root)["db_path"],
-        workflow=config.workflow_name,
-    )
-
-
 def _lane_run_id(lane: dict[str, Any]) -> str | None:
     session = (
         lane.get("runtime_session")
@@ -303,13 +298,3 @@ def _lane_run_id(lane: dict[str, Any]) -> str | None:
     return text or None
 
 
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def lane_mapping(lane: dict[str, Any], key: str) -> dict[str, Any]:
-    value = lane.get(key)
-    if isinstance(value, dict):
-        return value
-    lane[key] = {}
-    return lane[key]

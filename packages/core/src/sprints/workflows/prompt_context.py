@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from sprints.core.config import WorkflowConfig
+from sprints.workflows.state_helpers import (
+    nonnegative_int as _nonnegative_int,
+    positive_int as _positive_int,
+)
 
 APP_SERVER_INPUT_LIMIT_CHARS = 1_048_576
 DEFAULT_ORCHESTRATOR_LIMIT_CHARS = 900_000
@@ -646,30 +650,6 @@ def _truncate(value: Any, *, max_chars: int) -> str | None:
 
 def _drop_empty(value: dict[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if item not in (None, "", [], {})}
-
-
-def _positive_int(config: dict[str, Any], *keys: str, default: int) -> int:
-    for key in keys:
-        value = config.get(key)
-        if value in (None, ""):
-            continue
-        try:
-            return max(int(value), 1)
-        except (TypeError, ValueError):
-            return default
-    return default
-
-
-def _nonnegative_int(config: dict[str, Any], *keys: str, default: int) -> int:
-    for key in keys:
-        value = config.get(key)
-        if value in (None, ""):
-            continue
-        try:
-            return max(int(value), 0)
-        except (TypeError, ValueError):
-            return default
-    return default
 
 
 def json_size(value: Any) -> int:

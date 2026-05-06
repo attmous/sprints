@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sprints.workflows import sessions
-from sprints.workflows import teardown as teardown_flow
+from sprints.workflows import runtime_sessions as sessions
+from sprints.workflows import lane_teardown as teardown_flow
 from sprints.core.config import WorkflowConfig
 from sprints.workflows.actor_outputs import contract_artifacts, delivery_contract_failure
 from sprints.workflows.lane_state import (

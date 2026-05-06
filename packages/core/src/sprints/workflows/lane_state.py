@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import os
-import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sprints.engine import EngineStore, RetryPolicy
-from sprints.workflows import sessions
-from sprints.workflows import teardown as teardown_flow
+from sprints.engine import RetryPolicy
 from sprints.core.config import WorkflowConfig
-from sprints.core.paths import runtime_paths
+from sprints.workflows import runtime_sessions as sessions
+from sprints.workflows.state_helpers import (
+    TERMINAL_LANE_STATUSES as _TERMINAL_LANE_STATUSES,
+    configured_bool as _configured_bool,
+    engine_store as _shared_engine_store,
+    iso_to_epoch as _iso_to_epoch,
+    nonnegative_int as _nonnegative_int,
+    now_iso as _now_iso,
+    positive_float as _positive_float,
+    positive_int as _positive_int,
+)
 from sprints.workflows.surface_board_state import (
     ACTIVE_BOARD_STATES,
     board_metadata,
@@ -22,7 +28,6 @@ from sprints.workflows.surface_board_state import (
 )
 
 _RUNNER_INSTANCE_ID = f"{os.getpid()}:{uuid.uuid4().hex[:12]}"
-_TERMINAL_LANE_STATUSES = {"complete", "released"}
 
 
 def new_lane(
@@ -353,6 +358,10 @@ def now_iso() -> str:
     return _now_iso()
 
 
+def iso_to_epoch(value: str, *, default: float) -> float:
+    return _iso_to_epoch(value, default=default)
+
+
 def set_lane_status(
     *,
     config: WorkflowConfig,
@@ -648,6 +657,7 @@ def retry_config(config: WorkflowConfig) -> dict[str, Any]:
             "backoff-multiplier",
             "backoff_multiplier",
             default=2.0,
+            min_value=1.0,
         ),
         "max_delay_seconds": _nonnegative_int(
             cfg,
@@ -669,7 +679,23 @@ def retry_policy(config: WorkflowConfig) -> RetryPolicy:
 
 
 def completion_cleanup_retry_pending(lane: dict[str, Any]) -> bool:
-    return teardown_flow.cleanup_retry_pending(lane)
+    pending = (
+        lane.get("pending_retry") if isinstance(lane.get("pending_retry"), dict) else {}
+    )
+    if str(pending.get("source") or "").strip() == "completion_cleanup":
+        return True
+    if str(pending.get("target") or "").strip() == "completion_cleanup":
+        return True
+    cleanup = (
+        lane.get("completion_cleanup")
+        if isinstance(lane.get("completion_cleanup"), dict)
+        else {}
+    )
+    cleanup_status = str(cleanup.get("status") or "").strip().lower()
+    return str(lane.get("status") or "").strip() == "retry_queued" and cleanup_status in {
+        "error",
+        "partial",
+    }
 
 
 def review_notification_config(config: WorkflowConfig) -> dict[str, bool]:
@@ -692,14 +718,6 @@ def review_notification_config(config: WorkflowConfig) -> dict[str, bool]:
     }
 
 
-def _positive_int(config: dict[str, Any], *keys: str, default: int) -> int:
-    for key in keys:
-        parsed = _positive_int_value(config.get(key))
-        if parsed is not None:
-            return parsed
-    return default
-
-
 def _configured_positive_int(config: dict[str, Any], *keys: str) -> int | None:
     for key in keys:
         parsed = _positive_int_value(config.get(key))
@@ -715,43 +733,6 @@ def _positive_int_value(value: Any) -> int | None:
         return max(int(value), 1)
     except (TypeError, ValueError):
         return None
-
-
-def _nonnegative_int(config: dict[str, Any], *keys: str, default: int) -> int:
-    for key in keys:
-        value = config.get(key)
-        if value not in (None, ""):
-            try:
-                return max(int(value), 0)
-            except (TypeError, ValueError):
-                return default
-    return default
-
-
-def _positive_float(config: dict[str, Any], *keys: str, default: float) -> float:
-    for key in keys:
-        value = config.get(key)
-        if value not in (None, ""):
-            try:
-                return max(float(value), 1.0)
-            except (TypeError, ValueError):
-                return default
-    return default
-
-
-def _configured_bool(config: dict[str, Any], *keys: str, default: bool) -> bool:
-    for key in keys:
-        value = config.get(key)
-        if value in (None, ""):
-            continue
-        if isinstance(value, bool):
-            return value
-        text = str(value).strip().lower()
-        if text in {"1", "true", "yes", "on"}:
-            return True
-        if text in {"0", "false", "no", "off"}:
-            return False
-    return default
 
 
 def tracker_config(config: WorkflowConfig) -> dict[str, Any]:
@@ -775,11 +756,8 @@ def repository_path(config: WorkflowConfig) -> Path | None:
     return path if path.is_absolute() else (config.workflow_root / path).resolve()
 
 
-def engine_store(config: WorkflowConfig) -> EngineStore:
-    return EngineStore(
-        db_path=runtime_paths(config.workflow_root)["db_path"],
-        workflow=config.workflow_name,
-    )
+def engine_store(config: WorkflowConfig) -> Any:
+    return _shared_engine_store(config)
 
 
 def record_engine_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> None:
@@ -936,20 +914,6 @@ def normalize_pull_request(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def iso_to_epoch(value: str, *, default: float) -> float:
-    text = str(value or "").strip()
-    if not text:
-        return default
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return default
-
-
-def _epoch_to_iso(value: float) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
-
-
 def blocker_reason(output: dict[str, Any]) -> str:
     blockers = (
         output.get("blockers") if isinstance(output.get("blockers"), list) else []
@@ -961,7 +925,3 @@ def blocker_reason(output: dict[str, Any]) -> str:
         if kind:
             return kind
     return ""
-
-
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

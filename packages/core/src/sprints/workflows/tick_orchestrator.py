@@ -70,6 +70,7 @@ from sprints.workflows.entry_lanes import (
     validate_actor_capacity,
     validate_decision_for_lane,
 )
+from sprints.workflows.state_retries import RetryRequest
 
 
 def apply_action_result(
@@ -581,7 +582,17 @@ def apply_decision(
         )
         return {"lane_id": lane["lane_id"], "decision": "operator_attention"}
     if decision.decision == "retry":
-        return queue_lane_retry(config=config, lane=lane, decision=decision)
+        return queue_lane_retry(
+            config=config,
+            lane=lane,
+            request=RetryRequest(
+                stage=decision.stage,
+                target=decision.target,
+                lane_id=decision.lane_id,
+                reason=decision.reason,
+                inputs=decision.inputs,
+            ),
+        )
     if decision.decision == "advance":
         target_stage = (
             decision.target if decision.target in config.stages else decision.stage

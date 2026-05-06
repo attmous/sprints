@@ -21,8 +21,11 @@ from sprints.workflows.lane_state import (
     set_lane_operator_attention,
     set_lane_status,
 )
-from sprints.workflows.route_orchestrator import OrchestratorDecision
-from sprints.workflows.state_retries import lane_retry_is_due, queue_lane_retry
+from sprints.workflows.state_retries import (
+    RetryRequest,
+    lane_retry_is_due,
+    queue_lane_retry,
+)
 from sprints.workflows.route_rules import ActorRoute
 from sprints.workflows.runtime_sessions import active_actor_dispatch
 from sprints.workflows.state_io import WorkflowState, persist_runtime_state
@@ -300,15 +303,14 @@ def _queue_route_retry(
     inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     retry_inputs = {**dict(route.inputs or {}), **dict(inputs or {})}
-    decision = OrchestratorDecision(
-        decision="retry",
+    request = RetryRequest(
         stage=route.stage or str(lane.get("stage") or config.first_stage),
         lane_id=str(lane.get("lane_id") or ""),
         target=route.actor,
         reason=reason,
         inputs=retry_inputs,
     )
-    return queue_lane_retry(config=config, lane=lane, decision=decision)
+    return queue_lane_retry(config=config, lane=lane, request=request)
 
 
 def _route_result(

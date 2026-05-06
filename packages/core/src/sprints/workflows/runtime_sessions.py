@@ -6,15 +6,21 @@ import json
 import os
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sprints.engine import EngineStore
 from sprints.core.config import WorkflowConfig
-from sprints.core.paths import runtime_paths
+from sprints.workflows.state_helpers import (
+    engine_store as _engine_store,
+    epoch_to_iso as _epoch_to_iso,
+    iso_to_epoch as _iso_to_epoch,
+    lane_is_terminal as _lane_is_terminal,
+    lane_list as _lane_list,
+    lane_mapping as _lane_mapping,
+    lane_stage as _lane_stage,
+    now_iso as _now_iso,
+)
 
-_TERMINAL_LANE_STATUSES = {"complete", "released"}
 _RUNTIME_RUNNING_STATUSES = {"running"}
 _RUNTIME_FINAL_STATUSES = {"completed", "failed", "interrupted", "blocked"}
 _DISPATCH_ACTIVE_STATUSES = {"planned", "started", "running"}
@@ -1154,50 +1160,3 @@ def _apply_runtime_session_ids(
         lane["turn_id"] = turn_id
 
 
-def _lane_mapping(lane: dict[str, Any], key: str) -> dict[str, Any]:
-    value = lane.get(key)
-    if isinstance(value, dict):
-        return value
-    lane[key] = {}
-    return lane[key]
-
-
-def _lane_list(lane: dict[str, Any], key: str) -> list[Any]:
-    value = lane.get(key)
-    if isinstance(value, list):
-        return value
-    lane[key] = []
-    return lane[key]
-
-
-def _lane_stage(lane: dict[str, Any]) -> str:
-    return str(lane.get("stage") or "").strip()
-
-
-def _lane_is_terminal(lane: dict[str, Any]) -> bool:
-    return str(lane.get("status") or "").strip() in _TERMINAL_LANE_STATUSES
-
-
-def _engine_store(config: WorkflowConfig) -> EngineStore:
-    return EngineStore(
-        db_path=runtime_paths(config.workflow_root)["db_path"],
-        workflow=config.workflow_name,
-    )
-
-
-def _iso_to_epoch(value: str, *, default: float) -> float:
-    text = str(value or "").strip()
-    if not text:
-        return default
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return default
-
-
-def _epoch_to_iso(value: float) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
-
-
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

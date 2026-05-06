@@ -6,8 +6,8 @@ import time
 from typing import Any
 
 from sprints.trackers import build_code_host_client, build_tracker_client
-from sprints.workflows import sessions
-from sprints.workflows import teardown as teardown_flow
+from sprints.workflows import runtime_sessions as sessions
+from sprints.workflows import lane_teardown as teardown_flow
 from sprints.core.config import WorkflowConfig
 from sprints.workflows.lane_state import (
     append_engine_event,
@@ -29,9 +29,8 @@ from sprints.workflows.lane_state import (
     set_lane_status,
 )
 from sprints.workflows.surface_board_state import BoardState, state_from_labels
-from sprints.workflows.route_orchestrator import OrchestratorDecision
 from sprints.workflows.surface_review_state import reconcile_review_signals
-from sprints.workflows.state_retries import queue_lane_retry
+from sprints.workflows.state_retries import RetryRequest, queue_lane_retry
 from sprints.workflows.runtime_sessions import record_actor_runtime_interrupted
 from sprints.workflows.lane_transitions import teardown_ops
 
@@ -384,8 +383,7 @@ def _queue_interrupted_actor_recovery(
             artifacts={"recovery": recovery},
         )
         return {"status": "operator_attention", "reason": "missing actor or stage"}
-    decision = OrchestratorDecision(
-        decision="retry",
+    request = RetryRequest(
         stage=stage_name,
         lane_id=str(lane.get("lane_id") or ""),
         target=actor_name,
@@ -400,7 +398,7 @@ def _queue_interrupted_actor_recovery(
             "resume_session_id": recovery.get("resume_session_id"),
         },
     )
-    queued = queue_lane_retry(config=config, lane=lane, decision=decision)
+    queued = queue_lane_retry(config=config, lane=lane, request=request)
     if queued.get("status") == "queued":
         recovery["status"] = "queued"
         recovery["retry"] = queued

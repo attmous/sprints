@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -22,7 +21,6 @@ from sprints.workflows.state_effects import (
     side_effect_key,
 )
 from sprints.workflows.lane_completion import done_release_verified
-from sprints.workflows.route_orchestrator import OrchestratorDecision
 from sprints.workflows.lane_state import (
     code_host_config as _code_host_config,
     configured_texts as _configured_texts,
@@ -40,7 +38,16 @@ from sprints.workflows.lane_state import (
     retry_policy as _retry_policy,
     tracker_config as _tracker_config,
 )
-from sprints.workflows.state_retries import lane_retry_is_due as _lane_retry_is_due
+from sprints.workflows.surface_pull_request import (
+    pull_request_number as _pull_request_number,
+    pull_request_url as _pull_request_url,
+)
+from sprints.workflows.state_retries import (
+    RetryRequest,
+    lane_retry_is_due as _lane_retry_is_due,
+)
+from sprints.workflows.state_helpers import configured_bool as _configured_bool
+
 
 @dataclass(frozen=True)
 class TeardownOps:
@@ -231,8 +238,7 @@ def _queue_completion_cleanup_retry(
 ) -> dict[str, Any]:
     current_attempt = max(int(lane.get("completion_cleanup_attempt") or 1), 1)
     reason = str(cleanup.get("error") or "completion cleanup failed")
-    decision = OrchestratorDecision(
-        decision="retry",
+    request = RetryRequest(
         stage=_lane_stage(lane),
         lane_id=str(lane.get("lane_id") or ""),
         target="completion_cleanup",
@@ -256,10 +262,10 @@ def _queue_completion_cleanup_retry(
         now_iso=_now_iso(),
     )
     record = retry_record(
-        stage=decision.stage,
-        target=decision.target,
-        reason=decision.reason,
-        inputs=decision.inputs,
+        stage=request.stage,
+        target=request.target,
+        reason=request.reason,
+        inputs=request.inputs,
         schedule=schedule,
         now_iso=_now_iso(),
     )
@@ -274,7 +280,7 @@ def _queue_completion_cleanup_retry(
             payload={
                 "lane_id": lane.get("lane_id"),
                 "status": "limit_exceeded",
-                "stage": decision.stage,
+                "stage": request.stage,
                 "target": "completion_cleanup",
                 "failure_reason": reason,
                 "retry": _retry_event_retry(record),
@@ -305,10 +311,10 @@ def _queue_completion_cleanup_retry(
 
     previous = _lane_transition_side(lane)
     pending = pending_retry_projection(
-        stage=decision.stage,
-        target=decision.target,
-        reason=decision.reason,
-        inputs=decision.inputs,
+        stage=request.stage,
+        target=request.target,
+        reason=request.reason,
+        inputs=request.inputs,
         schedule=schedule,
     )
     pending["source"] = "completion_cleanup"
@@ -778,13 +784,6 @@ def _contract_artifacts(lane: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _pull_request_url(lane: dict[str, Any]) -> str:
-    pull_request = lane.get("pull_request")
-    if isinstance(pull_request, dict):
-        return str(pull_request.get("url") or "").strip()
-    return ""
-
-
 def _pull_request_is_merged(lane: dict[str, Any]) -> bool:
     pull_request = lane.get("pull_request")
     if not isinstance(pull_request, dict):
@@ -798,29 +797,6 @@ def _mark_pull_request_merged(lane: dict[str, Any]) -> None:
     pull_request["state"] = "merged"
     pull_request["merged"] = True
     pull_request["merged_at"] = pull_request.get("merged_at") or _now_iso()
-
-
-def _pull_request_number(lane: dict[str, Any]) -> str:
-    pull_request = lane.get("pull_request")
-    if not isinstance(pull_request, dict):
-        return ""
-    for key in ("number", "pr_number"):
-        value = pull_request.get(key)
-        if value not in (None, ""):
-            number = _trailing_number(value)
-            if number:
-                return number
-    url = str(pull_request.get("url") or "").strip()
-    match = re.search(r"/pull/([0-9]+)(?:$|[/?#])", url)
-    if match:
-        return match.group(1)
-    return _trailing_number(pull_request.get("id"))
-
-
-def _trailing_number(value: Any) -> str:
-    text = str(value or "").strip()
-    match = re.search(r"([0-9]+)$", text)
-    return match.group(1) if match else ""
 
 
 def _completion_labels(config: WorkflowConfig) -> dict[str, list[str]]:
@@ -877,16 +853,3 @@ def _retry_event_retry(retry: dict[str, Any]) -> dict[str, Any]:
         "queued_at": retry.get("queued_at"),
     }
 
-def _configured_bool(config: dict[str, Any], *keys: str, default: bool) -> bool:
-    for key in keys:
-        value = config.get(key)
-        if value in (None, ""):
-            continue
-        if isinstance(value, bool):
-            return value
-        text = str(value).strip().lower()
-        if text in {"1", "true", "yes", "on"}:
-            return True
-        if text in {"0", "false", "no", "off"}:
-            return False
-    return default

@@ -19,8 +19,8 @@ from sprints.workflows.lane_state import (
     set_lane_status,
 )
 from sprints.workflows.surface_notifications import notify_review_changes_requested
-from sprints.workflows.route_orchestrator import OrchestratorDecision
-from sprints.workflows.state_retries import queue_lane_retry
+from sprints.workflows.surface_pull_request import pull_request_url
+from sprints.workflows.state_retries import RetryRequest, queue_lane_retry
 
 
 def record_actor_output(
@@ -178,7 +178,7 @@ def delivery_contract_failure(lane: dict[str, Any]) -> str:
         return "delivery cannot advance before implementer output exists"
     if str(implementation.get("status") or "").strip().lower() != "done":
         return "delivery requires implementer status `done`"
-    if not _pull_request_url(lane):
+    if not pull_request_url(lane):
         return "delivery requires pull_request.url"
     verification = implementation.get("verification")
     if not isinstance(verification, list) or not verification:
@@ -229,8 +229,7 @@ def _apply_land_output_status(
         queue_lane_retry(
             config=config,
             lane=lane,
-            decision=OrchestratorDecision(
-                decision="retry",
+            request=RetryRequest(
                 stage=lane_stage(lane),
                 lane_id=str(lane.get("lane_id") or ""),
                 target=actor_name,
@@ -318,11 +317,4 @@ def _land_contract_failure(output: dict[str, Any]) -> str:
     }
     if "done" not in added:
         return "land output requires done label cleanup evidence"
-    return ""
-
-
-def _pull_request_url(lane: dict[str, Any]) -> str:
-    pull_request = lane.get("pull_request")
-    if isinstance(pull_request, dict):
-        return str(pull_request.get("url") or "").strip()
     return ""
