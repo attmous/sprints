@@ -284,6 +284,26 @@ Python does not:
 
 The implementer is the main delivery agent.
 
+The implementer always works on exactly one lane: the issue, branch, pull
+request, workpad, and lane ID provided by the runner. Python chooses the lane
+and gives the implementer a starting mode. The implementer may switch between
+its own modes only inside that same lane when fresh lane facts make another mode
+clearly correct. That is autonomy inside delivery, not authority over the
+harness.
+
+Mode switching examples:
+
+- `implement -> rework` when concrete required fixes or failed checks already
+  exist.
+- `rework -> implement` only when the feedback was already resolved and the
+  lane needs normal PR delivery work.
+- `implement|rework -> land` only when merge authority is present through the
+  lane input, such as the `merging` state or merge signal.
+
+The implementer must record the mode it actually used and explain any mode
+transition in structured output. It must never switch to another lane, reviewer
+work, orchestrator work, or global scheduling.
+
 It owns:
 
 ```text

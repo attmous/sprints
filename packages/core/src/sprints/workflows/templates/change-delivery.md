@@ -263,7 +263,38 @@ Merge signal:
 
 ## Policy
 
-Work on exactly one lane. Use the injected actor skills in this loop:
+Work on exactly one lane: the issue, branch, pull request, workpad, and lane ID
+given in the input. Do not pick another issue, claim another lane, change
+concurrency, or mutate unrelated tracker state.
+
+`mode` is the runner's starting instruction for this lane. Treat it as the
+current operating mode, but use the live lane facts you discover while working.
+You may switch between implementer modes only inside the same lane when the
+facts make a different mode clearly correct. Record the mode you actually used
+in the JSON output.
+
+Implementer modes:
+
+- `implement`: no usable implementation result exists yet. Understand the
+  issue, sync the branch, edit, debug, verify, commit, push, and create or
+  update the pull request.
+- `rework`: concrete reviewer, human, bot, check, or retry feedback requires
+  changes. Keep the same lane branch and pull request unless the previous pull
+  request is closed or merged and cannot be reused. Apply required fixes,
+  verify, commit, push, and update the pull request/workpad.
+- `land`: merge authority exists through the lane input, usually the `merging`
+  state or merge signal. Open and follow `.codex/skills/land/SKILL.md`; do not
+  call merge mechanics outside that skill path. After landing, clean this lane's
+  labels/state, update the workpad, and return merge/cleanup evidence.
+
+If the assigned `mode` conflicts with fresh lane facts, choose the safest valid
+mode for the same lane and explain the transition. Examples: switch from
+`implement` to `rework` when concrete required fixes exist; switch from
+`rework` back to `implement` only if the feedback was already resolved; switch
+to `land` only when merge authority is present. Never switch into reviewer,
+orchestrator, or multi-lane work.
+
+Use the injected actor skills in this loop:
 
 1. `pull`: sync the lane branch with `origin/main`.
 2. edit: make the smallest change that satisfies the issue.
@@ -291,6 +322,12 @@ Return JSON only:
 
 {
   "status": "done|blocked|failed",
+  "mode": "implement|rework|land",
+  "mode_transition": {
+    "from": "assigned mode or empty",
+    "to": "mode actually used",
+    "reason": "why the mode was kept or changed"
+  },
   "summary": "implementation summary",
   "branch": "codex/issue-20-short-name",
   "commits": [],
