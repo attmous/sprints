@@ -256,10 +256,6 @@ def parse_workflow_policy(markdown_body: str) -> WorkflowPolicy:
             if not name:
                 raise WorkflowPolicyError("actor policy heading is missing a name")
             actors[name] = ActorPolicy(name=name, body=section_body)
-    if not orchestrator and not workflow:
-        raise WorkflowPolicyError(
-            "missing # Orchestrator Policy or # Workflow Policy section"
-        )
     if not actors:
         raise WorkflowPolicyError("missing # Actor: <name> policy sections")
     return WorkflowPolicy(workflow=workflow, orchestrator=orchestrator, actors=actors)

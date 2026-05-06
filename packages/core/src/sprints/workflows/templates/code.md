@@ -57,17 +57,6 @@ storage:
   audit-log: .sprints/code-audit.jsonl
 ---
 
-# Workflow Policy
-
-Sprints owns intake only.
-
-The runner checks entry conditions, claims one eligible issue when capacity
-allows, prepares the lane workspace, applies claim labels, and dispatches this
-workflow actor.
-
-After dispatch, the actor owns the workflow. Python does not encode code,
-review, rework, merge, completion, stages, gates, or routing.
-
 # Actor: coder
 
 ## Skills
@@ -99,9 +88,10 @@ Retry:
 
 ## Policy
 
-You are working on one GitHub issue in the provided workspace. Work only inside
-that workspace. Do not touch unrelated paths, claim other issues, or mutate
-workflow ownership.
+You are working on one tracker item in the provided workspace. Work only inside
+that workspace. Use the tracker selected in front matter for issue/ticket
+metadata and comments. Do not touch unrelated paths, claim other tracker items,
+or mutate workflow ownership.
 
 This is an unattended workflow. Never ask a human to perform follow-up actions.
 Only stop early for a true blocker: missing required auth, permissions, secrets,
@@ -112,6 +102,10 @@ Start by determining the issue and PR state, then continue the matching flow:
 - `todo`: begin work. The runner should already have moved the issue to
   `in-progress`.
 - `in-progress`: implement or continue implementation.
+- `review`: PR is ready for human/bot/check review. Do not make new code
+  changes unless actionable review feedback or failed checks require rework.
+- `rework`: reviewer, bot, or check feedback requires implementation changes.
+- `merging`: merge authority exists; run the land flow.
 - `blocked`: stop unless the blocker has been resolved.
 - `done`: terminal; do nothing.
 - existing open PR: run the PR feedback sweep before deciding what to do next.
@@ -146,19 +140,22 @@ Execution loop:
 2. Run focused validation.
 3. Commit only lane-scoped changes.
 4. Push the branch and create or update the PR.
-5. Sweep PR feedback:
+5. When the PR is linked, validation is green, and no known actionable feedback
+   is unresolved, move the tracker item from `in-progress` to `review`.
+6. While in `review`, poll and sweep PR feedback:
    - top-level PR comments
    - inline review comments
    - review states
    - failed checks
-6. Treat actionable feedback as blocking until addressed or explicitly answered
-   with justified pushback.
-7. Repeat implementation, validation, commit, and push until no actionable
-   feedback remains.
-8. Merge only when merge authority is clear.
-9. When merging, open and follow `.codex/skills/land/SKILL.md`; do not call
+7. If actionable feedback or failed checks exist, move the tracker item to
+   `rework`, address or explicitly answer each item with justified pushback,
+   rerun validation, commit, push, and move it back to `review`.
+8. Stay in `review` while waiting for human approval or checks. Waiting for
+   review is not blocked.
+9. Move to `merging` only when merge authority is clear.
+10. When merging, open and follow `.codex/skills/land/SKILL.md`; do not call
    merge mechanics outside the land skill.
-10. After successful merge, remove `in-progress` and add `done`.
+11. After successful merge, remove active workflow state labels and add `done`.
 
 Completion bar:
 
@@ -200,7 +197,7 @@ Return JSON only:
     "updated": true
   },
   "cleanup": {
-    "removed_labels": ["in-progress"],
+    "removed_labels": ["in-progress", "review", "rework", "merging"],
     "added_labels": ["done"]
   },
   "blockers": [],
