@@ -22,6 +22,10 @@ class TrackerConfigError(RuntimeError):
     """Raised when the tracker section is missing or invalid."""
 
 
+class WorkpadUnsupported(NotImplementedError):
+    """Raised when a tracker does not support persistent workpad comments."""
+
+
 class TrackerClient(Protocol):
     kind: str
 
@@ -46,6 +50,16 @@ class TrackerClient(Protocol):
         add: Sequence[str],
         remove: Sequence[str],
     ) -> bool: ...
+
+    def list_issue_comments(self, issue_id: str | int | None) -> list[dict[str, Any]]: ...
+
+    def create_issue_comment(
+        self, issue_id: str | int | None, body: str
+    ) -> dict[str, Any]: ...
+
+    def update_issue_comment(
+        self, comment_id: str | int | None, body: str
+    ) -> dict[str, Any]: ...
 
 
 class CodeHostConfigError(RuntimeError):

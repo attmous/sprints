@@ -7,6 +7,7 @@ from . import (
     DEFAULT_ACTIVE_STATES,
     DEFAULT_TERMINAL_STATES,
     TrackerConfigError,
+    WorkpadUnsupported,
     chunk,
     http_post_json,
     issue_priority_sort_key,
@@ -222,6 +223,28 @@ class LinearTrackerClient:
         del issue_id, add, remove
         raise NotImplementedError(
             "Linear tracker does not support label-backed board state"
+        )
+
+    def list_issue_comments(self, issue_id: str | int | None) -> list[dict[str, Any]]:
+        del issue_id
+        raise WorkpadUnsupported(
+            "Linear tracker issue comments are not supported by this integration"
+        )
+
+    def create_issue_comment(
+        self, issue_id: str | int | None, body: str
+    ) -> dict[str, Any]:
+        del issue_id, body
+        raise WorkpadUnsupported(
+            "Linear tracker issue comments are not supported by this integration"
+        )
+
+    def update_issue_comment(
+        self, comment_id: str | int | None, body: str
+    ) -> dict[str, Any]:
+        del comment_id, body
+        raise WorkpadUnsupported(
+            "Linear tracker issue comments are not supported by this integration"
         )
 
     def _query_issues_by_states(self, states: list[str]) -> list[dict[str, Any]]:
