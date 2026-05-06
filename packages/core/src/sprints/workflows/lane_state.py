@@ -14,6 +14,12 @@ from sprints.workflows import sessions
 from sprints.workflows import teardown as teardown_flow
 from sprints.core.config import WorkflowConfig
 from sprints.core.paths import runtime_paths
+from sprints.workflows.board_state import (
+    ACTIVE_BOARD_STATES,
+    board_metadata,
+    state_from_labels,
+    uses_label_state_source,
+)
 
 _RUNNER_INSTANCE_ID = f"{os.getpid()}:{uuid.uuid4().hex[:12]}"
 _TERMINAL_LANE_STATUSES = {"complete", "released"}
@@ -26,7 +32,7 @@ def new_lane(
     issue: dict[str, Any],
     lease: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    lane = {
         "lane_id": lane_id,
         "issue": issue,
         "stage": config.first_stage,
@@ -49,6 +55,8 @@ def new_lane(
         "operator_attention": None,
         "claim": {"state": "Claimed", "lease": lease},
     }
+    refresh_lane_board_metadata(config=config, lane=lane, issue=issue)
+    return lane
 
 
 def lane_recovery_artifacts(
@@ -169,6 +177,18 @@ def retry_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
         "history": history[-5:],
         "exhausted": latest.get("status") == "limit_exceeded",
     }
+
+
+def refresh_lane_board_metadata(
+    *, config: WorkflowConfig, lane: dict[str, Any], issue: dict[str, Any] | None = None
+) -> None:
+    if not uses_label_state_source(config):
+        return
+    source_issue = issue if isinstance(issue, dict) else lane.get("issue")
+    if not isinstance(source_issue, dict):
+        return
+    tracker = lane_mapping(lane, "tracker")
+    tracker.update(board_metadata(source_issue, config))
 
 
 def actor_dispatch_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
@@ -446,7 +466,10 @@ def has_open_blockers(issue: dict[str, Any], *, terminal_states: set[str]) -> bo
 
 
 def issue_is_still_active(
-    *, tracker_cfg: dict[str, Any], issue: dict[str, Any]
+    *,
+    tracker_cfg: dict[str, Any],
+    issue: dict[str, Any],
+    config: WorkflowConfig | None = None,
 ) -> bool:
     active_states = set(configured_texts(tracker_cfg, "active_states", "active-states"))
     required_labels = set(
@@ -456,9 +479,16 @@ def issue_is_still_active(
         configured_texts(tracker_cfg, "exclude_labels", "exclude-labels")
     )
     state = str(issue.get("state") or "").strip().lower()
+    labels = issue_labels(issue)
+    if (
+        config is not None
+        and config.is_actor_driven()
+        and uses_label_state_source(config)
+    ):
+        board_state = state_from_labels(labels, config)
+        return board_state in ACTIVE_BOARD_STATES
     if active_states and state not in active_states:
         return False
-    labels = issue_labels(issue)
     if required_labels and not required_labels.issubset(labels):
         return False
     if exclude_labels.intersection(labels):
@@ -779,6 +809,7 @@ def _engine_lane_entry(
             "operator_attention": lane.get("operator_attention"),
             "pending_retry": lane.get("pending_retry"),
             "claim": lane.get("claim"),
+            "tracker": lane.get("tracker"),
             "last_transition": latest_transition,
             "transition_history_count": transition_count,
         },

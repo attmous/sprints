@@ -4,7 +4,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from . import (
     CodeHostConfigError,
@@ -174,6 +174,12 @@ def _configured_states(tracker_cfg: dict[str, Any], *keys: str) -> list[str]:
     return []
 
 
+def _state_source_kind(tracker_cfg: dict[str, Any]) -> str:
+    raw = tracker_cfg.get("state-source", tracker_cfg.get("state_source"))
+    source = raw if isinstance(raw, dict) else {}
+    return str(source.get("kind") or "").strip().lower()
+
+
 def validate_github_tracker_config(
     *,
     workflow_root: Path,
@@ -196,18 +202,21 @@ def validate_github_tracker_config(
             f"repository.local-path does not exist for tracker.kind='github': {resolved_repo_path}"
         )
 
-    active_states = _configured_states(tracker_cfg, "active_states", "active-states")
-    terminal_states = _configured_states(
-        tracker_cfg, "terminal_states", "terminal-states"
-    )
-    if not active_states or set(active_states) != {"open"}:
-        raise TrackerConfigError(
-            "tracker.kind='github' requires tracker.active_states: [open]"
+    if _state_source_kind(tracker_cfg) != "labels":
+        active_states = _configured_states(
+            tracker_cfg, "active_states", "active-states"
         )
-    if not terminal_states or set(terminal_states) != {"closed"}:
-        raise TrackerConfigError(
-            "tracker.kind='github' requires tracker.terminal_states: [closed]"
+        terminal_states = _configured_states(
+            tracker_cfg, "terminal_states", "terminal-states"
         )
+        if not active_states or set(active_states) != {"open"}:
+            raise TrackerConfigError(
+                "tracker.kind='github' requires tracker.active_states: [open]"
+            )
+        if not terminal_states or set(terminal_states) != {"closed"}:
+            raise TrackerConfigError(
+                "tracker.kind='github' requires tracker.terminal_states: [closed]"
+            )
 
     for key in (
         "required_labels",
@@ -420,6 +429,18 @@ class GithubTrackerClient:
             issues[issue["id"]] = issue
         return sorted(issues.values(), key=issue_priority_sort_key)
 
+    def list_for_state_labels(self) -> list[dict[str, Any]]:
+        issues = {}
+        for state in ("open", "closed"):
+            for payload in self.list_issue_payloads(
+                state=state,
+                limit=1000,
+                fields="number,title,url,body,labels,createdAt,updatedAt,state",
+            ):
+                issue = normalize_github_issue(payload)
+                issues[issue["id"]] = issue
+        return sorted(issues.values(), key=issue_priority_sort_key)
+
     def list_candidates(self) -> list[dict[str, Any]]:
         issues = [
             normalize_github_issue(payload)
@@ -500,6 +521,25 @@ class GithubTrackerClient:
             cwd=self._repo_path,
         )
         return True
+
+    def set_issue_state_label(
+        self,
+        issue_id: str | int | None,
+        *,
+        add: Sequence[str],
+        remove: Sequence[str],
+    ) -> bool:
+        issue_number = _coerce_issue_number(issue_id)
+        if issue_number is None:
+            return False
+        remove_labels = [str(label).strip() for label in remove if str(label).strip()]
+        add_labels = [str(label).strip() for label in add if str(label).strip()]
+        changed = False
+        if remove_labels:
+            changed = self.remove_labels(issue_number, remove_labels) or changed
+        if add_labels:
+            changed = self.add_labels(issue_number, add_labels) or changed
+        return changed or not remove_labels and not add_labels
 
 
 @register_code_host("github")

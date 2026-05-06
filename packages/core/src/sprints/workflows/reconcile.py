@@ -20,6 +20,7 @@ from sprints.workflows.lane_state import (
     recovery_config,
     release_lane_lease,
     repository_path,
+    refresh_lane_board_metadata,
     tracker_config,
     active_lanes,
     lane_is_terminal,
@@ -209,8 +210,11 @@ def _reconcile_tracker_lanes(
         if not fresh:
             continue
         lane["issue"] = fresh
+        refresh_lane_board_metadata(config=config, lane=lane, issue=fresh)
         updated.append(str(lane.get("lane_id") or ""))
-        if not issue_is_still_active(tracker_cfg=tracker_cfg, issue=fresh):
+        if not issue_is_still_active(
+            config=config, tracker_cfg=tracker_cfg, issue=fresh
+        ):
             set_lane_status(
                 config=config,
                 lane=lane,

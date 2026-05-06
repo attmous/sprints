@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from . import (
     DEFAULT_ACTIVE_STATES,
@@ -26,6 +26,17 @@ def _configured_states(
             value = tracker_cfg.get(key)
             return list(value) if isinstance(value, list) else []
     return list(default)
+
+
+def validate_linear_tracker_config(*, tracker_cfg: dict[str, Any]) -> None:
+    raw = tracker_cfg.get("state-source", tracker_cfg.get("state_source"))
+    state_source = raw if isinstance(raw, dict) else {}
+    kind = str(state_source.get("kind") or "").strip().lower()
+    if kind == "labels":
+        raise TrackerConfigError(
+            "tracker.kind='linear' does not support tracker.state-source.kind='labels'; "
+            "use Linear workflow states or configure tracker.kind='github' for label-backed board state"
+        )
 
 
 LINEAR_ISSUES_BY_STATES_QUERY = """
@@ -126,6 +137,7 @@ class LinearTrackerClient:
         post_json: Callable[..., dict[str, Any]] | None = None,
     ):
         del workflow_root
+        validate_linear_tracker_config(tracker_cfg=tracker_cfg)
         self._tracker_cfg = tracker_cfg
         self._endpoint = linear_endpoint(tracker_cfg)
         self._api_key = linear_api_key(tracker_cfg)
@@ -150,6 +162,11 @@ class LinearTrackerClient:
             )
         )
         return [normalize_linear_issue(issue) for issue in raw_issues]
+
+    def list_for_state_labels(self) -> list[dict[str, Any]]:
+        raise NotImplementedError(
+            "Linear tracker does not support label-backed board state"
+        )
 
     def refresh(self, issue_ids: list[str]) -> dict[str, dict[str, Any]]:
         ids = [str(issue_id).strip() for issue_id in issue_ids if str(issue_id).strip()]
@@ -194,6 +211,18 @@ class LinearTrackerClient:
     def remove_labels(self, issue_id: str | int | None, labels: list[str]) -> bool:
         del issue_id, labels
         return False
+
+    def set_issue_state_label(
+        self,
+        issue_id: str | int | None,
+        *,
+        add: Sequence[str],
+        remove: Sequence[str],
+    ) -> bool:
+        del issue_id, add, remove
+        raise NotImplementedError(
+            "Linear tracker does not support label-backed board state"
+        )
 
     def _query_issues_by_states(self, states: list[str]) -> list[dict[str, Any]]:
         if not states:

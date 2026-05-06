@@ -9,7 +9,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, Sequence
 
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -29,6 +29,8 @@ class TrackerClient(Protocol):
 
     def list_candidates(self) -> list[dict[str, Any]]: ...
 
+    def list_for_state_labels(self) -> list[dict[str, Any]]: ...
+
     def refresh(self, issue_ids: list[str]) -> dict[str, dict[str, Any]]: ...
 
     def list_terminal(self) -> list[dict[str, Any]]: ...
@@ -36,6 +38,14 @@ class TrackerClient(Protocol):
     def add_labels(self, issue_id: str | int | None, labels: list[str]) -> bool: ...
 
     def remove_labels(self, issue_id: str | int | None, labels: list[str]) -> bool: ...
+
+    def set_issue_state_label(
+        self,
+        issue_id: str | int | None,
+        *,
+        add: Sequence[str],
+        remove: Sequence[str],
+    ) -> bool: ...
 
 
 class CodeHostConfigError(RuntimeError):
