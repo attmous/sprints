@@ -122,6 +122,9 @@ def route_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> ActorRoute:
             board_state=board_state,
             lane=lane,
         )
+    route = _single_actor_route(config=config, lane=lane, board_state=board_state)
+    if route is not None:
+        return route
     return ActorRoute(
         lane_id=lane_id,
         board_state=board_state,
@@ -160,6 +163,26 @@ def _route_rules(config: WorkflowConfig) -> list[dict[str, Any]]:
     )
     rules = actor_driven.get("rules") if isinstance(actor_driven, dict) else []
     return [rule for rule in rules or [] if isinstance(rule, dict)]
+
+
+def _single_actor_route(
+    *, config: WorkflowConfig, lane: dict[str, Any], board_state: str
+) -> ActorRoute | None:
+    if len(config.actors) != 1 or len(config.stages) != 1:
+        return None
+    lane_status = str(lane.get("status") or "").strip().lower()
+    if lane_status not in {"claimed", "waiting", "review_waiting"}:
+        return None
+    actor = next(iter(config.actors))
+    stage = next(iter(config.stages))
+    return ActorRoute(
+        lane_id=str(lane.get("lane_id") or ""),
+        board_state=board_state,
+        action="dispatch",
+        stage=stage,
+        actor=actor,
+        reason="single-actor workflow dispatch",
+    )
 
 
 def _route_context(

@@ -2,7 +2,7 @@
 
 Current docs for Hermes Sprints.
 
-Sprints has one default template: `change-delivery`. Policy lives in repo-owned
+Sprints has one default template: `code`. Policy lives in repo-owned
 `WORKFLOW.md`; Python owns loading, validation, runtime dispatch, state, and
 operator commands.
 
@@ -16,7 +16,7 @@ operator commands.
 | [Runtimes](concepts/runtimes.md) | Runtime profiles, actors, and turn execution. |
 | [Engine](concepts/engine.md) | SQLite-backed state, leases, runs, and events. |
 | [Installation](operator/installation.md) | Install, bootstrap, validate, and run. |
-| [Slash Commands](operator/slash-commands.md) | `/sprints` and `/workflow change-delivery` commands. |
+| [Slash Commands](operator/slash-commands.md) | `/sprints` and `/workflow code` commands. |
 | [Codex App-Server](operator/codex-app-server.md) | Shared Codex listener setup and checks. |
 | [Workflow Daemon](operator/workflow-daemon.md) | Workflow tick loop setup and checks. |
 | [Public Contract](public-contract.md) | Compatibility-sensitive surfaces. |
@@ -38,8 +38,8 @@ packages/
 
 Bundled policy templates live in `packages/core/src/sprints/workflows/templates/`:
 
-- `issue-runner.md`
 - `change-delivery.md`
+- `code.md`
 - `release.md`
 - `triage.md`
 

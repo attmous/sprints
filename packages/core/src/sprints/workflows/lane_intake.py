@@ -127,6 +127,13 @@ def claim_new_lanes(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
             lease=lease,
         )
         state.lanes[lane_id] = lane
+        claim_result = _apply_claim_labels(
+            config=config,
+            tracker_cfg=tracker_cfg,
+            lane=lane,
+        )
+        if claim_result.get("updated_issue"):
+            lane["issue"] = claim_result["updated_issue"]
         record_engine_lane(config=config, lane=lane)
         append_engine_event(
             config=config,
@@ -194,6 +201,49 @@ def _claim_manual_lane(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
         payload={"lane": lane},
     )
     return {"status": "claimed", "claimed": [lane_id]}
+
+
+def _apply_claim_labels(
+    *,
+    config: WorkflowConfig,
+    tracker_cfg: dict[str, Any],
+    lane: dict[str, Any],
+) -> dict[str, Any]:
+    intake = config.raw.get("intake") if isinstance(config.raw.get("intake"), dict) else {}
+    claim = intake.get("claim") if isinstance(intake.get("claim"), dict) else {}
+    remove_labels = configured_texts(claim, "remove_labels", "remove-labels")
+    add_labels = configured_texts(claim, "add_labels", "add-labels")
+    if not remove_labels and not add_labels:
+        return {"status": "skipped"}
+    issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
+    issue_id = issue.get("id")
+    client = build_tracker_client(
+        workflow_root=config.workflow_root,
+        tracker_cfg=tracker_cfg,
+        repo_path=repository_path(config),
+    )
+    if remove_labels:
+        client.remove_labels(issue_id, remove_labels)
+    if add_labels:
+        client.add_labels(issue_id, add_labels)
+    labels = issue_labels(issue)
+    for label in remove_labels:
+        labels.discard(label.lower())
+    for label in add_labels:
+        labels.add(label.lower())
+    updated_issue = {**issue, "labels": sorted(labels)}
+    append_engine_event(
+        config=config,
+        lane=lane,
+        event_type=f"{config.workflow_name}.lane.claim_labels_applied",
+        payload={
+            "lane_id": lane.get("lane_id"),
+            "issue_id": issue_id,
+            "remove_labels": remove_labels,
+            "add_labels": add_labels,
+        },
+    )
+    return {"status": "ok", "updated_issue": updated_issue}
 
 
 def _ensure_claimed_lane_workpad(

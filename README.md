@@ -57,9 +57,9 @@ Inside Hermes:
 /sprints doctor --fix
 /sprints watch
 /sprints daemon status
-/workflow change-delivery status
-/workflow change-delivery validate
-/workflow change-delivery tick
+/workflow code status
+/workflow code validate
+/workflow code tick
 ```
 
 To run the first lane, add the `active` label to one eligible issue. The daemon
@@ -85,7 +85,7 @@ tracker criteria, completion cleanup, and output contracts.
 
 ## Default Workflow
 
-The default workflow template is `change-delivery`.
+The default workflow template is `code`.
 
 ```text
 active issue -> deliver -> review -> merge -> done
@@ -148,7 +148,7 @@ manual tick.
 | Workflow contract | `WORKFLOW.md` front matter plus orchestrator/actor policy sections. |
 | Runtime dispatch | Actor turns through Codex app-server, Hermes Agent, Claude, ACPX, or command-backed runtime profiles. |
 | Durable state | SQLite runs, events, leases, retries, runtime sessions, and status projections. |
-| Operator surface | `/sprints`, `/workflow change-delivery`, daemon control, watch output, and runtime diagnostics. |
+| Operator surface | `/sprints`, `/workflow code`, daemon control, watch output, and runtime diagnostics. |
 | Trackers | Issue discovery and issue status/label updates. |
 | Code hosts | Branch and pull request mechanics. GitHub currently provides both tracker and code-host boundaries. |
 | Skills | Reusable actor mechanics such as `pull`, `debug`, `commit`, and `push`. |
@@ -167,8 +167,8 @@ Each contract defines:
 
 Bundled policy templates live under `packages/core/src/sprints/workflows/templates/`:
 
-- `issue-runner.md`
 - `change-delivery.md`
+- `code.md`
 - `release.md`
 - `triage.md`
 
