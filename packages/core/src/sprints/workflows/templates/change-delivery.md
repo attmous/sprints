@@ -60,6 +60,179 @@ completion:
   cleanup:
     remove_labels: [in-progress, review, rework, merging]
     add_labels: [done]
+routing:
+  actor-driven:
+    rules:
+      - name: backlog releases lane
+        when:
+          board_state: backlog
+        route:
+          action: release
+          reason: board state is backlog
+      - name: done releases verified lane
+        when:
+          board_state: done
+          completion_verified: true
+        route:
+          action: release
+          reason: board state is done
+      - name: done waits for completion evidence
+        when:
+          board_state: done
+          completion_verified: false
+        route:
+          action: hold
+          reason: done label is present but completion is not verified
+      - name: todo starts implementation
+        when:
+          board_state: todo
+        route:
+          action: dispatch
+          stage: deliver
+          actor: implementer
+          mode: implement
+          target_board_state: in-progress
+          reason: todo lane enters implementation
+      - name: implementation output enters review
+        when:
+          board_state: in-progress
+          last_actor_mode: implement
+          lane_status: [waiting, review_waiting]
+        route:
+          action: move_board
+          stage: review
+          target_board_state: review
+          reason: implementation output is ready for review
+      - name: in-progress continues implementation
+        when:
+          board_state: in-progress
+        route:
+          action: dispatch
+          stage: deliver
+          actor: implementer
+          mode: implement
+          reason: in-progress lane needs implementation
+      - name: review sends required fixes to rework
+        when:
+          board_state: review
+          review_required_changes: true
+        route:
+          action: move_board
+          stage: deliver
+          target_board_state: rework
+          reason: review signals require rework
+          inputs:
+            required_fixes: $review.required_changes
+      - name: review waits for reviewer actor
+        when:
+          board_state: review
+          reviewer_running: true
+        route:
+          action: hold
+          stage: review
+          reason: reviewer actor is still running
+      - name: review already waiting for human merge signal
+        when:
+          board_state: review
+          last_actor_mode: review
+          lane_status: review_waiting
+        route:
+          action: hold
+          stage: review
+          reason: waiting for human merge signal
+      - name: review actor result enters shared waiting
+        when:
+          board_state: review
+          last_actor_mode: review
+          lane_status: waiting
+        route:
+          action: wait_review
+          stage: review
+          reason: review actor result is waiting for human merge signal
+      - name: review human wait is already active
+        when:
+          board_state: review
+          review_actor_available: false
+          lane_status: review_waiting
+        route:
+          action: hold
+          stage: review
+          reason: waiting for human merge signal
+      - name: review waits without reviewer actor
+        when:
+          board_state: review
+          review_actor_available: false
+        route:
+          action: wait_review
+          stage: review
+          reason: no reviewer actor configured; waiting for human review
+      - name: review dispatches reviewer actor
+        when:
+          board_state: review
+          review_actor_available: true
+        route:
+          action: dispatch
+          stage: review
+          actor: reviewer
+          mode: review
+          reason: review lane needs shared AI review
+      - name: rework output returns to review
+        when:
+          board_state: rework
+          last_actor_mode: rework
+          lane_status: [waiting, review_waiting]
+        route:
+          action: move_board
+          stage: review
+          target_board_state: review
+          reason: rework output is ready for review
+      - name: rework dispatches implementer fixes
+        when:
+          board_state: rework
+        route:
+          action: dispatch
+          stage: deliver
+          actor: implementer
+          mode: rework
+          reason: rework lane needs implementer fixes
+          inputs:
+            required_fixes: $review.required_changes
+      - name: merging required changes beat merge signal
+        when:
+          board_state: merging
+          review_required_changes: true
+        route:
+          action: move_board
+          stage: deliver
+          target_board_state: rework
+          reason: required changes take priority over merge signal
+          inputs:
+            required_fixes: $review.required_changes
+      - name: merging waits for reviewer actor
+        when:
+          board_state: merging
+          reviewer_running: true
+        route:
+          action: hold
+          stage: review
+          reason: merge signal is waiting for reviewer actor to finish
+      - name: land waits for merge reconciliation
+        when:
+          board_state: merging
+          last_actor_mode: land
+          lane_status: [waiting, review_waiting]
+        route:
+          action: hold
+          reason: land output is waiting for merge reconciliation
+      - name: merging dispatches land mode
+        when:
+          board_state: merging
+        route:
+          action: dispatch
+          stage: deliver
+          actor: implementer
+          mode: land
+          reason: merge authority seen; implementer should run land skill
 runtimes:
   codex:
     kind: codex-app-server
@@ -110,8 +283,10 @@ state label at a time:
 - `done`: terminal after runner verifies merge and cleanup.
 
 The runner reads labels as the machine contract. It claims `todo` lanes only
-when capacity is available, moves them to `in-progress`, ensures the workpad,
-and dispatches `implementer` with `mode: implement`.
+when capacity is available. After intake, board routing is defined by the
+front-matter `routing.actor-driven.rules` table. Python evaluates that ordered
+table and executes the selected route; the lane flow itself should live in the
+workflow config, not in hardcoded branch logic.
 
 Review conflict priority is:
 

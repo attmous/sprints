@@ -114,178 +114,13 @@ def route_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> ActorRoute:
         retry_route = _due_retry_route(lane=lane, board_state=board_state)
         if retry_route is not None:
             return retry_route
-    if board_state == BoardState.BACKLOG.value:
-        return ActorRoute(
+    rule = _select_route_rule(config=config, lane=lane, board_state=board_state)
+    if rule is not None:
+        return _route_from_rule(
+            rule=rule,
             lane_id=lane_id,
             board_state=board_state,
-            action="release",
-            reason="board state is backlog",
-        )
-    if board_state == BoardState.DONE.value:
-        if not done_release_verified(lane):
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="hold",
-                reason="done label is present but completion is not verified",
-            )
-        return ActorRoute(
-            lane_id=lane_id,
-            board_state=board_state,
-            action="release",
-            reason="board state is done",
-        )
-    if board_state == BoardState.TODO.value:
-        return ActorRoute(
-            lane_id=lane_id,
-            board_state=board_state,
-            action="dispatch",
-            stage="deliver",
-            actor="implementer",
-            mode="implement",
-            reason="todo lane enters implementation",
-            inputs={"mode": "implement"},
-        )
-    if board_state == BoardState.IN_PROGRESS.value:
-        if _last_actor_mode(lane) == "implement" and lane_status in {
-            "waiting",
-            "review_waiting",
-        }:
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="move_board",
-                stage="review",
-                target_board_state=BoardState.REVIEW.value,
-                reason="implementation output is ready for review",
-            )
-        return ActorRoute(
-            lane_id=lane_id,
-            board_state=board_state,
-            action="dispatch",
-            stage="deliver",
-            actor="implementer",
-            mode="implement",
-            reason="in-progress lane needs implementation",
-            inputs={"mode": "implement"},
-        )
-    if board_state == BoardState.REVIEW.value:
-        if review_has_required_changes(lane):
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="move_board",
-                stage="deliver",
-                target_board_state=BoardState.REWORK.value,
-                reason="review signals require rework",
-                inputs={"required_fixes": review_required_changes(lane)},
-            )
-        if reviewer_actor_running(lane):
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="hold",
-                stage="review",
-                reason="reviewer actor is still running",
-            )
-        if _last_actor_mode(lane) == "review" and lane_status in {
-            "waiting",
-            "review_waiting",
-        }:
-            if lane_status == "review_waiting":
-                return ActorRoute(
-                    lane_id=lane_id,
-                    board_state=board_state,
-                    action="hold",
-                    stage="review",
-                    reason="waiting for human merge signal",
-                )
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="wait_review",
-                stage="review",
-                reason="review actor result is waiting for human merge signal",
-            )
-        if "reviewer" not in config.actors or not review_actor_enabled(config):
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="hold" if lane_status == "review_waiting" else "wait_review",
-                stage="review",
-                reason="no reviewer actor configured; waiting for human review",
-            )
-        return ActorRoute(
-            lane_id=lane_id,
-            board_state=board_state,
-            action="dispatch",
-            stage="review",
-            actor="reviewer",
-            mode="review",
-            reason="review lane needs shared AI review",
-            inputs={"mode": "review"},
-        )
-    if board_state == BoardState.REWORK.value:
-        if _last_actor_mode(lane) == "rework" and lane_status in {
-            "waiting",
-            "review_waiting",
-        }:
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="move_board",
-                stage="review",
-                target_board_state=BoardState.REVIEW.value,
-                reason="rework output is ready for review",
-            )
-        return ActorRoute(
-            lane_id=lane_id,
-            board_state=board_state,
-            action="dispatch",
-            stage="deliver",
-            actor="implementer",
-            mode="rework",
-            reason="rework lane needs implementer fixes",
-            inputs={"mode": "rework"},
-        )
-    if board_state == BoardState.MERGING.value:
-        if review_has_required_changes(lane):
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="move_board",
-                stage="deliver",
-                target_board_state=BoardState.REWORK.value,
-                reason="required changes take priority over merge signal",
-                inputs={"required_fixes": review_required_changes(lane)},
-            )
-        if reviewer_actor_running(lane):
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="hold",
-                stage="review",
-                reason="merge signal is waiting for reviewer actor to finish",
-            )
-        if _last_actor_mode(lane) == "land" and lane_status in {
-            "waiting",
-            "review_waiting",
-        }:
-            return ActorRoute(
-                lane_id=lane_id,
-                board_state=board_state,
-                action="hold",
-                reason="land output is waiting for merge reconciliation",
-            )
-        return ActorRoute(
-            lane_id=lane_id,
-            board_state=board_state,
-            action="dispatch",
-            stage="deliver",
-            actor="implementer",
-            mode="land",
-            reason="merge authority seen; implementer should run land skill",
-            inputs={"mode": "land"},
+            lane=lane,
         )
     return ActorRoute(
         lane_id=lane_id,
@@ -304,6 +139,107 @@ def lane_board_state(*, config: WorkflowConfig, lane: dict[str, Any]) -> str | N
         return board_state
     issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
     return state_from_labels(issue.get("labels") or [], config)
+
+
+def _select_route_rule(
+    *, config: WorkflowConfig, lane: dict[str, Any], board_state: str
+) -> dict[str, Any] | None:
+    context = _route_context(config=config, lane=lane, board_state=board_state)
+    for rule in _route_rules(config):
+        if _rule_matches(rule, context):
+            return rule
+    return None
+
+
+def _route_rules(config: WorkflowConfig) -> list[dict[str, Any]]:
+    routing = config.raw.get("routing") if isinstance(config.raw, dict) else {}
+    actor_driven = (
+        routing.get("actor-driven")
+        if isinstance(routing, dict)
+        else None
+    )
+    rules = actor_driven.get("rules") if isinstance(actor_driven, dict) else []
+    return [rule for rule in rules or [] if isinstance(rule, dict)]
+
+
+def _route_context(
+    *, config: WorkflowConfig, lane: dict[str, Any], board_state: str
+) -> dict[str, Any]:
+    return {
+        "board_state": board_state,
+        "lane_status": str(lane.get("status") or "").strip().lower(),
+        "last_actor_mode": _last_actor_mode(lane),
+        "completion_verified": done_release_verified(lane),
+        "review_required_changes": review_has_required_changes(lane),
+        "reviewer_running": reviewer_actor_running(lane),
+        "review_actor_available": (
+            "reviewer" in config.actors and review_actor_enabled(config)
+        ),
+    }
+
+
+def _rule_matches(rule: dict[str, Any], context: dict[str, Any]) -> bool:
+    when = rule.get("when") if isinstance(rule.get("when"), dict) else {}
+    if not when:
+        return False
+    for key, expected in when.items():
+        if not _condition_matches(context.get(str(key)), expected):
+            return False
+    return True
+
+
+def _condition_matches(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, list):
+        return any(_condition_matches(actual, item) for item in expected)
+    if isinstance(expected, bool):
+        return bool(actual) is expected
+    return str(actual or "").strip().lower() == str(expected or "").strip().lower()
+
+
+def _route_from_rule(
+    *,
+    rule: dict[str, Any],
+    lane_id: str,
+    board_state: str,
+    lane: dict[str, Any],
+) -> ActorRoute:
+    raw_route = rule.get("route") if isinstance(rule.get("route"), dict) else {}
+    action = str(raw_route.get("action") or "hold").strip() or "hold"
+    mode = _optional_text(raw_route.get("mode"))
+    inputs = _resolve_route_inputs(raw_route.get("inputs"), lane=lane)
+    if mode:
+        inputs.setdefault("mode", mode)
+    return ActorRoute(
+        lane_id=lane_id,
+        board_state=board_state,
+        action=action,
+        stage=_optional_text(raw_route.get("stage")),
+        actor=_optional_text(raw_route.get("actor")),
+        mode=mode,
+        target_board_state=_optional_text(raw_route.get("target_board_state")),
+        reason=str(raw_route.get("reason") or rule.get("name") or "").strip(),
+        inputs=inputs or None,
+    )
+
+
+def _resolve_route_inputs(value: Any, *, lane: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): _resolve_route_input_value(raw, lane=lane)
+        for key, raw in value.items()
+    }
+
+
+def _resolve_route_input_value(value: Any, *, lane: dict[str, Any]) -> Any:
+    if value == "$review.required_changes":
+        return review_required_changes(lane)
+    return value
+
+
+def _optional_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _due_retry_route(*, lane: dict[str, Any], board_state: str) -> ActorRoute | None:

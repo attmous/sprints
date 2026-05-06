@@ -109,9 +109,23 @@ def apply_actor_route(
             status="held",
             extra={"reason": str(exc)},
         )
-    if route.board_state == BoardState.TODO.value:
+    if route.target_board_state:
+        try:
+            dispatch_target = BoardState(str(route.target_board_state))
+        except ValueError:
+            set_lane_operator_attention(
+                config=config,
+                lane=lane,
+                reason="actor_driven_route_invalid",
+                message=(
+                    "actor-driven route selected unknown dispatch board state "
+                    f"{route.target_board_state!r}"
+                ),
+                artifacts={"route": route.to_dict()},
+            )
+            return _route_result(lane=lane, route=route, status="operator_attention")
         transition = set_lane_board_state(
-            config=config, lane=lane, target=BoardState.IN_PROGRESS
+            config=config, lane=lane, target=dispatch_target
         )
         if transition.get("status") == "failed":
             retry = _queue_route_retry(
@@ -120,7 +134,7 @@ def apply_actor_route(
                 route=route,
                 reason=str(transition.get("error") or "failed to set board state"),
                 inputs={
-                    "board_state_target": BoardState.IN_PROGRESS.value,
+                    "board_state_target": dispatch_target.value,
                     "mode": mode or "implement",
                 },
             )
