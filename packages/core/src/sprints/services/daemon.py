@@ -73,10 +73,6 @@ def _run_systemctl(*args: str) -> dict[str, Any]:
     }
 
 
-def _plugin_cli_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "sprints_cli.py"
-
-
 def _load_config(workflow_root: Path) -> WorkflowConfig:
     root = Path(workflow_root).expanduser().resolve()
     contract = load_workflow_contract(root)
@@ -148,7 +144,8 @@ def _render_unit(
         [
             "/usr/bin/env",
             *command_parts,
-            str(_plugin_cli_path()),
+            "-m",
+            "sprints_cli.main",
             "daemon",
             "run",
             "--workflow-root",

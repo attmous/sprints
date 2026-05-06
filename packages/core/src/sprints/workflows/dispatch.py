@@ -22,7 +22,7 @@ from sprints.core.config import WorkflowConfig, WorkflowConfigError
 from sprints.core.contracts import WorkflowPolicy
 from sprints.core.loader import load_workflow_policy
 from sprints.workflows.orchestrator import build_actor_prompt
-from sprints.core.paths import plugin_entrypoint_path, runtime_paths
+from sprints.core.paths import runtime_paths
 from sprints.workflows.state_io import (
     WorkflowState,
     load_state,
@@ -656,7 +656,8 @@ def _spawn_actor_worker(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     argv = [
         sys.executable,
-        str(plugin_entrypoint_path(config.workflow_root)),
+        "-m",
+        "sprints.workflows",
         "--workflow-root",
         str(config.workflow_root),
         "actor-run",

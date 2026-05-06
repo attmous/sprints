@@ -138,8 +138,14 @@ def plugin_entrypoint_path(
 def workflow_cli_argv(workflow_root: Path, *command_args: str) -> list[str]:
     import sys
 
-    plugin_path = plugin_entrypoint_path(workflow_root)
-    return [sys.executable, str(plugin_path), *command_args]
+    return [
+        sys.executable,
+        "-m",
+        "sprints.workflows",
+        "--workflow-root",
+        str(Path(workflow_root).expanduser().resolve()),
+        *command_args,
+    ]
 
 
 def _find_workflow_root(start: Path) -> Path | None:
