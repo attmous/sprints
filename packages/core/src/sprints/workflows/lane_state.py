@@ -304,6 +304,12 @@ def _lane_summary(lane: dict[str, Any]) -> dict[str, Any]:
         },
         "branch": lane.get("branch"),
         "pull_request": lane.get("pull_request"),
+        "review_signals": lane.get("review_signals")
+        if isinstance(lane.get("review_signals"), dict)
+        else None,
+        "merge_signal": lane.get("merge_signal")
+        if isinstance(lane.get("merge_signal"), dict)
+        else None,
         "operator_attention": attention or None,
         "pending_retry": pending_retry or None,
         "retry": retry,

@@ -39,6 +39,12 @@ from sprints.workflows.lane_state import (
     tracker_config,
 )
 from sprints.workflows.reconcile import reconcile_lanes
+from sprints.workflows.review_state import (
+    review_actor_enabled,
+    review_has_required_changes,
+    review_required_changes,
+    reviewer_actor_running,
+)
 from sprints.workflows.retries import lane_retry_is_due, queue_lane_retry
 from sprints.workflows.sessions import active_actor_dispatch
 from sprints.workflows.state_io import (
@@ -419,6 +425,24 @@ def route_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> ActorRoute:
             inputs={"mode": "implement"},
         )
     if board_state == BoardState.REVIEW.value:
+        if review_has_required_changes(lane):
+            return ActorRoute(
+                lane_id=lane_id,
+                board_state=board_state,
+                action="move_board",
+                stage="deliver",
+                target_board_state=BoardState.REWORK.value,
+                reason="review signals require rework",
+                inputs={"required_fixes": review_required_changes(lane)},
+            )
+        if reviewer_actor_running(lane):
+            return ActorRoute(
+                lane_id=lane_id,
+                board_state=board_state,
+                action="hold",
+                stage="review",
+                reason="reviewer actor is still running",
+            )
         if _last_actor_mode(lane) == "review" and lane_status in {
             "waiting",
             "review_waiting",
@@ -438,7 +462,7 @@ def route_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> ActorRoute:
                 stage="review",
                 reason="review actor result is waiting for human merge signal",
             )
-        if "reviewer" not in config.actors:
+        if "reviewer" not in config.actors or not review_actor_enabled(config):
             return ActorRoute(
                 lane_id=lane_id,
                 board_state=board_state,
@@ -480,6 +504,24 @@ def route_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> ActorRoute:
             inputs={"mode": "rework"},
         )
     if board_state == BoardState.MERGING.value:
+        if review_has_required_changes(lane):
+            return ActorRoute(
+                lane_id=lane_id,
+                board_state=board_state,
+                action="move_board",
+                stage="deliver",
+                target_board_state=BoardState.REWORK.value,
+                reason="required changes take priority over merge signal",
+                inputs={"required_fixes": review_required_changes(lane)},
+            )
+        if reviewer_actor_running(lane):
+            return ActorRoute(
+                lane_id=lane_id,
+                board_state=board_state,
+                action="hold",
+                stage="review",
+                reason="merge signal is waiting for reviewer actor to finish",
+            )
         if _last_actor_mode(lane) == "land" and lane_status in {
             "waiting",
             "review_waiting",
@@ -971,7 +1013,7 @@ def _queue_route_retry(
 
 
 def _reconcile_blocks_routing(reconcile: dict[str, Any]) -> bool:
-    for key in ("tracker", "pull_requests"):
+    for key in ("tracker", "pull_requests", "review_signals"):
         value = reconcile.get(key)
         if isinstance(value, dict) and value.get("status") == "error":
             return True

@@ -30,6 +30,7 @@ from sprints.workflows.lane_state import (
 )
 from sprints.workflows.board_state import BoardState, state_from_labels
 from sprints.workflows.orchestrator import OrchestratorDecision
+from sprints.workflows.review_state import reconcile_review_signals
 from sprints.workflows.retries import queue_lane_retry
 from sprints.workflows.sessions import record_actor_runtime_interrupted
 from sprints.workflows.transitions import teardown_ops
@@ -43,12 +44,14 @@ def reconcile_lanes(*, config: WorkflowConfig, state: Any) -> dict[str, Any]:
     cleanup_result = _reconcile_completion_cleanup(config=config, lanes=active)
     tracker_result = _reconcile_tracker_lanes(config=config, lanes=active)
     pr_result = _reconcile_pull_requests(config=config, lanes=active)
+    review_result = reconcile_review_signals(config=config, lanes=active)
     return {
         "status": "ok",
         "runtime": runtime_result,
         "completion_cleanup": cleanup_result,
         "tracker": tracker_result,
         "pull_requests": pr_result,
+        "review_signals": review_result,
     }
 
 
