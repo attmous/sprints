@@ -5,7 +5,6 @@ required:
   - runtimes
   - actors
   - stages
-  - gates
 allOf:
   - if:
       required: [orchestration]
@@ -16,7 +15,19 @@ allOf:
           properties:
             mode:
               const: actor-driven
-    then: {}
+    then:
+      required: [routing]
+      not:
+        anyOf:
+          - required: [gates]
+          - required: [actions]
+      properties:
+        stages:
+          additionalProperties:
+            not:
+              anyOf:
+                - required: [actions]
+                - required: [gates]
     else:
       anyOf:
         - required: [orchestrator]
@@ -97,12 +108,55 @@ properties:
     additionalProperties: true
   orchestration:
     type: object
+    required: [mode]
     properties:
       mode:
         type: string
         enum: [orchestrator, actor-driven]
       actor:
         type: string
+    additionalProperties: true
+  routing:
+    type: object
+    properties:
+      actor-driven:
+        type: object
+        required: [rules]
+        properties:
+          rules:
+            type: array
+            items:
+              type: object
+              required: [name, when, route]
+              properties:
+                name:
+                  type: string
+                when:
+                  type: object
+                  additionalProperties: true
+                route:
+                  type: object
+                  required: [action, reason]
+                  properties:
+                    action:
+                      type: string
+                      enum: [dispatch, hold, release, move_board, wait_review]
+                    stage:
+                      type: string
+                    actor:
+                      type: string
+                    mode:
+                      type: string
+                    target_board_state:
+                      type: string
+                    reason:
+                      type: string
+                    inputs:
+                      type: object
+                      additionalProperties: true
+                  additionalProperties: true
+              additionalProperties: false
+        additionalProperties: true
     additionalProperties: true
   concurrency:
     type: object
@@ -259,6 +313,7 @@ properties:
           type: string
       additionalProperties: true
   gates:
+    description: Legacy orchestrator-mode gate definitions. Actor-driven workflows use routing instead.
     type: object
     additionalProperties:
       type: object
@@ -268,6 +323,7 @@ properties:
           enum: [orchestrator-evaluated]
       additionalProperties: true
   actions:
+    description: Legacy orchestrator-mode deterministic action definitions. Actor-driven workflows use routing instead.
     type: object
     additionalProperties:
       type: object
