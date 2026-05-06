@@ -4,7 +4,7 @@
 templates.
 
 Workflow intent lives in `WORKFLOW.md`. Python owns the mechanics: loading the
-contract, typing front matter, dispatching actors/actions, applying
+contract, typing front matter, dispatching actors, applying route or
 orchestrator decisions, and writing state.
 
 ## Layout
@@ -61,13 +61,14 @@ workflows/
 
 `WORKFLOW.md` has:
 
-- YAML front matter for runtimes, actors, stages, gates, actions, and storage.
+- YAML front matter for runtime bindings, actors, stages, storage, and routing.
 - `# Orchestrator Policy` for transition authority.
 - `# Actor: <name>` sections for actor-specific policy and output shape.
 
 In orchestrator mode, the orchestrator decides whether to run an actor, run an
 action, advance, retry, complete, or raise operator attention.
 `tick_orchestrator.py` validates and applies that decision.
+`gates` and deterministic `actions` are legacy orchestrator-mode config only.
 
 In actor-driven mode, route policy lives in the workflow front matter as
 `routing.actor-driven.rules`. `route_rules.py` selects a route from that table,

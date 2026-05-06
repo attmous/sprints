@@ -252,8 +252,6 @@ stages:
   review:
     actors: [reviewer]
     next: done
-gates: {}
-actions: {}
 storage:
   state: .sprints/change-delivery-state.json
   audit-log: .sprints/change-delivery-audit.jsonl
