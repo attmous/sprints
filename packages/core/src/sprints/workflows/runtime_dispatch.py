@@ -141,7 +141,12 @@ def run_stage_actor(
         actor_policy=actor_policy,
         variables=actor_variables(config=config, state=state, lane=lane, inputs=inputs),
     )
-    prompt = append_actor_skill_docs(config=config, actor=actor, prompt=prompt)
+    prompt = append_actor_skill_docs(
+        config=config,
+        actor=actor,
+        actor_policy=actor_policy,
+        prompt=prompt,
+    )
     dispatch_meta = _dispatch_plan_meta(
         runtime_plan=runtime_plan,
         dispatch_mode="inline",
@@ -931,7 +936,12 @@ def _run_actor_runtime_for_worker(
         actor_policy=actor_policy,
         variables=actor_variables(config=config, state=state, lane=lane, inputs=inputs),
     )
-    prompt = append_actor_skill_docs(config=config, actor=actor, prompt=prompt)
+    prompt = append_actor_skill_docs(
+        config=config,
+        actor=actor,
+        actor_policy=actor_policy,
+        prompt=prompt,
+    )
     runtime_result = build_actor_runtime(config=config, actor=actor).run(
         actor=actor,
         prompt=prompt,

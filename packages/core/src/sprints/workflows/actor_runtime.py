@@ -4,13 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Callable, Protocol
 
 from sprints.runtimes import build_runtimes
 from sprints.runtimes.turns import prompt_result_from_stage, run_runtime_stage
 from sprints.core.config import ActorConfig, WorkflowConfig
+from sprints.core.contracts import ActorPolicy
 
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+_SKILL_DIRECTIVE_RE = re.compile(
+    r"(?im)^bundled skills available to this actor:\s*(?P<skills>.+?)\s*$"
+)
+_BACKTICKED_TOKEN_RE = re.compile(r"`([^`]+)`")
 
 
 @dataclass(frozen=True)
@@ -118,12 +124,14 @@ def build_actor_runtime(*, config: WorkflowConfig, actor: ActorConfig) -> ActorR
 
 
 def append_actor_skill_docs(
-    *, config: WorkflowConfig, actor: ActorConfig, prompt: str
+    *,
+    config: WorkflowConfig,
+    actor: ActorConfig,
+    actor_policy: ActorPolicy,
+    prompt: str,
 ) -> str:
     del config
-    skills = actor.raw.get("skills") or ()
-    if isinstance(skills, str):
-        skills = [skills]
+    skills = _actor_policy_skills(actor_policy)
     skill_docs = [
         _read_skill_doc(str(skill).strip()) for skill in skills if str(skill).strip()
     ]
@@ -202,3 +210,22 @@ def _read_skill_doc(skill_name: str) -> str:
     except OSError:
         return ""
     return f"## Skill: {skill_name}\n\n{text}"
+
+
+def _actor_policy_skills(actor_policy: ActorPolicy) -> list[str]:
+    match = _SKILL_DIRECTIVE_RE.search(actor_policy.body)
+    if not match:
+        return []
+    raw = match.group("skills")
+    backticked = _BACKTICKED_TOKEN_RE.findall(raw)
+    if backticked:
+        return [_clean_skill_name(value) for value in backticked if _clean_skill_name(value)]
+    return [
+        cleaned
+        for item in raw.replace("[", "").replace("]", "").split(",")
+        if (cleaned := _clean_skill_name(item))
+    ]
+
+
+def _clean_skill_name(value: str) -> str:
+    return str(value or "").strip().strip("`'\" ")

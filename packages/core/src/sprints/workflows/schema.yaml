@@ -237,10 +237,6 @@ properties:
           type: string
         mode:
           type: string
-        skills:
-          type: array
-          items:
-            type: string
       additionalProperties: true
   stages:
     type: object
