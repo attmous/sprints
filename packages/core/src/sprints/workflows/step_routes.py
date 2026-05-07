@@ -90,6 +90,14 @@ def route_code_lane(*, config: WorkflowConfig, lane: dict[str, Any]) -> StepRout
     if step == DONE:
         if done_release_verified(lane):
             return StepRoute(action="release", step=DONE, reason="done verified")
+        if done_label_with_merged_pr(lane):
+            return StepRoute(
+                action="move_step",
+                step=DONE,
+                target_step=MERGE,
+                reason="done label present but source issue is still open",
+                inputs={"step": MERGE},
+            )
         return StepRoute(
             action="hold",
             step=DONE,
@@ -143,9 +151,44 @@ def done_release_verified(lane: dict[str, Any]) -> bool:
     issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
     if DONE not in issue_labels(issue):
         return False
+    if not issue_is_closed(lane):
+        return False
+    return pull_request_is_merged(lane)
+
+
+def done_label_with_merged_pr(lane: dict[str, Any]) -> bool:
+    issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
+    return DONE in issue_labels(issue) and pull_request_is_merged(lane)
+
+
+def issue_is_closed(lane: dict[str, Any]) -> bool:
+    issue = lane.get("issue") if isinstance(lane.get("issue"), dict) else {}
+    output = lane.get("last_actor_output")
+    output_issue_state = (
+        _issue_state_from_actor_output(output) if isinstance(output, dict) else ""
+    )
+    issue_state = str(issue.get("state") or "").strip().lower()
+    return issue_state in {"closed", "done"} or output_issue_state in {"closed", "done"}
+
+
+def pull_request_is_merged(lane: dict[str, Any]) -> bool:
     pull_request = (
         lane.get("pull_request") if isinstance(lane.get("pull_request"), dict) else {}
     )
     state = str(pull_request.get("state") or "").strip().lower()
     return bool(pull_request.get("merged")) or state == "merged"
+
+
+def _issue_state_from_actor_output(output: dict[str, Any]) -> str:
+    cleanup = output.get("cleanup") if isinstance(output.get("cleanup"), dict) else {}
+    artifacts = output.get("artifacts") if isinstance(output.get("artifacts"), dict) else {}
+    issue = output.get("issue") if isinstance(output.get("issue"), dict) else {}
+    return str(
+        cleanup.get("issue_state")
+        or cleanup.get("issue-state")
+        or artifacts.get("issue_state")
+        or artifacts.get("issue-state")
+        or issue.get("state")
+        or ""
+    ).strip().lower()
 

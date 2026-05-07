@@ -195,6 +195,19 @@ def _apply_coder_output_status(
                 artifacts=contract_artifacts(lane),
             )
             return
+        if _issue_state_from_output(output) != "closed":
+            set_lane_operator_attention(
+                config=config,
+                lane=lane,
+                reason="actor_output_contract_failed",
+                message="merge step requires explicit closed issue evidence",
+                artifacts={
+                    **contract_artifacts(lane),
+                    "actor_output": output,
+                    "issue_state": _issue_state_from_output(output) or "missing",
+                },
+            )
+            return
     set_lane_status(
         config=config,
         lane=lane,
@@ -202,3 +215,17 @@ def _apply_coder_output_status(
         actor=None,
         reason=f"{actor_name} returned {status} for step {step}",
     )
+
+
+def _issue_state_from_output(output: dict[str, Any]) -> str:
+    cleanup = output.get("cleanup") if isinstance(output.get("cleanup"), dict) else {}
+    artifacts = output.get("artifacts") if isinstance(output.get("artifacts"), dict) else {}
+    issue = output.get("issue") if isinstance(output.get("issue"), dict) else {}
+    return str(
+        cleanup.get("issue_state")
+        or cleanup.get("issue-state")
+        or artifacts.get("issue_state")
+        or artifacts.get("issue-state")
+        or issue.get("state")
+        or ""
+    ).strip().lower()

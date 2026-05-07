@@ -181,7 +181,10 @@ Do not call merge mechanics outside the land skill. If the PR cannot merge yet,
 return `waiting` or `blocked` with the exact reason. If new required feedback
 appears, return enough evidence for Sprints to move the lane back to `code`.
 
-After a successful merge, return merge and cleanup evidence.
+After a successful merge, explicitly close the source issue and verify it is
+closed. Do not rely on GitHub auto-close from PR body text. Return `done` only
+when the PR is merged, the source issue is closed, and cleanup evidence includes
+`cleanup.issue_state: "closed"`.
 
 ## Step: done
 
@@ -217,7 +220,8 @@ Return JSON only:
   },
   "cleanup": {
     "removed_labels": [],
-    "added_labels": []
+    "added_labels": [],
+    "issue_state": "closed"
   },
   "blockers": [],
   "artifacts": {}
