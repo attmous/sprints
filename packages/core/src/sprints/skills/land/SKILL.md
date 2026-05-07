@@ -18,7 +18,10 @@ the landing mechanics for the assigned lane.
 - Do not land a different PR, issue, branch, or lane.
 - Return `blocked` when merge permission, CI, conflicts, or review state blocks
   landing.
-- After merge, remove active workflow labels and add `done`.
+- After merge, explicitly close the source issue. Do not rely on GitHub
+  auto-closing from the PR body.
+- After the issue is closed, remove active workflow labels and add `done`.
+- Do not return success until the source issue state is `closed`.
 - Return structured JSON; do not ask for interactive follow-up.
 
 ## Steps
@@ -33,15 +36,17 @@ the landing mechanics for the assigned lane.
 7. If checks fail and the fix is local, fix, commit, push, and wait again.
 8. If checks pass and approval/authority is present, merge through the documented
    GitHub flow.
-9. Clean tracker state for this lane: remove `in-progress`, `review`, `rework`,
-   and `merging`; add `done`.
-10. Update the Sprints workpad if available.
+9. Close the source issue explicitly with the tracker or `gh issue close`.
+10. Verify the source issue state is `closed`.
+11. Clean tracker state for this lane: remove `code`, `review`, and `merge`; add
+   `done`.
+12. Update the Sprints workpad if available.
 
 ## Merged Output Shape
 
 ```json
 {
-  "status": "merged",
+  "status": "done",
   "mode": "land",
   "summary": "PR landed and lane cleanup completed",
   "pull_request": {
@@ -52,9 +57,10 @@ the landing mechanics for the assigned lane.
     "merge_commit": "merge commit sha if known"
   },
   "cleanup": {
-    "removed_labels": ["in-progress", "review", "rework", "merging"],
+    "removed_labels": ["code", "review", "merge"],
     "added_labels": ["done"],
-    "issue_state": "open|closed"
+    "issue_state": "closed",
+    "issue_url": "https://github.com/owner/repo/issues/20"
   },
   "checks": [],
   "reviews": [],
