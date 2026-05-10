@@ -25,9 +25,6 @@ On April 27, 2026, OpenAI published
 an open-source spec for Codex orchestration. That playbook helped me cut through
 parts of my own implementation, reduce code size, and close many design gaps.
 
-My goal is to keep improving Sprints until it becomes genuinely useful to the
-[Hermes-Agent](https://hermes-agent.nousresearch.com/) community.
-
 ## Quick Start
 
 Prerequisites:
